@@ -97,6 +97,8 @@ export const modelWeightsSchema = z.strictObject({
     expectedMinutesIfBenched: z.number().min(0).max(90),
     priorStartProbability: probability,
     priorWeightMatches: z.number().min(0),
+    starterCompletesSixty: probability,
+    benchAppearanceProbability: probability,
   }),
   teamStrength: z.strictObject({
     leagueAverageGoalsPerGame: z.number().positive(),
@@ -139,6 +141,10 @@ export const modelWeightsSchema = z.strictObject({
   }),
   captain: z.strictObject({
     ceilingWeight: z.number().min(0),
+  }),
+  optimiser: z.strictObject({
+    benchWeight: probability,
+    benchGoalkeeperWeight: probability,
   }),
 });
 

@@ -37,7 +37,9 @@
     "expectedMinutesIfStarting": 80,
     "expectedMinutesIfBenched": 18,
     "priorStartProbability": 0.35,
-    "priorWeightMatches": 3
+    "priorWeightMatches": 3,
+    "starterCompletesSixty": 0.85,
+    "benchAppearanceProbability": 0.4
   },
 
   "teamStrength": {
@@ -112,5 +114,16 @@
   "captain": {
     "$comment": "Tiebreak between near-equal captain candidates: reward ceiling, not just mean.",
     "ceilingWeight": 0.1
+  },
+
+  "optimiser": {
+    "$comment": [
+      "How much a bench place is worth when choosing a squad. A benched player only scores",
+      "through auto-subs, so they are worth far less than a starter - but not nothing, which is",
+      "why a squad optimiser that ignored the bench would happily field four unplayable",
+      "reserves. The backup keeper is worth least of all."
+    ],
+    "benchWeight": 0.12,
+    "benchGoalkeeperWeight": 0.03
   }
 }

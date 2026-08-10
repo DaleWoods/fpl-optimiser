@@ -4,6 +4,7 @@ import { HttpFplApi } from '../api/httpClient.js';
 import type { Config } from '../config/schema.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll } from '../ingest/index.js';
+import { recommend, type Recommendation } from './recommend.js';
 import { formatDuration, formatMoney, getStateOfPlay, type StateOfPlay } from './state.js';
 
 export interface ServerOptions {
@@ -100,6 +101,13 @@ export function renderPage(state: StateOfPlay): string {
   .card { border:1px solid var(--line); border-radius:8px; padding:.75rem 1rem; }
   .card .value { font-size:1.2rem; font-weight:600; }
   .scroll { overflow-x:auto; }
+  .button { display:inline-block; background:#37003c; color:#fff; text-decoration:none;
+            padding:.6rem 1.1rem; border-radius:8px; font-weight:600; }
+  .button:hover { background:#4a0050; }
+  .rec { border:1px solid var(--line); border-radius:8px; padding:1rem; margin:.75rem 0; }
+  .rec h3 { margin:0 0 .3rem; font-size:1rem; }
+  .pill { display:inline-block; background:var(--line); border-radius:99px;
+          padding:.1rem .6rem; font-size:.8rem; margin-right:.4rem; }
 </style>
 </head>
 <body>
@@ -122,6 +130,10 @@ export function renderPage(state: StateOfPlay): string {
     <div class="card"><div class="muted">Players tracked</div><div class="value">${state.playerCount}</div></div>
     <div class="card"><div class="muted">Snapshots</div><div class="value">${state.snapshotCount}</div></div>
   </div>
+
+  <p><a class="button" href="/optimise">Pick my best team for ${escapeHtml(
+    state.nextDeadline?.name ?? 'the next gameweek',
+  )}</a></p>
 
   <h2>Data freshness</h2>
   <div class="scroll"><table><thead><tr><th>Source</th><th>Last successful pull</th></tr></thead>
@@ -147,6 +159,129 @@ export function renderPage(state: StateOfPlay): string {
 </main>
 </body>
 </html>`;
+}
+
+function playerRow(player: {
+  position: string;
+  name: string;
+  clubShort: string;
+  price: number;
+  xPts: number;
+  confidence: string;
+}, marker = ''): string {
+  return `<tr>
+    <td>${escapeHtml(player.position)}</td>
+    <td>${escapeHtml(player.name)} ${marker}</td>
+    <td>${escapeHtml(player.clubShort)}</td>
+    <td>${formatMoney(player.price)}</td>
+    <td>${player.xPts.toFixed(2)}</td>
+    <td class="muted">${escapeHtml(player.confidence)}</td>
+  </tr>`;
+}
+
+export function renderRecommendation(rec: Recommendation): string {
+  const head = `<thead><tr><th>Pos</th><th>Player</th><th>Club</th><th>Price</th><th>xPts</th><th>Confidence</th></tr></thead>`;
+
+  const starters = rec.eleven.starters
+    .map((player) =>
+      playerRow(
+        player,
+        player.playerId === rec.eleven.captain.playerId
+          ? '<span class="badge">C</span>'
+          : player.playerId === rec.eleven.viceCaptain.playerId
+            ? '<span class="badge">V</span>'
+            : '',
+      ),
+    )
+    .join('');
+
+  const bench = rec.eleven.bench
+    .map((player, index) => playerRow(player, `<span class="muted">${index + 1}</span>`))
+    .join('');
+
+  const transfers =
+    rec.transfers.length > 0
+      ? rec.transfers
+          .map(
+            (transfer) => `<div class="rec">
+              <h3>${escapeHtml(transfer.out.name)} &rarr; ${escapeHtml(transfer.in.name)}
+                <span class="pill">${transfer.netGain >= 0 ? '+' : ''}${transfer.netGain.toFixed(2)} pts</span></h3>
+              <p class="muted">${escapeHtml(transfer.reason)}</p>
+            </div>`,
+          )
+          .join('')
+      : '';
+
+  const notes = rec.notes
+    .map((note) => `<li>${escapeHtml(note)}</li>`)
+    .join('');
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recommendation - ${escapeHtml(rec.eventName ?? `GW${rec.eventId}`)}</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e2e2e2;
+          --warn-bg:#fff4e5; --warn-fg:#7a4a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --fg:#e8e8e8; --muted:#9aa0a6; --line:#2c2f36;
+            --warn-bg:#3a2a10; --warn-fg:#ffd591; }
+  }
+  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg);
+         font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:62rem; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:0 0 .25rem; }
+  h2 { font-size:1.05rem; margin:2rem 0 .5rem; }
+  .muted { color:var(--muted); }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:.4rem .6rem; border-bottom:1px solid var(--line); }
+  th { font-weight:600; font-size:.85rem; color:var(--muted); }
+  .badge { font-size:.7rem; border:1px solid var(--line); border-radius:4px; padding:0 .3rem; }
+  .banner { padding:.75rem 1rem; border-radius:8px; margin:1rem 0;
+            background:var(--warn-bg); color:var(--warn-fg); }
+  .rec { border:1px solid var(--line); border-radius:8px; padding:1rem; margin:.75rem 0; }
+  .rec h3 { margin:0 0 .3rem; font-size:1rem; }
+  .pill { display:inline-block; background:var(--line); border-radius:99px;
+          padding:.1rem .6rem; font-size:.8rem; }
+  .scroll { overflow-x:auto; }
+  a { color:inherit; }
+</style></head>
+<body><main>
+  <p><a href="/">&larr; back</a></p>
+  <h1>${escapeHtml(rec.eventName ?? `Gameweek ${rec.eventId}`)}</h1>
+  <p class="muted">
+    Deadline ${escapeHtml(rec.deadlineIso ?? 'unknown')} &middot;
+    model ${escapeHtml(rec.modelVersion)} &middot;
+    ${rec.playersConsidered} players considered
+  </p>
+
+  ${
+    rec.mode === 'build-squad'
+      ? `<div class="banner">This is a squad built from scratch within the budget, because no
+          existing squad is loaded.</div>`
+      : ''
+  }
+  ${rec.lowConfidence ? `<div class="banner">Most projections are low confidence - see the notes below.</div>` : ''}
+
+  <p>
+    <strong>Formation ${escapeHtml(rec.eleven.formation)}</strong> &middot;
+    projected <strong>${rec.eleven.expectedPoints.toFixed(1)} points</strong> &middot;
+    squad cost ${formatMoney(rec.totalCost)} &middot;
+    ${formatMoney(rec.bankRemaining)} left
+  </p>
+  <p>Captain <strong>${escapeHtml(rec.eleven.captain.name)}</strong>,
+     vice <strong>${escapeHtml(rec.eleven.viceCaptain.name)}</strong>.</p>
+
+  <h2>Starting XI</h2>
+  <div class="scroll"><table>${head}<tbody>${starters}</tbody></table></div>
+
+  <h2>Bench <span class="muted">(in auto-sub order)</span></h2>
+  <div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div>
+
+  ${rec.transfers.length > 0 ? `<h2>Suggested transfers</h2>${transfers}` : ''}
+
+  ${notes ? `<h2>Notes</h2><ul>${notes}</ul>` : ''}
+</main></body></html>`;
 }
 
 /**
@@ -186,8 +321,38 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     }
   };
 
-  const handler = (request: IncomingMessage, response: ServerResponse): void => {
+  const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+
+    if (url.pathname === '/optimise' || url.pathname === '/optimise.json') {
+      const gwParam = url.searchParams.get('gw');
+      try {
+        const result = await recommend(db, config.rules, config.weights, {
+          teamId: config.app.teamId,
+          eventId: gwParam ? Number(gwParam) : undefined,
+          fromScratch: url.searchParams.get('scratch') === '1',
+        });
+
+        if (url.pathname === '/optimise.json') {
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(renderRecommendation(result));
+      } catch (cause) {
+        const message = (cause as Error).message;
+        response.writeHead(409, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(
+          `<!doctype html><meta charset="utf-8"><title>Cannot recommend yet</title>` +
+            `<body style="font:15px system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
+            `<p><a href="/">&larr; back</a></p><h1>Cannot recommend yet</h1>` +
+            `<pre style="white-space:pre-wrap">${escapeHtml(message)}</pre></body>`,
+        );
+      }
+      return;
+    }
 
     // Health check: must stay cheap and must not depend on the FPL API being up.
     if (url.pathname === '/healthz') {
@@ -224,7 +389,15 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     response.end(renderPage(state));
   };
 
-  const server = createServer(handler);
+  const server = createServer((request, response) => {
+    void handler(request, response).catch((cause: unknown) => {
+      console.error(`request failed: ${(cause as Error).message}`);
+      if (!response.headersSent) {
+        response.writeHead(500, { 'Content-Type': 'text/plain' });
+        response.end('Internal error');
+      }
+    });
+  });
 
   let timer: NodeJS.Timeout | undefined;
   if (options.ingestIntervalMinutes > 0) {

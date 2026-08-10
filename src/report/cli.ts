@@ -5,6 +5,7 @@ import type { FplApi } from '../api/client.js';
 import { ConfigError, loadConfig } from '../config/load.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll } from '../ingest/index.js';
+import { recommend } from './recommend.js';
 import { startServer } from './server.js';
 import { formatDuration, formatMoney, getStateOfPlay } from './state.js';
 
@@ -14,8 +15,14 @@ fpl-optimiser - Fantasy Premier League optimiser
 Usage:
   fpl ingest [options]     Pull fresh data from the FPL API into local storage
   fpl status               Show the current state of play
+  fpl optimise [--gw N]    Recommend the best team for a gameweek
   fpl serve [--port N]     Serve the status report over HTTP
   fpl help                 Show this message
+
+Optimise options:
+  --gw N                   Gameweek to advise on (default: the next deadline)
+  --scratch                Build a squad from scratch, ignoring any loaded squad
+  --budget N               Budget in tenths of a million (default: from rules)
 
 Ingest options:
   --summaries              Also pull per-player match history (one request per
@@ -160,6 +167,74 @@ function commandStatus(): number {
   return 0;
 }
 
+async function commandOptimise(flags: Map<string, string | true>): Promise<number> {
+  const config = loadConfig();
+  const db = openDatabase({ path: config.app.database.path });
+
+  const gw = flags.get('gw');
+  const budget = flags.get('budget');
+
+  const result = await recommend(db, config.rules, config.weights, {
+    teamId: config.app.teamId,
+    eventId: typeof gw === 'string' ? Number(gw) : undefined,
+    fromScratch: Boolean(flags.get('scratch')),
+    budget: typeof budget === 'string' ? Number(budget) : undefined,
+  });
+
+  const money = (tenths: number) => `£${(tenths / 10).toFixed(1)}m`;
+
+  console.log(`${result.eventName ?? `Gameweek ${result.eventId}`}`);
+  console.log('='.repeat(60));
+  console.log(`Deadline: ${result.deadlineIso ?? 'unknown'}`);
+  console.log(`Model: ${result.modelVersion}   Players considered: ${result.playersConsidered}`);
+  if (result.mode === 'build-squad') {
+    console.log('\nBuilding a squad from scratch (no existing squad loaded).');
+  }
+
+  console.log(
+    `\nFormation ${result.eleven.formation}, projected ${result.eleven.expectedPoints.toFixed(1)} points`,
+  );
+  console.log(`Squad cost ${money(result.totalCost)}, ${money(result.bankRemaining)} left in the bank`);
+
+  console.log('\nStarting XI:');
+  for (const player of result.eleven.starters) {
+    const role =
+      player.playerId === result.eleven.captain.playerId
+        ? ' (C)'
+        : player.playerId === result.eleven.viceCaptain.playerId
+          ? ' (V)'
+          : '';
+    console.log(
+      `  ${player.position} ${player.name.padEnd(18)} ${player.clubShort.padEnd(4)} ` +
+        `${money(player.price).padStart(7)}  ${player.xPts.toFixed(2)} xPts${role}`,
+    );
+  }
+
+  console.log('\nBench (auto-sub order):');
+  for (const [index, player] of result.eleven.bench.entries()) {
+    console.log(
+      `  ${index + 1}. ${player.position} ${player.name.padEnd(18)} ${player.clubShort.padEnd(4)} ` +
+        `${money(player.price).padStart(7)}  ${player.xPts.toFixed(2)} xPts`,
+    );
+  }
+
+  if (result.transfers.length > 0) {
+    console.log('\nSuggested transfers:');
+    for (const transfer of result.transfers) {
+      console.log(`  ${transfer.out.name} -> ${transfer.in.name} (${transfer.netGain >= 0 ? '+' : ''}${transfer.netGain.toFixed(2)} pts)`);
+      console.log(`    ${transfer.reason}`);
+    }
+  }
+
+  if (result.notes.length > 0) {
+    console.log('\nNotes:');
+    for (const note of result.notes) console.log(`  - ${note}`);
+  }
+
+  db.close();
+  return 0;
+}
+
 async function commandServe(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
   const portFlag = flags.get('port');
@@ -181,6 +256,9 @@ async function main(): Promise<number> {
       return commandIngest(flags);
     case 'status':
       return commandStatus();
+    case 'optimise':
+    case 'optimize':
+      return commandOptimise(flags);
     case 'serve':
       return commandServe(flags);
     case 'help':

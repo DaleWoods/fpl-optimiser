@@ -1,0 +1,380 @@
+import type { ModelWeights, Rules } from '../config/schema.js';
+import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
+import {
+  assertLegalSquad,
+  assertLegalStartingEleven,
+  describeFormation,
+} from '../rules/validate.js';
+import { InfeasibleError, type Constraint, type IntegerProgram, type Solver } from './solver.js';
+
+const IN_SQUAD = (id: number) => `x_${id}`;
+const IN_XI = (id: number) => `y_${id}`;
+const IS_CAPTAIN = (id: number) => `c_${id}`;
+
+export interface SquadSelection {
+  squad: ProjectedPlayer[];
+  eleven: StartingEleven;
+  totalCost: number;
+  bankRemaining: number;
+}
+
+function benchWeightFor(player: ProjectedPlayer, rules: Rules, weights: ModelWeights): number {
+  const isGoalkeeper = (rules.startingXi.positionBounds[player.position]?.max ?? 99) === 1;
+  return isGoalkeeper ? weights.optimiser.benchGoalkeeperWeight : weights.optimiser.benchWeight;
+}
+
+/**
+ * Order the bench for auto-subs: the goalkeeper sits outside the ordering (they can only
+ * replace the keeper), and the outfield reserves are ranked by expected points.
+ */
+export function orderBench(bench: ProjectedPlayer[], rules: Rules): ProjectedPlayer[] {
+  const goalkeepers = bench.filter(
+    (player) => (rules.startingXi.positionBounds[player.position]?.max ?? 99) === 1,
+  );
+  const outfield = bench
+    .filter((player) => !goalkeepers.includes(player))
+    .sort((a, b) => b.xPts - a.xPts);
+  return [...goalkeepers, ...outfield];
+}
+
+function buildEleven(
+  starters: ProjectedPlayer[],
+  bench: ProjectedPlayer[],
+  captain: ProjectedPlayer,
+  rules: Rules,
+  weights: ModelWeights,
+): StartingEleven {
+  // Vice-captain is the best remaining starter. Ceiling is used only as a tiebreak, per D4.
+  const viceCaptain = starters
+    .filter((player) => player.playerId !== captain.playerId)
+    .sort(
+      (a, b) =>
+        b.xPts - a.xPts ||
+        (b.breakdown.goals ?? 0) * weights.captain.ceilingWeight -
+          (a.breakdown.goals ?? 0) * weights.captain.ceilingWeight,
+    )[0];
+
+  if (!viceCaptain) {
+    throw new InfeasibleError('Cannot choose a vice-captain: fewer than two players in the XI');
+  }
+
+  const expectedPoints =
+    starters.reduce((total, player) => total + player.xPts, 0) +
+    captain.xPts * (rules.captain.multiplier - 1);
+
+  return {
+    starters: [...starters].sort((a, b) => b.xPts - a.xPts),
+    bench: orderBench(bench, rules),
+    captain,
+    viceCaptain,
+    formation: describeFormation(starters, rules),
+    expectedPoints: Math.round(expectedPoints * 100) / 100,
+  };
+}
+
+function captaincyConstraints(players: readonly ProjectedPlayer[]): Constraint[] {
+  const constraints: Constraint[] = [
+    {
+      name: 'one_captain',
+      terms: players.map((player) => ({ variable: IS_CAPTAIN(player.playerId), coefficient: 1 })),
+      bound: { type: 'equal', value: 1 },
+    },
+  ];
+
+  // The captain must be a starter: c_i - y_i <= 0.
+  for (const player of players) {
+    constraints.push({
+      name: `captain_starts_${player.playerId}`,
+      terms: [
+        { variable: IS_CAPTAIN(player.playerId), coefficient: 1 },
+        { variable: IN_XI(player.playerId), coefficient: -1 },
+      ],
+      bound: { type: 'atMost', value: 0 },
+    });
+  }
+
+  return constraints;
+}
+
+function elevenConstraints(players: readonly ProjectedPlayer[], rules: Rules): Constraint[] {
+  const constraints: Constraint[] = [
+    {
+      name: 'xi_size',
+      terms: players.map((player) => ({ variable: IN_XI(player.playerId), coefficient: 1 })),
+      bound: { type: 'equal', value: rules.startingXi.size },
+    },
+  ];
+
+  for (const [position, bounds] of Object.entries(rules.startingXi.positionBounds)) {
+    const terms = players
+      .filter((player) => player.position === position)
+      .map((player) => ({ variable: IN_XI(player.playerId), coefficient: 1 }));
+    if (terms.length === 0) continue;
+    constraints.push({
+      name: `xi_position_${position}`,
+      terms,
+      bound: { type: 'between', min: bounds.min, max: bounds.max },
+    });
+  }
+
+  return constraints;
+}
+
+/**
+ * Choose the best legal starting XI, captain and bench order from a fixed 15.
+ *
+ * Solved exactly rather than by trying formations: the solver considers every legal
+ * combination at once and returns a provably optimal one.
+ */
+export async function selectBestEleven(
+  squad: readonly ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+  solver: Solver,
+): Promise<StartingEleven> {
+  const selectable = squad.filter((player) => !player.availability.excluded);
+
+  if (selectable.length < rules.startingXi.size) {
+    throw new InfeasibleError(
+      `Only ${selectable.length} of your ${squad.length} players can play, which is not enough ` +
+        `to field ${rules.startingXi.size}. Unavailable: ` +
+        squad
+          .filter((player) => player.availability.excluded)
+          .map((player) => `${player.name} (${player.availability.reason})`)
+          .join(', '),
+    );
+  }
+
+  const program: IntegerProgram = {
+    name: 'best_eleven',
+    direction: 'maximise',
+    objective: [
+      ...selectable.map((player) => ({
+        variable: IN_XI(player.playerId),
+        coefficient: player.xPts,
+      })),
+      ...selectable.map((player) => ({
+        variable: IS_CAPTAIN(player.playerId),
+        coefficient: player.xPts * (rules.captain.multiplier - 1),
+      })),
+    ],
+    constraints: [...elevenConstraints(selectable, rules), ...captaincyConstraints(selectable)],
+    binaries: [
+      ...selectable.map((player) => IN_XI(player.playerId)),
+      ...selectable.map((player) => IS_CAPTAIN(player.playerId)),
+    ],
+  };
+
+  const result = await solver.solve(program);
+  if (!result.optimal) {
+    throw new InfeasibleError(
+      `No legal starting XI could be found (solver reported: ${result.status}). ` +
+        'This usually means too many players are unavailable to fill a valid formation.',
+    );
+  }
+
+  const starters = selectable.filter((player) => (result.values.get(IN_XI(player.playerId)) ?? 0) > 0.5);
+  const starterIds = new Set(starters.map((player) => player.playerId));
+  const bench = squad.filter((player) => !starterIds.has(player.playerId));
+
+  const captain = selectable.find(
+    (player) => (result.values.get(IS_CAPTAIN(player.playerId)) ?? 0) > 0.5,
+  );
+  if (!captain) throw new InfeasibleError('Solver returned no captain');
+
+  const eleven = buildEleven(starters, bench, captain, rules, weights);
+
+  // The hard gate: nothing is returned without passing the rules engine, independently of
+  // whatever the solver believed it was doing.
+  assertLegalStartingEleven(eleven.starters, eleven.bench, rules, {
+    squad,
+    captainId: eleven.captain.playerId,
+    viceCaptainId: eleven.viceCaptain.playerId,
+  });
+
+  return eleven;
+}
+
+/**
+ * Choose the best legal 15-player squad from the whole player pool, together with the XI it
+ * would field. This is the season-start and wildcard problem.
+ *
+ * Squad and XI are solved together on purpose. Picking 15 on total expected points alone would
+ * happily spend the budget on four excellent bench players who never start; the objective
+ * weights a bench place far lower than a starting place, so the money goes where it scores.
+ */
+export async function selectBestSquad(
+  pool: readonly ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+  solver: Solver,
+  options: { budget?: number; mustInclude?: number[]; mustExclude?: number[] } = {},
+): Promise<SquadSelection> {
+  const budget = options.budget ?? rules.squad.budget;
+  const mustInclude = new Set(options.mustInclude ?? []);
+  const mustExclude = new Set(options.mustExclude ?? []);
+
+  const selectable = pool.filter(
+    (player) => !player.availability.excluded && !mustExclude.has(player.playerId),
+  );
+
+  assertPoolIsViable(selectable, rules, budget);
+
+  const constraints: Constraint[] = [
+    {
+      name: 'squad_size',
+      terms: selectable.map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      bound: { type: 'equal', value: rules.squad.size },
+    },
+    {
+      name: 'budget',
+      terms: selectable.map((player) => ({
+        variable: IN_SQUAD(player.playerId),
+        coefficient: player.price,
+      })),
+      bound: { type: 'atMost', value: budget },
+    },
+  ];
+
+  for (const [position, required] of Object.entries(rules.squad.positionCounts)) {
+    constraints.push({
+      name: `squad_position_${position}`,
+      terms: selectable
+        .filter((player) => player.position === position)
+        .map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      bound: { type: 'equal', value: required },
+    });
+  }
+
+  const clubIds = [...new Set(selectable.map((player) => player.clubId))];
+  for (const clubId of clubIds) {
+    constraints.push({
+      name: `club_limit_${clubId}`,
+      terms: selectable
+        .filter((player) => player.clubId === clubId)
+        .map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      bound: { type: 'atMost', value: rules.squad.maxPerClub },
+    });
+  }
+
+  // A starter must be in the squad: y_i - x_i <= 0.
+  for (const player of selectable) {
+    constraints.push({
+      name: `starter_owned_${player.playerId}`,
+      terms: [
+        { variable: IN_XI(player.playerId), coefficient: 1 },
+        { variable: IN_SQUAD(player.playerId), coefficient: -1 },
+      ],
+      bound: { type: 'atMost', value: 0 },
+    });
+  }
+
+  for (const playerId of mustInclude) {
+    if (!selectable.some((player) => player.playerId === playerId)) {
+      throw new InfeasibleError(
+        `Player ${playerId} was required in the squad but is not selectable (unavailable, or not in the pool)`,
+      );
+    }
+    constraints.push({
+      name: `must_include_${playerId}`,
+      terms: [{ variable: IN_SQUAD(playerId), coefficient: 1 }],
+      bound: { type: 'equal', value: 1 },
+    });
+  }
+
+  const program: IntegerProgram = {
+    name: 'best_squad',
+    direction: 'maximise',
+    objective: [
+      // A squad place is worth the bench weighting; a starting place makes up the rest.
+      ...selectable.map((player) => ({
+        variable: IN_SQUAD(player.playerId),
+        coefficient: player.xPts * benchWeightFor(player, rules, weights),
+      })),
+      ...selectable.map((player) => ({
+        variable: IN_XI(player.playerId),
+        coefficient: player.xPts * (1 - benchWeightFor(player, rules, weights)),
+      })),
+      ...selectable.map((player) => ({
+        variable: IS_CAPTAIN(player.playerId),
+        coefficient: player.xPts * (rules.captain.multiplier - 1),
+      })),
+    ],
+    constraints: [
+      ...constraints,
+      ...elevenConstraints(selectable, rules),
+      ...captaincyConstraints(selectable),
+    ],
+    binaries: [
+      ...selectable.map((player) => IN_SQUAD(player.playerId)),
+      ...selectable.map((player) => IN_XI(player.playerId)),
+      ...selectable.map((player) => IS_CAPTAIN(player.playerId)),
+    ],
+  };
+
+  const result = await solver.solve(program);
+  if (!result.optimal) {
+    throw new InfeasibleError(
+      `No legal squad could be built within £${(budget / 10).toFixed(1)}m ` +
+        `(solver reported: ${result.status}).`,
+    );
+  }
+
+  const squad = selectable.filter(
+    (player) => (result.values.get(IN_SQUAD(player.playerId)) ?? 0) > 0.5,
+  );
+  const starters = squad.filter((player) => (result.values.get(IN_XI(player.playerId)) ?? 0) > 0.5);
+  const starterIds = new Set(starters.map((player) => player.playerId));
+  const bench = squad.filter((player) => !starterIds.has(player.playerId));
+  const captain = starters.find(
+    (player) => (result.values.get(IS_CAPTAIN(player.playerId)) ?? 0) > 0.5,
+  );
+  if (!captain) throw new InfeasibleError('Solver returned no captain');
+
+  const totalCost = squad.reduce((sum, player) => sum + player.price, 0);
+
+  // Hard gate again, on the full squad this time.
+  assertLegalSquad(squad, rules, { budget });
+  const eleven = buildEleven(starters, bench, captain, rules, weights);
+  assertLegalStartingEleven(eleven.starters, eleven.bench, rules, {
+    squad,
+    captainId: eleven.captain.playerId,
+    viceCaptainId: eleven.viceCaptain.playerId,
+  });
+
+  return { squad, eleven, totalCost, bankRemaining: budget - totalCost };
+}
+
+/** Fail with something actionable before handing an impossible problem to the solver. */
+function assertPoolIsViable(
+  pool: readonly ProjectedPlayer[],
+  rules: Rules,
+  budget: number,
+): void {
+  for (const [position, required] of Object.entries(rules.squad.positionCounts)) {
+    const available = pool.filter((player) => player.position === position);
+    if (available.length < required) {
+      throw new InfeasibleError(
+        `Only ${available.length} available ${position} in the player pool, but a squad needs ${required}. ` +
+          'Ingest fresh data, or check how many players are flagged as unavailable.',
+      );
+    }
+  }
+
+  // The cheapest legal squad, ignoring club limits - a quick lower bound on cost.
+  let cheapest = 0;
+  for (const [position, required] of Object.entries(rules.squad.positionCounts)) {
+    cheapest += pool
+      .filter((player) => player.position === position)
+      .map((player) => player.price)
+      .sort((a, b) => a - b)
+      .slice(0, required)
+      .reduce((sum, price) => sum + price, 0);
+  }
+  if (cheapest > budget) {
+    throw new InfeasibleError(
+      `Even the cheapest legal squad costs £${(cheapest / 10).toFixed(1)}m, which is over the ` +
+        `£${(budget / 10).toFixed(1)}m budget.`,
+    );
+  }
+}

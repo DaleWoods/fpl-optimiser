@@ -1,0 +1,326 @@
+import type { Database } from 'better-sqlite3';
+import type { ModelWeights, Rules } from '../config/schema.js';
+import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
+import { buildProjections, saveProjections } from '../model/build.js';
+import { GlpkSolver } from '../optimise/glpkSolver.js';
+import type { Solver } from '../optimise/solver.js';
+import { selectBestEleven, selectBestSquad } from '../optimise/squad.js';
+
+export interface TransferOption {
+  out: ProjectedPlayer;
+  in: ProjectedPlayer;
+  /** Change in expected points for the gameweek, after any hit. */
+  netGain: number;
+  gainBeforeHit: number;
+  hitCost: number;
+  reason: string;
+}
+
+export interface Recommendation {
+  mode: 'build-squad' | 'existing-squad';
+  eventId: number;
+  eventName: string | null;
+  deadlineIso: string | null;
+  modelVersion: string;
+  generatedAt: number;
+
+  squad: ProjectedPlayer[];
+  eleven: StartingEleven;
+  totalCost: number;
+  bankRemaining: number;
+
+  transfers: TransferOption[];
+  notes: string[];
+  playersConsidered: number;
+  lowConfidence: boolean;
+}
+
+export interface RecommendOptions {
+  eventId?: number;
+  teamId?: number | null;
+  /** Force building a squad from scratch even if one is loaded. */
+  fromScratch?: boolean;
+  budget?: number;
+  solver?: Solver;
+  /** How many candidates per position to consider for transfers. Keeps the search quick. */
+  transferCandidates?: number;
+}
+
+interface EventRow {
+  id: number;
+  name: string | null;
+  deadlineIso: string | null;
+}
+
+/** The gameweek to advise on: the next one with a deadline still in the future. */
+export function resolveTargetEvent(db: Database, eventId?: number): EventRow | null {
+  if (eventId !== undefined) {
+    return (
+      (db
+        .prepare('SELECT id, name, deadline_time_iso AS deadlineIso FROM event WHERE id = ?')
+        .get(eventId) as EventRow | undefined) ?? null
+    );
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  return (
+    (db
+      .prepare(
+        `SELECT id, name, deadline_time_iso AS deadlineIso FROM event
+         WHERE deadline_time IS NOT NULL AND deadline_time > ?
+         ORDER BY deadline_time ASC LIMIT 1`,
+      )
+      .get(now) as EventRow | undefined) ??
+    (db
+      .prepare(
+        `SELECT id, name, deadline_time_iso AS deadlineIso FROM event
+         ORDER BY id ASC LIMIT 1`,
+      )
+      .get() as EventRow | undefined) ??
+    null
+  );
+}
+
+/** The 15 currently owned, as projected players, or null when no squad is loaded. */
+function loadOwnedSquad(
+  db: Database,
+  teamId: number,
+  projections: readonly ProjectedPlayer[],
+): { squad: ProjectedPlayer[]; bank: number | null } | null {
+  const state = db
+    .prepare(
+      `SELECT id, bank FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
+    )
+    .get(teamId) as { id: number; bank: number | null } | undefined;
+
+  if (!state) return null;
+
+  const picks = db
+    .prepare('SELECT player_id AS playerId FROM squad_pick WHERE manager_state_id = ? ORDER BY slot')
+    .all(state.id) as { playerId: number }[];
+
+  if (picks.length === 0) return null;
+
+  const byId = new Map(projections.map((player) => [player.playerId, player]));
+  const squad = picks
+    .map((pick) => byId.get(pick.playerId))
+    .filter((player): player is ProjectedPlayer => player !== undefined);
+
+  return squad.length === picks.length ? { squad, bank: state.bank } : null;
+}
+
+/**
+ * Find the best single transfers.
+ *
+ * Each candidate swap is evaluated by re-solving the starting XI for the resulting squad, so
+ * the gain reflects what would actually be fielded rather than a naive comparison of the two
+ * players' projections - bringing in a good player who would sit on the bench is worth nothing.
+ */
+async function findTransfers(
+  squad: readonly ProjectedPlayer[],
+  pool: readonly ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+  solver: Solver,
+  options: { bank: number; freeTransfers: number; candidatesPerPosition: number },
+): Promise<TransferOption[]> {
+  const baseline = await selectBestEleven(squad, rules, weights, solver);
+  const ownedIds = new Set(squad.map((player) => player.playerId));
+
+  // Club counts, so a swap cannot break the three-per-club rule.
+  const clubCounts = new Map<number, number>();
+  for (const player of squad) clubCounts.set(player.clubId, (clubCounts.get(player.clubId) ?? 0) + 1);
+
+  const byPosition = new Map<string, ProjectedPlayer[]>();
+  for (const player of pool) {
+    if (ownedIds.has(player.playerId) || player.availability.excluded) continue;
+    const list = byPosition.get(player.position) ?? [];
+    list.push(player);
+    byPosition.set(player.position, list);
+  }
+  for (const [position, list] of byPosition) {
+    byPosition.set(
+      position,
+      list.sort((a, b) => b.xPts - a.xPts).slice(0, options.candidatesPerPosition),
+    );
+  }
+
+  const results: TransferOption[] = [];
+  const hitCost = options.freeTransfers >= 1 ? 0 : rules.transfers.hitCost;
+
+  for (const out of squad) {
+    const candidates = byPosition.get(out.position) ?? [];
+    // Selling price is unknown from the public API, so current price is used as a proxy.
+    const budgetForReplacement = options.bank + out.price;
+
+    for (const incoming of candidates) {
+      if (incoming.price > budgetForReplacement) continue;
+
+      const clubCount = clubCounts.get(incoming.clubId) ?? 0;
+      const adjusted = incoming.clubId === out.clubId ? clubCount - 1 : clubCount;
+      if (adjusted >= rules.squad.maxPerClub) continue;
+
+      const candidateSquad = squad.map((player) =>
+        player.playerId === out.playerId ? incoming : player,
+      );
+
+      let eleven: StartingEleven;
+      try {
+        eleven = await selectBestEleven(candidateSquad, rules, weights, solver);
+      } catch {
+        continue; // The swap leaves no legal XI.
+      }
+
+      const gainBeforeHit = eleven.expectedPoints - baseline.expectedPoints;
+      const netGain = gainBeforeHit - hitCost;
+
+      if (netGain <= 0) continue;
+
+      results.push({
+        out,
+        in: incoming,
+        netGain: Math.round(netGain * 100) / 100,
+        gainBeforeHit: Math.round(gainBeforeHit * 100) / 100,
+        hitCost,
+        reason:
+          `${incoming.name} (${incoming.clubShort}, £${(incoming.price / 10).toFixed(1)}m) projects ` +
+          `${incoming.xPts.toFixed(2)} against ${out.name}'s ${out.xPts.toFixed(2)}` +
+          (hitCost > 0 ? `, and is worth it even after a -${hitCost} hit` : '') +
+          `. ${out.availability.excluded ? `${out.name} cannot play: ${out.availability.reason}. ` : ''}` +
+          `Net gain ${netGain >= 0 ? '+' : ''}${netGain.toFixed(2)} points this gameweek.`,
+      });
+    }
+  }
+
+  return results.sort((a, b) => b.netGain - a.netGain).slice(0, 5);
+}
+
+/**
+ * Produce a full recommendation for a gameweek.
+ *
+ * With a squad loaded, this optimises the XI and suggests transfers. Without one - which is the
+ * normal state before a season's first deadline - it builds the best legal 15 from scratch,
+ * which is the season-start and wildcard problem.
+ */
+export async function recommend(
+  db: Database,
+  rules: Rules,
+  weights: ModelWeights,
+  options: RecommendOptions = {},
+): Promise<Recommendation> {
+  const solver = options.solver ?? new GlpkSolver();
+  const notes: string[] = [];
+
+  const event = resolveTargetEvent(db, options.eventId);
+  if (!event) {
+    throw new Error(
+      'No gameweeks are stored yet. Run `fpl ingest` first so the fixture list and deadlines are known.',
+    );
+  }
+
+  const projections = buildProjections(db, event.id, rules, weights);
+  if (projections.length === 0) {
+    throw new Error(
+      'No player data stored yet. Run `fpl ingest` before asking for a recommendation.',
+    );
+  }
+
+  saveProjections(db, projections, event.id, weights.modelVersion);
+
+  const withFixtures = projections.filter((player) => player.xPts > 0);
+  if (withFixtures.length === 0) {
+    notes.push(
+      `No club has a fixture in ${event.name ?? `gameweek ${event.id}`}, so every projection is zero.`,
+    );
+  }
+
+  const lowConfidence =
+    projections.filter((player) => player.confidence === 'low').length > projections.length / 2;
+  if (lowConfidence) {
+    notes.push(
+      'Most projections are low confidence because the season has little or no match history ' +
+        "yet. Early-gameweek advice leans on the FPL API's own expected-points figures and " +
+        'fixture difficulty rather than form.',
+    );
+  }
+
+  const owned = options.teamId ? loadOwnedSquad(db, options.teamId, projections) : null;
+
+  if (!owned || options.fromScratch) {
+    if (!owned && options.teamId) {
+      notes.push(
+        'No squad is loaded, so this is the best legal 15 built from scratch within the budget. ' +
+          'Before a season\'s first deadline the FPL API does not expose your picks, so there is ' +
+          'nothing to load yet.',
+      );
+    }
+
+    const selection = await selectBestSquad(projections, rules, weights, solver, {
+      budget: options.budget,
+    });
+
+    return {
+      mode: 'build-squad',
+      eventId: event.id,
+      eventName: event.name,
+      deadlineIso: event.deadlineIso,
+      modelVersion: weights.modelVersion,
+      generatedAt: Math.floor(Date.now() / 1000),
+      squad: selection.squad,
+      eleven: selection.eleven,
+      totalCost: selection.totalCost,
+      bankRemaining: selection.bankRemaining,
+      transfers: [],
+      notes,
+      playersConsidered: projections.length,
+      lowConfidence,
+    };
+  }
+
+  const eleven = await selectBestEleven(owned.squad, rules, weights, solver);
+
+  const bank = owned.bank ?? 0;
+  if (owned.bank === null) {
+    notes.push('Bank balance is unknown, so transfer suggestions assume nothing spare is available.');
+  }
+  notes.push(
+    'Selling prices are not published by the FPL API, so transfer affordability uses current ' +
+      'price as a proxy. Check the real selling price on the FPL site before acting.',
+  );
+
+  const freeTransfers =
+    (db
+      .prepare(
+        'SELECT free_transfers AS ft FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1',
+      )
+      .get(options.teamId!) as { ft: number | null } | undefined)?.ft ?? 1;
+
+  const transfers = await findTransfers(owned.squad, projections, rules, weights, solver, {
+    bank,
+    freeTransfers,
+    candidatesPerPosition: options.transferCandidates ?? 12,
+  });
+
+  if (transfers.length === 0) {
+    notes.push('No single transfer improves the projected score enough to be worth making.');
+  }
+
+  const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);
+
+  return {
+    mode: 'existing-squad',
+    eventId: event.id,
+    eventName: event.name,
+    deadlineIso: event.deadlineIso,
+    modelVersion: weights.modelVersion,
+    generatedAt: Math.floor(Date.now() / 1000),
+    squad: owned.squad,
+    eleven,
+    totalCost,
+    bankRemaining: bank,
+    transfers,
+    notes,
+    playersConsidered: projections.length,
+    lowConfidence,
+  };
+}

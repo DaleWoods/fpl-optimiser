@@ -15,12 +15,12 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 3 | FPL API client (throttled, cached, replayable) | done |
 | 4 | Ingestion into storage + change detection | done |
 | 4b | CLI, report page and Render blueprint | done |
-| 5 | Availability classification and selling-price rules | next |
-| 6 | Rules engine (hard constraints) | todo |
-| 7 | Expected-points model | todo |
-| 8 | ILP optimiser: best XI, captain, bench order | todo |
-| 9 | Single-transfer recommender | todo |
-| 10 | CLI report | todo |
+| 5 | Availability classification | done |
+| 6 | Rules engine (hard constraints) | done |
+| 7 | Expected-points model | done |
+| 8 | ILP optimiser: best XI, best squad, captain, bench | done |
+| 9 | Single-transfer recommender | done |
+| 10 | CLI + web report | done |
 
 ## Requirements
 
@@ -38,6 +38,9 @@ npm test
 npm run fpl -- ingest              # pull fresh data into local storage
 npm run fpl -- ingest --summaries  # ...including per-player match history (slow)
 npm run fpl -- status              # state of play: freshness, squad, flags, changes
+npm run fpl -- optimise            # recommend the best team for the next gameweek
+npm run fpl -- optimise --gw 1     # ...for a specific gameweek
+npm run fpl -- optimise --scratch  # build a squad from scratch, ignoring the one loaded
 npm run fpl -- serve               # serve the report at http://localhost:3000
 npm run fpl -- help
 ```
@@ -65,7 +68,9 @@ Endpoints once deployed:
 
 | Path | Purpose |
 |---|---|
-| `/` | The report page |
+| `/` | The report page, with the "pick my best team" button |
+| `/optimise` | The recommendation: XI, captain, bench, transfers |
+| `/optimise.json` | The same, machine-readable |
 | `/state.json` | The same data, machine-readable |
 | `/healthz` | Health check — deliberately independent of the FPL API |
 | `POST /ingest` | Trigger an ingestion immediately |
