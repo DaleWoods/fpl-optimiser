@@ -53,6 +53,16 @@ export interface PlayerModelInput {
   fixtures: FixtureContext[];
 
   /**
+   * True when the per-90 rates above come from a previous season rather than this one.
+   * Early in a season that is the honest source of evidence, but it must be visible in the
+   * explanation and reflected in confidence - squads and roles change over a summer.
+   */
+  usingPreviousSeason?: boolean;
+  previousSeasonName?: string | null;
+  /** Total points in that previous season, for the explanation. */
+  previousSeasonPoints?: number | null;
+
+  /**
    * The FPL API's own expected-points figure (ep_next), used only as a fallback.
    *
    * At the start of a season every season-to-date stat is zero, so a form-based model has
@@ -360,6 +370,14 @@ export function projectPlayer(
 
   const xPts = xPtsRaw * input.availability.probability;
 
+  if (input.usingPreviousSeason) {
+    reasons.unshift(
+      `Rates are from ${input.previousSeasonName ?? 'last season'}` +
+        (input.previousSeasonPoints != null ? ` (${input.previousSeasonPoints} points)` : '') +
+        ' because this season has no minutes yet - treat with caution, roles change over a summer.',
+    );
+  }
+
   if (input.availability.probability < 1) {
     reasons.push(
       `Weighted to ${Math.round(input.availability.probability * 100)}% for availability: ${input.availability.reason}`,
@@ -381,6 +399,9 @@ function assessConfidence(
   input: PlayerModelInput,
   weights: ModelWeights,
 ): 'high' | 'medium' | 'low' {
+  // Last season's rates are real evidence, but a summer of transfers and new managers means
+  // they can never be high confidence.
+  if (input.usingPreviousSeason) return input.xgPer90 !== null ? 'medium' : 'low';
   if (input.minutesPlayed >= weights.attacking.priorWeightMinutes && input.xgPer90 !== null) {
     return 'high';
   }

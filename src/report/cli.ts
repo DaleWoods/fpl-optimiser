@@ -27,6 +27,8 @@ Optimise options:
 Ingest options:
   --summaries              Also pull per-player match history (one request per
                            player, throttled - slow, but needed by the model)
+  --elite                  Also sample what top-ranked managers own (needs a
+                           finished gameweek; squads are private before that)
   --no-entry               Skip loading your own squad
   --replay <dir>           Read recorded API payloads from a directory instead
                            of calling the FPL API
@@ -71,6 +73,7 @@ async function commandIngest(flags: Map<string, string | true>): Promise<number>
   const result = await ingestAll(db, api, config.rules, {
     teamId: flags.get('no-entry') ? null : config.app.teamId,
     includePlayerSummaries: Boolean(flags.get('summaries')),
+    includeEliteOwnership: Boolean(flags.get('elite')),
     onProgress: (message) => console.log(message),
   });
 
@@ -206,8 +209,16 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
           : '';
     console.log(
       `  ${player.position} ${player.name.padEnd(18)} ${player.clubShort.padEnd(4)} ` +
-        `${money(player.price).padStart(7)}  ${player.xPts.toFixed(2)} xPts${role}`,
+        `${money(player.price).padStart(7)}  ${player.xPts.toFixed(2)} xPts${role}` +
+        `  [${player.confidence}]`,
     );
+    // Why this player: the components that make up the projection, then the narrative.
+    const parts = Object.entries(player.breakdown)
+      .filter(([, value]) => Math.abs(value) >= 0.01)
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+      .map(([name, value]) => `${name} ${value >= 0 ? '+' : ''}${value.toFixed(2)}`);
+    if (parts.length > 0) console.log(`       ${parts.join(', ')}`);
+    for (const reason of player.reasons) console.log(`       - ${reason}`);
   }
 
   console.log('\nBench (auto-sub order):');
@@ -224,6 +235,31 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
       console.log(`  ${transfer.out.name} -> ${transfer.in.name} (${transfer.netGain >= 0 ? '+' : ''}${transfer.netGain.toFixed(2)} pts)`);
       console.log(`    ${transfer.reason}`);
     }
+  }
+
+  console.log('\nEvidence behind these projections:');
+  console.log(`  - ${result.playersConsidered} players considered, model ${result.modelVersion}`);
+  if (result.evidence.usingPreviousSeason > 0) {
+    console.log(
+      `  - ${result.evidence.usingPreviousSeason} player(s) projected from last season's rates ` +
+        '(no minutes yet this season)',
+    );
+  }
+  if (result.evidence.intelCompiledAt) {
+    console.log(
+      `  - curated pre-season notes compiled ${result.evidence.intelCompiledAt}, ` +
+        `${result.evidence.intelApplied} adjustment(s) applied`,
+    );
+  }
+  console.log(
+    result.evidence.eliteSampleSize > 0
+      ? `  - elite-manager ownership sampled for ${result.evidence.eliteSampleSize} players`
+      : '  - elite-manager ownership: not available yet (squads are private until GW1 starts)',
+  );
+  for (const note of result.evidence.contextNotes) console.log(`  - ${note}`);
+  if (result.evidence.intelSources.length > 0) {
+    console.log('\nSources for the curated notes:');
+    for (const source of result.evidence.intelSources) console.log(`  ${source}`);
   }
 
   if (result.notes.length > 0) {

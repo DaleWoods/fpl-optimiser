@@ -36,6 +36,21 @@ interface TeamRow {
   defenceAway: number | null;
 }
 
+interface SeasonHistoryRow {
+  playerId: number;
+  seasonName: string;
+  totalPoints: number | null;
+  minutes: number | null;
+  starts: number | null;
+  goals: number | null;
+  assists: number | null;
+  saves: number | null;
+  bonus: number | null;
+  expectedGoals: number | null;
+  expectedAssists: number | null;
+  defensiveContribution: number | null;
+}
+
 interface FixtureRow {
   id: number;
   eventId: number | null;
@@ -148,6 +163,21 @@ export function buildProjections(
     playedByTeam.set(row.a, (playedByTeam.get(row.a) ?? 0) + 1);
   }
 
+  // Last completed season per player, for opening-gameweek projections when this season has
+  // no minutes yet. Sorted so the most recent season wins.
+  const lastSeason = new Map<number, SeasonHistoryRow>();
+  for (const row of db
+    .prepare(
+      `SELECT player_id AS playerId, season_name AS seasonName, total_points AS totalPoints,
+              minutes, starts, goals_scored AS goals, assists, saves, bonus,
+              expected_goals AS expectedGoals, expected_assists AS expectedAssists,
+              defensive_contribution AS defensiveContribution
+       FROM player_season_history ORDER BY season_name ASC`,
+    )
+    .all() as SeasonHistoryRow[]) {
+    lastSeason.set(row.playerId, row);
+  }
+
   const projected: ProjectedPlayer[] = [];
 
   for (const row of players) {
@@ -160,6 +190,15 @@ export function buildProjections(
       weights,
     );
 
+    // This season's minutes decide which evidence to use. With none, last season's rates are
+    // the best real signal available - far better than the API's blanket expected-points
+    // figure, and far better than pretending a zero is a measurement.
+    const previous = (row.minutes ?? 0) > 0 ? undefined : lastSeason.get(row.playerId);
+    const usingPrevious = previous !== undefined && (previous.minutes ?? 0) > 0;
+
+    const source = usingPrevious ? previous : row;
+    const sourceMinutes = usingPrevious ? previous.minutes : row.minutes;
+
     const input: PlayerModelInput = {
       playerId: row.playerId,
       name: row.name,
@@ -167,16 +206,21 @@ export function buildProjections(
       availability,
       ownership: row.ownership,
       minutesPlayed: row.minutes ?? 0,
-      matchesAvailable: playedByTeam.get(row.teamId) ?? 0,
-      starts: row.starts ?? 0,
-      xgPer90: per90(row.expectedGoals, row.minutes),
-      xaPer90: per90(row.expectedAssists, row.minutes),
-      goalsPer90: per90(row.goals, row.minutes),
-      assistsPer90: per90(row.assists, row.minutes),
-      savesPer90: per90(row.saves, row.minutes),
-      defconPer90: per90(row.defensiveContribution, row.minutes),
-      bonusPer90: per90(row.bonus, row.minutes),
+      matchesAvailable: usingPrevious
+        ? Math.round((previous.minutes ?? 0) / 90)
+        : (playedByTeam.get(row.teamId) ?? 0),
+      starts: usingPrevious ? (previous.starts ?? 0) : (row.starts ?? 0),
+      xgPer90: per90(source.expectedGoals, sourceMinutes),
+      xaPer90: per90(source.expectedAssists, sourceMinutes),
+      goalsPer90: per90(source.goals, sourceMinutes),
+      assistsPer90: per90(source.assists, sourceMinutes),
+      savesPer90: per90(source.saves, sourceMinutes),
+      defconPer90: per90(source.defensiveContribution, sourceMinutes),
+      bonusPer90: per90(source.bonus, sourceMinutes),
       fixtures: fixturesByTeam.get(row.teamId) ?? [],
+      usingPreviousSeason: usingPrevious,
+      previousSeasonName: usingPrevious ? previous.seasonName : null,
+      previousSeasonPoints: usingPrevious ? previous.totalPoints : null,
       fallbackExpectedPoints: row.epNext,
     };
 
@@ -195,6 +239,7 @@ export function buildProjections(
       breakdown: projection.breakdown,
       expectedMinutes: projection.expectedMinutes,
       confidence: projection.confidence,
+      reasons: projection.reasons,
     });
   }
 

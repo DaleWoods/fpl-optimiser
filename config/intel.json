@@ -1,0 +1,149 @@
+{
+  "$comment": [
+    "Hand-curated pre-season intelligence, compiled from public FPL coverage.",
+    "",
+    "WHY THIS FILE EXISTS: the app cannot search the web. It can only call the FPL API. Anything",
+    "that comes from journalism, press conferences or community consensus has to be brought in",
+    "deliberately, and that means somebody writes it down here, dated and sourced, where it can be",
+    "argued with. Nothing in this file is scraped, inferred or invented by the model.",
+    "",
+    "It matters most right now and least later. Before a ball is kicked there are no stats for the",
+    "new season, so this is real evidence. Once matches are played the API's own data takes over",
+    "and 'staleAfter' below stops these adjustments being applied to a season they no longer",
+    "describe.",
+    "",
+    "MATCHING: entries are matched on web_name plus club short name, both as the FPL API reports",
+    "them. A name that matches nothing is reported, never silently ignored - see `fpl intel`.",
+    "",
+    "EVERY adjustment is a tunable number, and setting eliteConsensusWeight to 0 disables the",
+    "whole lot without deleting anything."
+  ],
+
+  "compiledAt": "2026-08-10",
+  "season": "2026/27",
+  "staleAfterGameweek": 4,
+
+  "sources": [
+    "https://www.premierleague.com/en/news/4681112/early-scout-selection-the-best-fantasy-squad-for-202627",
+    "https://www.fantasyfootballscout.co.uk/2026/08/10/10-top-managers-reveal-their-fpl-2026-27-teams",
+    "https://www.fantasyfootballfix.com/blog-index/fpl-template-team-2026-27/",
+    "https://www.fantasyfootballscout.co.uk/2026/07/22/fpl-2026-27-price-reveals-live-haaland-rises-to-record-high",
+    "https://onefpl.com/blog/who-will-miss-fpl-gameweek-1-2026-27",
+    "https://www.chaseyoursport.com/fantasy-football/highest-scoring-defenders-fpl-2025-26/12249",
+    "https://www.fplpilot.com/blog/fpl-2025-26-season-review-data"
+  ],
+
+  "weights": {
+    "$comment": [
+      "eliteConsensusWeight: xPts added to a player owned by essentially every elite manager,",
+      "scaled by the consensus figure below. It is a nudge, never a gate - a player this file",
+      "loves still has to earn his place through the model and the rules engine.",
+      "availabilityOverridesEnabled: whether the flags below may reduce a player's availability.",
+      "They can only ever make a player LESS available, never more - see the loader."
+    ],
+    "eliteConsensusWeight": 0.6,
+    "availabilityOverridesEnabled": true
+  },
+
+  "eliteConsensus": [
+    {
+      "webName": "Haaland",
+      "club": "MCI",
+      "position": "FWD",
+      "expectedPrice": 155,
+      "consensus": 1.0,
+      "note": "Owned by essentially every elite manager and above 70% overall ownership. Record £15.5m price after 239 points last season. Three attractive home fixtures in the opening five."
+    },
+    {
+      "webName": "B.Fernandes",
+      "club": "MUN",
+      "position": "MID",
+      "expectedPrice": 120,
+      "consensus": 0.9,
+      "note": "The biggest constant in elite squads. Opens against Hull City and Ipswich Town, with secure starts and captaincy appeal."
+    },
+    {
+      "webName": "Gabriel",
+      "club": "ARS",
+      "position": "DEF",
+      "expectedPrice": 90,
+      "consensus": 0.8,
+      "note": "209 points last season, at least 30 more than any other defender. Arsenal are in a defensive tier of their own."
+    },
+    {
+      "webName": "Szoboszlai",
+      "club": "LIV",
+      "position": "MID",
+      "expectedPrice": 70,
+      "consensus": 0.6,
+      "note": "Set-piece duties plus defensive-contribution potential at £7.0m - a cheaper route into Liverpool's attack."
+    },
+    {
+      "webName": "João Pedro",
+      "club": "CHE",
+      "position": "FWD",
+      "expectedPrice": 75,
+      "consensus": 0.6,
+      "note": "Repeatedly named one of the best value forwards. Chelsea have favourable fixtures and no European football."
+    },
+    {
+      "webName": "Igor Jesus",
+      "club": "NFO",
+      "position": "FWD",
+      "expectedPrice": 60,
+      "consensus": 0.4,
+      "note": "Top pre-season form pick: four goals in four friendlies under a new head coach."
+    },
+    {
+      "webName": "Guéhi",
+      "club": "CRY",
+      "position": "DEF",
+      "expectedPrice": 60,
+      "consensus": 0.35,
+      "note": "Top scorer among £5.5m-£6.5m defenders last season: 179 points, 14 clean sheets."
+    },
+    {
+      "webName": "Kinský",
+      "club": "TOT",
+      "position": "GKP",
+      "expectedPrice": 45,
+      "consensus": 0.3,
+      "note": "Popular budget goalkeeper, freeing money for the outfield."
+    }
+  ],
+
+  "availabilityFlags": [
+    {
+      "$comment": "These only ever reduce availability. The API remains the authority on injuries.",
+      "webName": "Saliba",
+      "club": "ARS",
+      "state": "injured",
+      "probability": 0,
+      "note": "Reported as the biggest defensive absence going into the season."
+    },
+    { "webName": "Ekitiké", "club": "LIV", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
+    { "webName": "Gomez", "club": "LIV", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
+    { "webName": "Bradley", "club": "LIV", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
+    { "webName": "Ugarte", "club": "MUN", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
+    { "webName": "Kulusevski", "club": "TOT", "state": "doubtful", "probability": 0.25, "note": "Return date unknown." },
+    { "webName": "Odobert", "club": "TOT", "state": "doubtful", "probability": 0.25, "note": "Return date unknown." },
+    { "webName": "Livramento", "club": "NEW", "state": "doubtful", "probability": 0.75, "note": "Reported at 75% availability." },
+    { "webName": "Joelinton", "club": "NEW", "state": "doubtful", "probability": 0.75, "note": "Reported at 75% availability." },
+    {
+      "webName": "Martínez",
+      "club": "AVL",
+      "state": "doubtful",
+      "probability": 0.5,
+      "note": "Played in the World Cup final on 19 July; Aston Villa may give him longer to recover than gameweek 1 allows."
+    },
+    { "webName": "Enzo", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Late return from the World Cup; involvement in the opener uncertain." },
+    { "webName": "Reece James", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Flagged as one to monitor through pre-season." }
+  ],
+
+  "contextNotes": [
+    "The 2026 World Cup final was played on 19 July 2026. Players who reached the final or the third-place playoff did not report back to club training until 9-12 August, leaving under eleven days of preparation before the 21 August deadline. Expect rotation and cameos rather than full starts for that group.",
+    "Nine clubs begin the season with a new head coach or an unresolved managerial situation, so last season's roles are a weaker guide than usual.",
+    "Manchester City and Arsenal are modelled as a tier of their own for the opening fixtures.",
+    "Defenders dominated the 2025/26 scoring charts, which the DefCon rules continue to reward."
+  ]
+}

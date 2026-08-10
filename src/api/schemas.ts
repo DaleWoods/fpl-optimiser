@@ -199,10 +199,58 @@ export const historyEntrySchema = z.looseObject({
   defensive_contribution: numeric(),
 });
 
+/**
+ * A previous season's totals. At the start of a season this is the only real evidence about a
+ * player, so it is modelled properly rather than skipped.
+ */
+export const pastSeasonSchema = z.looseObject({
+  season_name: z.string(),
+  element_code: numeric(),
+  start_cost: numeric(),
+  end_cost: numeric(),
+  total_points: numeric(),
+  minutes: numeric(),
+  starts: numeric(),
+  goals_scored: numeric(),
+  assists: numeric(),
+  clean_sheets: numeric(),
+  goals_conceded: numeric(),
+  saves: numeric(),
+  bonus: numeric(),
+  bps: numeric(),
+  yellow_cards: numeric(),
+  red_cards: numeric(),
+  expected_goals: numeric(),
+  expected_assists: numeric(),
+  expected_goal_involvements: numeric(),
+  expected_goals_conceded: numeric(),
+  defensive_contribution: numeric(),
+});
+
 export const elementSummarySchema = z.looseObject({
   history: z.array(historyEntrySchema),
   fixtures: z.array(z.looseObject({})).optional(),
-  history_past: z.array(z.looseObject({})).optional(),
+  history_past: z.array(pastSeasonSchema).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// leagues-classic/{id}/standings - used to sample what top managers own
+// ---------------------------------------------------------------------------
+
+export const leagueStandingsSchema = z.looseObject({
+  league: z.looseObject({ id: z.number().int(), name: nullableString }).optional(),
+  standings: z.looseObject({
+    has_next: z.union([z.boolean(), z.null()]).optional().transform((v) => v === true),
+    results: z.array(
+      z.looseObject({
+        entry: z.number().int(),
+        entry_name: nullableString,
+        player_name: nullableString,
+        rank: numeric(),
+        total: numeric(),
+      }),
+    ),
+  }),
 });
 
 // ---------------------------------------------------------------------------
@@ -285,3 +333,5 @@ export type ApiEntry = z.infer<typeof entrySchema>;
 export type ApiPicks = z.infer<typeof picksSchema>;
 export type ApiPick = z.infer<typeof pickSchema>;
 export type ApiEntryHistory = z.infer<typeof entryHistorySchema>;
+export type ApiPastSeason = z.infer<typeof pastSeasonSchema>;
+export type ApiLeagueStandings = z.infer<typeof leagueStandingsSchema>;

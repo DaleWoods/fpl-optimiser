@@ -168,7 +168,23 @@ function playerRow(player: {
   price: number;
   xPts: number;
   confidence: string;
+  breakdown: Record<string, number>;
+  reasons: string[];
 }, marker = ''): string {
+  // The justification: the components that make up the projection, then the narrative behind it.
+  const parts = Object.entries(player.breakdown)
+    .filter(([, value]) => Math.abs(value) >= 0.01)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .map(
+      ([name, value]) =>
+        `<span class="pill">${escapeHtml(name)} ${value >= 0 ? '+' : ''}${value.toFixed(2)}</span>`,
+    )
+    .join(' ');
+
+  const reasons = player.reasons
+    .map((reason) => `<li>${escapeHtml(reason)}</li>`)
+    .join('');
+
   return `<tr>
     <td>${escapeHtml(player.position)}</td>
     <td>${escapeHtml(player.name)} ${marker}</td>
@@ -176,7 +192,13 @@ function playerRow(player: {
     <td>${formatMoney(player.price)}</td>
     <td>${player.xPts.toFixed(2)}</td>
     <td class="muted">${escapeHtml(player.confidence)}</td>
-  </tr>`;
+  </tr>
+  <tr class="why"><td></td><td colspan="5">
+    <details><summary class="muted">why?</summary>
+      <div class="parts">${parts}</div>
+      ${reasons ? `<ul>${reasons}</ul>` : ''}
+    </details>
+  </td></tr>`;
 }
 
 export function renderRecommendation(rec: Recommendation): string {
@@ -245,6 +267,12 @@ export function renderRecommendation(rec: Recommendation): string {
           padding:.1rem .6rem; font-size:.8rem; }
   .scroll { overflow-x:auto; }
   a { color:inherit; }
+  tr.why td { border-bottom:1px solid var(--line); padding-top:0; }
+  tr.why summary { cursor:pointer; font-size:.85rem; }
+  tr.why ul { margin:.4rem 0 .2rem; padding-left:1.1rem; font-size:.88rem; }
+  .parts { margin:.4rem 0; display:flex; flex-wrap:wrap; gap:.3rem; }
+  .pill { display:inline-block; background:var(--line); border-radius:99px;
+          padding:.1rem .55rem; font-size:.78rem; }
 </style></head>
 <body><main>
   <p><a href="/">&larr; back</a></p>
@@ -279,6 +307,37 @@ export function renderRecommendation(rec: Recommendation): string {
   <div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div>
 
   ${rec.transfers.length > 0 ? `<h2>Suggested transfers</h2>${transfers}` : ''}
+
+  <h2>Evidence behind these projections</h2>
+  <ul>
+    <li>${rec.playersConsidered} players considered, model ${escapeHtml(rec.modelVersion)}</li>
+    ${
+      rec.evidence.usingPreviousSeason > 0
+        ? `<li>${rec.evidence.usingPreviousSeason} player(s) projected from last season's rates,
+            because this season has no minutes yet</li>`
+        : ''
+    }
+    ${
+      rec.evidence.intelCompiledAt
+        ? `<li>Curated pre-season notes compiled ${escapeHtml(rec.evidence.intelCompiledAt)},
+            ${rec.evidence.intelApplied} adjustment(s) applied</li>`
+        : ''
+    }
+    <li>${
+      rec.evidence.eliteSampleSize > 0
+        ? `Elite-manager ownership sampled for ${rec.evidence.eliteSampleSize} players`
+        : 'Elite-manager ownership: not available yet - squads stay private until a gameweek starts'
+    }</li>
+    ${rec.evidence.contextNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}
+  </ul>
+
+  ${
+    rec.evidence.intelSources.length > 0
+      ? `<h2>Sources for the curated notes</h2><ul>${rec.evidence.intelSources
+          .map((src) => `<li><a href="${escapeHtml(src)}" rel="noreferrer noopener">${escapeHtml(src)}</a></li>`)
+          .join('')}</ul>`
+      : ''
+  }
 
   ${notes ? `<h2>Notes</h2><ul>${notes}</ul>` : ''}
 </main></body></html>`;

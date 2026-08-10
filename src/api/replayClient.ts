@@ -8,11 +8,13 @@ import {
   entryHistorySchema,
   entrySchema,
   fixturesSchema,
+  leagueStandingsSchema,
   picksSchema,
   type ApiElementSummary,
   type ApiEntry,
   type ApiEntryHistory,
   type ApiFixtures,
+  type ApiLeagueStandings,
   type ApiPicks,
   type Bootstrap,
 } from './schemas.js';
@@ -86,6 +88,14 @@ export class ReplayFplApi implements FplApi {
     );
   }
 
+  leagueStandings(leagueId: number, page = 1): Promise<ApiResult<ApiLeagueStandings>> {
+    return this.read(
+      `league-${leagueId}-page-${page}.json`,
+      leagueStandingsSchema,
+      `leagues-classic/${leagueId}/standings/`,
+    );
+  }
+
   private async read<T>(file: string, schema: z.ZodType<T>, path: string): Promise<ApiResult<T>> {
     const full = resolve(this.dir, file);
     if (!existsSync(full)) {
@@ -127,6 +137,7 @@ export class StubFplApi implements FplApi {
       entry?: Record<number, unknown>;
       picks?: Record<string, unknown>;
       history?: Record<number, unknown>;
+      leagues?: Record<string, unknown>;
     },
     private readonly fetchedAt: number = Math.floor(Date.now() / 1000),
   ) {}
@@ -175,5 +186,13 @@ export class StubFplApi implements FplApi {
 
   entryHistory(teamId: number) {
     return this.wrap(entryHistorySchema, this.payloads.history?.[teamId], `entry/${teamId}/history/`);
+  }
+
+  leagueStandings(leagueId: number, page = 1) {
+    return this.wrap(
+      leagueStandingsSchema,
+      this.payloads.leagues?.[`${leagueId}:${page}`],
+      `leagues-classic/${leagueId}/standings/`,
+    );
   }
 }

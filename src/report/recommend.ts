@@ -1,7 +1,9 @@
 import type { Database } from 'better-sqlite3';
 import type { ModelWeights, Rules } from '../config/schema.js';
 import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
+import { latestEliteOwnership } from '../ingest/elite.js';
 import { buildProjections, saveProjections } from '../model/build.js';
+import { applyIntel, loadIntel, type Intel } from '../model/intel.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
 import { selectBestEleven, selectBestSquad } from '../optimise/squad.js';
@@ -33,6 +35,17 @@ export interface Recommendation {
   notes: string[];
   playersConsidered: number;
   lowConfidence: boolean;
+
+  /** Where the evidence behind these projections came from. */
+  evidence: {
+    intelCompiledAt: string | null;
+    intelSources: string[];
+    intelApplied: number;
+    intelUnmatched: string[];
+    contextNotes: string[];
+    eliteSampleSize: number;
+    usingPreviousSeason: number;
+  };
 }
 
 export interface RecommendOptions {
@@ -44,6 +57,8 @@ export interface RecommendOptions {
   solver?: Solver;
   /** How many candidates per position to consider for transfers. Keeps the search quick. */
   transferCandidates?: number;
+  /** Curated intel. Pass null to ignore it entirely. Defaults to config/intel.json. */
+  intel?: Intel | null;
 }
 
 interface EventRow {
@@ -218,12 +233,39 @@ export async function recommend(
     );
   }
 
-  const projections = buildProjections(db, event.id, rules, weights);
-  if (projections.length === 0) {
+  const rawProjections = buildProjections(db, event.id, rules, weights);
+  if (rawProjections.length === 0) {
     throw new Error(
       'No player data stored yet. Run `fpl ingest` before asking for a recommendation.',
     );
   }
+
+  // Curated pre-season notes, then what elite managers actually own. Both are evidence the
+  // FPL API cannot give us; both are applied transparently and recorded in the output.
+  const intel = options.intel === undefined ? loadIntel() : options.intel;
+  const intelResult = applyIntel(rawProjections, intel, event.id);
+  if (intelResult.skippedReason) notes.push(intelResult.skippedReason);
+  if (intelResult.unmatched.length > 0) {
+    notes.push(
+      `${intelResult.unmatched.length} curated note(s) matched no player and were ignored: ` +
+        `${intelResult.unmatched.slice(0, 5).join('; ')}` +
+        (intelResult.unmatched.length > 5 ? ' ...' : ''),
+    );
+  }
+
+  const elite = latestEliteOwnership(db);
+  const projections = intelResult.players.map((player) => {
+    const owned = elite.get(player.playerId);
+    if (!owned) return player;
+    return {
+      ...player,
+      reasons: [
+        ...player.reasons,
+        `Owned by ${Math.round(owned.ownership * 100)}% of the top ${owned.managers} managers` +
+          (owned.captainedBy > 0 ? `, captained by ${owned.captainedBy} of them` : ''),
+      ],
+    };
+  });
 
   saveProjections(db, projections, event.id, weights.modelVersion);
 
@@ -241,6 +283,25 @@ export async function recommend(
       'Most projections are low confidence because the season has little or no match history ' +
         "yet. Early-gameweek advice leans on the FPL API's own expected-points figures and " +
         'fixture difficulty rather than form.',
+    );
+  }
+
+  const evidence = {
+    intelCompiledAt: intel?.compiledAt ?? null,
+    intelSources: intel?.sources ?? [],
+    intelApplied: intelResult.applied.length,
+    intelUnmatched: intelResult.unmatched,
+    contextNotes: intel && !intelResult.skippedReason ? intel.contextNotes : [],
+    eliteSampleSize: elite.size,
+    usingPreviousSeason: projections.filter((p) =>
+      p.reasons.some((r) => r.includes('Rates are from')),
+    ).length,
+  };
+
+  if (elite.size === 0) {
+    notes.push(
+      'No elite-manager ownership sampled yet. Squads only become public once a gameweek has ' +
+        'started, so before the first deadline this relies on the curated notes instead.',
     );
   }
 
@@ -274,6 +335,7 @@ export async function recommend(
       notes,
       playersConsidered: projections.length,
       lowConfidence,
+      evidence,
     };
   }
 
@@ -322,5 +384,6 @@ export async function recommend(
     notes,
     playersConsidered: projections.length,
     lowConfidence,
+    evidence,
   };
 }

@@ -21,6 +21,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 8 | ILP optimiser: best XI, best squad, captain, bench | done |
 | 9 | Single-transfer recommender | done |
 | 10 | CLI + web report | done |
+| 11 | Last-season stats, curated intel, elite ownership, justifications | done |
 
 ## Requirements
 
@@ -41,6 +42,8 @@ npm run fpl -- status              # state of play: freshness, squad, flags, cha
 npm run fpl -- optimise            # recommend the best team for the next gameweek
 npm run fpl -- optimise --gw 1     # ...for a specific gameweek
 npm run fpl -- optimise --scratch  # build a squad from scratch, ignoring the one loaded
+npm run fpl -- ingest --summaries  # includes last season's totals per player
+npm run fpl -- ingest --elite      # sample what top-ranked managers own (needs a played GW)
 npm run fpl -- serve               # serve the report at http://localhost:3000
 npm run fpl -- help
 ```
@@ -115,6 +118,40 @@ your team ID is `1234567` — and set it in `config/app.json`:
 
 Commands that need your squad fail with a clear message until this is set. Nothing is
 guessed.
+
+## Where the evidence comes from
+
+Every projection says which evidence produced it, and the recommendation page lists it under
+"Evidence behind these projections". There are four sources, in order of preference:
+
+1. **This season's stats** (FPL API). Preferred as soon as a player has minutes on the board.
+2. **Last season's stats** (`element-summary` → `history_past`). Before a ball is kicked this
+   is the only real evidence there is, so it drives opening-gameweek projections. It is never
+   rated *high* confidence — a summer of transfers and new managers makes last season's roles
+   a weaker guide than the numbers suggest.
+3. **What top-ranked managers own** (`leagues-classic/314` → their squads). Overall ownership
+   counts a casual pick the same as a top-1k manager's; sampling the top of the overall league
+   is a much better signal. Only available once a gameweek has been played — squads are private
+   before that.
+4. **Curated pre-season notes** (`config/intel.json`). See below.
+
+### Why curated notes exist
+
+**The app cannot read the web.** It can call the FPL API and nothing else. Anything that comes
+from journalism, press conferences or community consensus has to be brought in deliberately —
+so it lives in `config/intel.json`, dated, sourced and reviewable, rather than being scraped or
+invented.
+
+Two hard limits on what that file may do:
+
+- It can only make a player **less** available, never more. If the API says injured, no note
+  can resurrect them.
+- Its points adjustment is a nudge applied *after* the model and *before* the rules engine. It
+  can never put an illegal or unavailable player into a squad.
+
+It also expires: `staleAfterGameweek` stops the adjustments applying once the season has real
+data of its own. Set `eliteConsensusWeight` to `0` to switch the whole thing off without
+deleting anything.
 
 ## What the public API cannot tell us
 

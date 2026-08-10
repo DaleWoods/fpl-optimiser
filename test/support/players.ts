@@ -43,6 +43,7 @@ export function player(overrides: PlayerOverrides = {}): ProjectedPlayer {
     breakdown: {},
     expectedMinutes: 80,
     confidence: 'high',
+    reasons: [],
   };
 }
 

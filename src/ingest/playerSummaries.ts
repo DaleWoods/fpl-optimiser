@@ -113,8 +113,67 @@ export function ingestElementSummaryPayload(
       updated_at = excluded.updated_at, raw_json = excluded.raw_json
   `);
 
+  const upsertSeason = db.prepare(`
+    INSERT INTO player_season_history (
+      player_id, season_name, element_code, start_cost, end_cost, total_points, minutes, starts,
+      goals_scored, assists, clean_sheets, goals_conceded, saves, bonus, bps,
+      yellow_cards, red_cards, expected_goals, expected_assists, expected_goal_involvements,
+      expected_goals_conceded, defensive_contribution, updated_at, raw_json
+    ) VALUES (
+      @player_id, @season_name, @element_code, @start_cost, @end_cost, @total_points, @minutes, @starts,
+      @goals_scored, @assists, @clean_sheets, @goals_conceded, @saves, @bonus, @bps,
+      @yellow_cards, @red_cards, @expected_goals, @expected_assists, @expected_goal_involvements,
+      @expected_goals_conceded, @defensive_contribution, @updated_at, @raw_json
+    )
+    ON CONFLICT (player_id, season_name) DO UPDATE SET
+      element_code = excluded.element_code, start_cost = excluded.start_cost,
+      end_cost = excluded.end_cost, total_points = excluded.total_points,
+      minutes = excluded.minutes, starts = excluded.starts,
+      goals_scored = excluded.goals_scored, assists = excluded.assists,
+      clean_sheets = excluded.clean_sheets, goals_conceded = excluded.goals_conceded,
+      saves = excluded.saves, bonus = excluded.bonus, bps = excluded.bps,
+      yellow_cards = excluded.yellow_cards, red_cards = excluded.red_cards,
+      expected_goals = excluded.expected_goals, expected_assists = excluded.expected_assists,
+      expected_goal_involvements = excluded.expected_goal_involvements,
+      expected_goals_conceded = excluded.expected_goals_conceded,
+      defensive_contribution = excluded.defensive_contribution,
+      updated_at = excluded.updated_at, raw_json = excluded.raw_json
+  `);
+
   const write = db.transaction(() => {
     let count = 0;
+
+    // Previous seasons. At the start of a season this is the only evidence there is.
+    for (const season of data.history_past) {
+      upsertSeason.run({
+        player_id: playerId,
+        season_name: season.season_name,
+        element_code: season.element_code,
+        start_cost: season.start_cost,
+        end_cost: season.end_cost,
+        total_points: season.total_points,
+        minutes: season.minutes,
+        starts: season.starts,
+        goals_scored: season.goals_scored,
+        assists: season.assists,
+        clean_sheets: season.clean_sheets,
+        goals_conceded: season.goals_conceded,
+        saves: season.saves,
+        bonus: season.bonus,
+        bps: season.bps,
+        yellow_cards: season.yellow_cards,
+        red_cards: season.red_cards,
+        expected_goals: season.expected_goals,
+        expected_assists: season.expected_assists,
+        expected_goal_involvements: season.expected_goal_involvements,
+        expected_goals_conceded: season.expected_goals_conceded,
+        defensive_contribution: season.defensive_contribution,
+        updated_at: at,
+        raw_json: JSON.stringify(season),
+      });
+      count += 1;
+    }
+
     for (const match of data.history) {
       upsert.run({
         player_id: playerId,

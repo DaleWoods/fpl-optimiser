@@ -2,11 +2,13 @@ import type { Database } from 'better-sqlite3';
 import type { FplApi } from '../api/client.js';
 import type { Rules } from '../config/schema.js';
 import { ingestBootstrap, type BootstrapIngestResult } from './bootstrap.js';
+import { ingestEliteOwnership, type EliteIngestResult } from './elite.js';
 import { ingestEntry, type EntryIngestResult } from './entry.js';
 import { ingestFixtures, type FixturesIngestResult } from './fixtures.js';
 import { ingestPlayerSummaries, type SummariesIngestResult } from './playerSummaries.js';
 
 export * from './bootstrap.js';
+export * from './elite.js';
 export * from './entry.js';
 export * from './fixtures.js';
 export * from './playerSummaries.js';
@@ -17,6 +19,9 @@ export interface FullIngestOptions {
   /** Per-player histories are one request each; skip them for a quick refresh. */
   includePlayerSummaries?: boolean;
   playerIds?: number[];
+  /** Sample what top-ranked managers own. Only possible once a gameweek has started. */
+  includeEliteOwnership?: boolean;
+  eliteManagers?: number;
   onProgress?: (message: string) => void;
 }
 
@@ -25,6 +30,7 @@ export interface FullIngestResult {
   fixtures: FixturesIngestResult;
   summaries: SummariesIngestResult | null;
   entry: EntryIngestResult | null;
+  elite: EliteIngestResult | null;
 }
 
 /**
@@ -69,5 +75,30 @@ export async function ingestAll(
     for (const note of entry.notes) report(`  note: ${note}`);
   }
 
-  return { bootstrap, fixtures, summaries, entry };
+  let elite: EliteIngestResult | null = null;
+  if (options.includeEliteOwnership) {
+    // The most recently finished gameweek is the latest one whose squads are public.
+    const lastStarted = db
+      .prepare('SELECT id FROM event WHERE finished = 1 ORDER BY id DESC LIMIT 1')
+      .get() as { id: number } | undefined;
+
+    if (lastStarted) {
+      report(`Sampling what top managers own in gameweek ${lastStarted.id}...`);
+      elite = await ingestEliteOwnership(db, api, {
+        eventId: lastStarted.id,
+        managers: options.eliteManagers,
+        onProgress: (done, total) => {
+          if (done % 10 === 0 || done === total) report(`  ${done}/${total} managers`);
+        },
+      });
+      for (const note of elite.notes) report(`  note: ${note}`);
+      if (elite.managersSampled > 0) {
+        report(`  sampled ${elite.managersSampled} managers, ${elite.playersSeen} players seen`);
+      }
+    } else {
+      report('Skipping elite ownership: no gameweek has finished yet, so squads are still private.');
+    }
+  }
+
+  return { bootstrap, fixtures, summaries, entry, elite };
 }

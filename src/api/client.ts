@@ -3,6 +3,7 @@ import type {
   ApiEntry,
   ApiEntryHistory,
   ApiFixtures,
+  ApiLeagueStandings,
   ApiPicks,
   Bootstrap,
 } from './schemas.js';
@@ -31,6 +32,8 @@ export interface FplApi {
   entry(teamId: number): Promise<ApiResult<ApiEntry>>;
   entryPicks(teamId: number, eventId: number): Promise<ApiResult<ApiPicks>>;
   entryHistory(teamId: number): Promise<ApiResult<ApiEntryHistory>>;
+  /** Classic league standings. League 314 is the overall league, i.e. everyone. */
+  leagueStandings(leagueId: number, page?: number): Promise<ApiResult<ApiLeagueStandings>>;
 }
 
 export class ApiError extends Error {

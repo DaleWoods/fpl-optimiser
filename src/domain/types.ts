@@ -21,6 +21,8 @@ export interface ProjectedPlayer extends PlayerCandidate {
   breakdown: Record<string, number>;
   expectedMinutes: number;
   confidence: 'high' | 'medium' | 'low';
+  /** Plain-English justification for this projection, shown alongside any recommendation. */
+  reasons: string[];
 }
 
 export interface Squad {

@@ -11,11 +11,13 @@ import {
   entryHistorySchema,
   entrySchema,
   fixturesSchema,
+  leagueStandingsSchema,
   picksSchema,
   type ApiElementSummary,
   type ApiEntry,
   type ApiEntryHistory,
   type ApiFixtures,
+  type ApiLeagueStandings,
   type ApiPicks,
   type Bootstrap,
 } from './schemas.js';
@@ -104,6 +106,14 @@ export class HttpFplApi implements FplApi {
     return this.get(
       `entry/${teamId}/history/`,
       entryHistorySchema,
+      this.config.cacheTtlSeconds.entry,
+    );
+  }
+
+  leagueStandings(leagueId: number, page = 1): Promise<ApiResult<ApiLeagueStandings>> {
+    return this.get(
+      `leagues-classic/${leagueId}/standings/?page_standings=${page}`,
+      leagueStandingsSchema,
       this.config.cacheTtlSeconds.entry,
     );
   }
