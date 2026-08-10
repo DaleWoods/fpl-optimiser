@@ -11,8 +11,8 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | Step | Area | State |
 |---|---|---|
 | 1 | Project scaffold, config loading + validation | done |
-| 2 | SQLite storage and migrations | in progress |
-| 3 | FPL API client (throttled, cached) + ingestion | todo |
+| 2 | SQLite storage and migrations | done |
+| 3 | FPL API client (throttled, cached) + ingestion | in progress |
 | 4 | Availability classification and selling-price rules | todo |
 | 5 | Rules engine (hard constraints) | todo |
 | 6 | Expected-points model | todo |
