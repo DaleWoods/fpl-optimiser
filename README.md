@@ -22,6 +22,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 9 | Single-transfer recommender | done |
 | 10 | CLI + web report | done |
 | 11 | Last-season stats, curated intel, elite ownership, justifications | done |
+| 12 | File import: saved API JSON and season CSV, CLI + web upload | done |
 
 ## Requirements
 
@@ -50,6 +51,63 @@ npm run fpl -- help
 
 `ingest --replay <dir>` reads recorded API payloads from a directory instead of calling the
 FPL API — useful offline, and for reproducing a past recommendation exactly.
+
+## Importing real data by hand
+
+If the machine running the app cannot reach the FPL API, feed it the API's own files instead.
+This is not a workaround with worse data — it is byte-identical to what `ingest` would fetch,
+with no scraping and no transformation.
+
+**Open each of these in a browser and save the page** (Ctrl+S / Cmd+S):
+
+| URL | What it gives you |
+|---|---|
+| `fantasy.premierleague.com/api/bootstrap-static/` | Every player, price, position, club, status, news and season stat |
+| `fantasy.premierleague.com/api/fixtures/` | Every fixture with difficulty ratings |
+| `fantasy.premierleague.com/api/element-summary/<player id>/` | One player's match-by-match and previous-season history |
+
+Then either:
+
+```bash
+npm run fpl -- import ~/Downloads/bootstrap-static.json ~/Downloads/fixtures.json
+npm run fpl -- import ~/Downloads/fpl-files/     # a whole folder works too
+```
+
+…or open **`/upload`** in the deployed app and drop the files in.
+
+**Import `bootstrap-static` first.** Fixtures and player histories reference clubs and players,
+so the other order silently drops rows. The CLI and the upload page both sort files
+automatically, so dropping everything at once is fine.
+
+File type is detected from the *contents*, not the filename — `download (3).json` imports
+correctly.
+
+### Last season's stats as a CSV
+
+A spreadsheet of a previous season also imports. Headers are matched loosely (case, spaces and
+punctuation are ignored), and these aliases are accepted:
+
+| Column | Aliases |
+|---|---|
+| `id` | `element`, `player_id`, `element_id` — **best**, matches exactly |
+| `code` | `element_code` |
+| `name` | `player_name`, `web_name`, `second_name`, `player` |
+| `team` | `club`, `team_name`, `short_name` — disambiguates players who share a name |
+| `season` | `season_name` (defaults to the first row's value) |
+| `total_points` | `points`, `pts` |
+| `minutes` | `mins` |
+| `starts`, `goals_scored`, `assists`, `clean_sheets`, `goals_conceded`, `saves`, `bonus`, `bps` | `goals`, `cs`, `gc` |
+| `expected_goals` | `xg` |
+| `expected_assists` | `xa` |
+| `expected_goals_conceded` | `xgc` |
+| `defensive_contribution` | `defcon`, `cbit`, `cbirt` |
+| `end_cost` | `price`, `now_cost`, `value` |
+
+Only a way to identify the player is required; every stat column is optional. Rows that match
+no player, or that match more than one, are **reported with their line number** rather than
+dropped — a silently ignored row is how a season of stats goes missing unnoticed.
+
+Re-uploading the same file updates rather than duplicates.
 
 ## Deploying to Render
 

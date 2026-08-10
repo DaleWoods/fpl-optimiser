@@ -81,7 +81,7 @@ export function normaliseName(name: string): string {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[^a-z\s]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
     .trim();
 }
 

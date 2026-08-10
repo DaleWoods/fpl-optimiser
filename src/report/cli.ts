@@ -4,7 +4,7 @@ import { ReplayFplApi } from '../api/replayClient.js';
 import type { FplApi } from '../api/client.js';
 import { ConfigError, loadConfig } from '../config/load.js';
 import { openDatabase } from '../db/index.js';
-import { ingestAll } from '../ingest/index.js';
+import { ingestAll, importPayload } from '../ingest/index.js';
 import { recommend } from './recommend.js';
 import { startServer } from './server.js';
 import { formatDuration, formatMoney, getStateOfPlay } from './state.js';
@@ -15,9 +15,18 @@ fpl-optimiser - Fantasy Premier League optimiser
 Usage:
   fpl ingest [options]     Pull fresh data from the FPL API into local storage
   fpl status               Show the current state of play
+  fpl import <path...>     Import saved FPL API JSON or a season CSV
   fpl optimise [--gw N]    Recommend the best team for a gameweek
   fpl serve [--port N]     Serve the status report over HTTP
   fpl help                 Show this message
+
+Import:
+  Save these pages from your browser and pass the files to \`fpl import\`:
+    https://fantasy.premierleague.com/api/bootstrap-static/   (players, prices, stats)
+    https://fantasy.premierleague.com/api/fixtures/           (fixtures + difficulty)
+    https://fantasy.premierleague.com/api/element-summary/<id>/  (one player's history)
+  A CSV of last season's stats also works - see the README for the columns.
+  File type is detected from the contents, so filenames do not matter.
 
 Optimise options:
   --gw N                   Gameweek to advise on (default: the next deadline)
@@ -170,6 +179,61 @@ function commandStatus(): number {
   return 0;
 }
 
+async function commandImport(files: string[]): Promise<number> {
+  const { readFileSync, existsSync, readdirSync, statSync } = await import('node:fs');
+  const { resolve, basename } = await import('node:path');
+
+  const config = loadConfig();
+  const db = openDatabase({ path: config.app.database.path });
+
+  // Expand any directories, and import bootstrap first: fixtures and histories reference
+  // clubs and players, so importing them the other way round drops rows.
+  const paths: string[] = [];
+  for (const file of files) {
+    const full = resolve(file);
+    if (!existsSync(full)) {
+      console.error(`No such file: ${file}`);
+      return 1;
+    }
+    if (statSync(full).isDirectory()) {
+      for (const entry of readdirSync(full)) {
+        if (/\.(json|csv)$/i.test(entry)) paths.push(resolve(full, entry));
+      }
+    } else {
+      paths.push(full);
+    }
+  }
+
+  const order = (path: string) => {
+    const name = basename(path).toLowerCase();
+    if (name.includes('bootstrap')) return 0;
+    if (name.includes('fixture')) return 1;
+    return 2;
+  };
+  paths.sort((a, b) => order(a) - order(b));
+
+  let failures = 0;
+  for (const path of paths) {
+    const label = basename(path);
+    try {
+      const summary = await importPayload(db, config.rules, readFileSync(path, 'utf8'), {
+        sourceLabel: label,
+      });
+      console.log(`${label}: ${summary.kind} - ${summary.detail}`);
+      for (const warning of summary.warnings) console.log(`  ! ${warning}`);
+    } catch (error) {
+      failures += 1;
+      console.error(`${label}: ${(error as Error).message}`);
+    }
+  }
+
+  console.log(`\nImported ${paths.length - failures} of ${paths.length} file(s).`);
+  if (failures === 0) console.log('Now run `fpl optimise` to build a team from it.');
+
+  db.close();
+  return failures > 0 ? 1 : 0;
+}
+
 async function commandOptimise(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
   const db = openDatabase({ path: config.app.database.path });
@@ -292,6 +356,8 @@ async function main(): Promise<number> {
       return commandIngest(flags);
     case 'status':
       return commandStatus();
+    case 'import':
+      return commandImport(process.argv.slice(3).filter((arg) => !arg.startsWith('--')));
     case 'optimise':
     case 'optimize':
       return commandOptimise(flags);

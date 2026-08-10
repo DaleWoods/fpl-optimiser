@@ -3,7 +3,7 @@ import type { Database } from 'better-sqlite3';
 import { HttpFplApi } from '../api/httpClient.js';
 import type { Config } from '../config/schema.js';
 import { openDatabase } from '../db/index.js';
-import { ingestAll } from '../ingest/index.js';
+import { ingestAll, importPayload } from '../ingest/index.js';
 import { recommend, type Recommendation } from './recommend.js';
 import { formatDuration, formatMoney, getStateOfPlay, type StateOfPlay } from './state.js';
 
@@ -133,7 +133,8 @@ export function renderPage(state: StateOfPlay): string {
 
   <p><a class="button" href="/optimise">Pick my best team for ${escapeHtml(
     state.nextDeadline?.name ?? 'the next gameweek',
-  )}</a></p>
+  )}</a>
+  &nbsp;<a href="/upload">Import data&nbsp;&rarr;</a></p>
 
   <h2>Data freshness</h2>
   <div class="scroll"><table><thead><tr><th>Source</th><th>Last successful pull</th></tr></thead>
@@ -343,9 +344,138 @@ export function renderRecommendation(rec: Recommendation): string {
 </main></body></html>`;
 }
 
+const UPLOAD_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import data</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e2e2e2; --ok:#0a7c42; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --fg:#e8e8e8; --muted:#9aa0a6; --line:#2c2f36; --ok:#6ee7a8; --err:#ffb4ab; }
+  }
+  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg);
+         font:15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:48rem; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:0 0 .5rem; }
+  h2 { font-size:1.05rem; margin:1.8rem 0 .4rem; }
+  .muted { color:var(--muted); }
+  code { background:var(--line); padding:.1rem .35rem; border-radius:4px; font-size:.9em; }
+  ol { padding-left:1.2rem; }
+  li { margin:.4rem 0; }
+  .drop { border:2px dashed var(--line); border-radius:10px; padding:2rem 1rem; text-align:center;
+          margin:1.5rem 0; }
+  .drop.over { border-color:var(--ok); }
+  .button { display:inline-block; background:#37003c; color:#fff; border:0; cursor:pointer;
+            padding:.6rem 1.1rem; border-radius:8px; font-weight:600; font-size:1rem; }
+  #log { margin-top:1rem; }
+  .row { padding:.5rem .7rem; border:1px solid var(--line); border-radius:8px; margin:.4rem 0; }
+  .ok { border-left:4px solid var(--ok); }
+  .err { border-left:4px solid var(--err); }
+  .warn { color:var(--muted); font-size:.9em; margin-top:.2rem; }
+  a { color:inherit; }
+</style></head>
+<body><main>
+<p><a href="/">&larr; back</a></p>
+<h1>Import real FPL data</h1>
+<p class="muted">Drop in files saved from the FPL API and the app will use them for every
+projection. The file type is detected from the contents, so filenames do not matter.</p>
+
+<h2>Where to get the files</h2>
+<ol>
+  <li>Open <code>https://fantasy.premierleague.com/api/bootstrap-static/</code> in your browser
+      and save the page (Ctrl+S / Cmd+S). That is every player, price, position and stat.</li>
+  <li>Do the same for <code>https://fantasy.premierleague.com/api/fixtures/</code> - fixtures
+      and difficulty ratings.</li>
+  <li>Optionally <code>https://fantasy.premierleague.com/api/element-summary/&lt;player id&gt;/</code>
+      for one player's match-by-match and previous-season history.</li>
+  <li>A CSV of last season's stats works too. See the README for the accepted columns.</li>
+</ol>
+<p class="muted">Import bootstrap-static first: fixtures and player histories reference clubs
+and players, so the other order drops rows. Dropping everything at once is fine - they are
+ordered automatically.</p>
+
+<div class="drop" id="drop">
+  <p>Drop files here, or</p>
+  <input type="file" id="file" multiple accept=".json,.csv" hidden>
+  <button class="button" id="choose">Choose files</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+const drop = document.getElementById('drop');
+const input = document.getElementById('file');
+const log = document.getElementById('log');
+document.getElementById('choose').onclick = () => input.click();
+input.onchange = () => send([...input.files]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); send([...e.dataTransfer.files]); };
+
+function line(cls, html) {
+  const el = document.createElement('div');
+  el.className = 'row ' + cls;
+  el.innerHTML = html;
+  log.appendChild(el);
+  return el;
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function send(files) {
+  // bootstrap first, then fixtures, then the rest: later files reference earlier ones.
+  const rank = f => /bootstrap/i.test(f.name) ? 0 : /fixture/i.test(f.name) ? 1 : 2;
+  files.sort((a, b) => rank(a) - rank(b));
+
+  for (const file of files) {
+    const row = line('', 'Uploading ' + esc(file.name) + '...');
+    try {
+      const text = await file.text();
+      const res = await fetch('/upload?name=' + encodeURIComponent(file.name), {
+        method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: text,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        row.className = 'row err';
+        row.innerHTML = '<strong>' + esc(file.name) + '</strong><br>' + esc(body.error || res.statusText);
+        continue;
+      }
+      row.className = 'row ok';
+      row.innerHTML = '<strong>' + esc(file.name) + '</strong> &middot; ' + esc(body.kind) +
+        '<br>' + esc(body.detail) +
+        (body.warnings || []).map(w => '<div class="warn">! ' + esc(w) + '</div>').join('');
+    } catch (err) {
+      row.className = 'row err';
+      row.innerHTML = '<strong>' + esc(file.name) + '</strong><br>' + esc(err.message);
+    }
+  }
+  line('', '<a href="/optimise">Build my team from this data &rarr;</a>');
+}
+</script>
+</main></body></html>`;
+
+function readBody(request: IncomingMessage, limitBytes: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limitBytes) {
+        reject(new Error(`File is larger than ${Math.round(limitBytes / 1024 / 1024)}MB`));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    request.on('error', reject);
+  });
+}
+
 /**
- * A minimal report server. No framework and no client-side JavaScript: this is a single-user
- * status page, and every dependency added here is one more thing to keep patched.
+ * A minimal report server. No framework and no client-side JavaScript beyond the upload page,
+ * which needs it to read files: this is a single-user status page, and every dependency added
+ * here is one more thing to keep patched.
  */
 export interface RunningServer {
   /** The port actually bound. Differs from the requested port when 0 was passed. */
@@ -382,6 +512,27 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+
+    if (url.pathname === '/upload' && request.method !== 'POST') {
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      response.end(UPLOAD_PAGE);
+      return;
+    }
+
+    if (url.pathname === '/upload' && request.method === 'POST') {
+      const name = url.searchParams.get('name') ?? 'upload';
+      try {
+        // bootstrap-static is a few MB; allow headroom but not unlimited.
+        const text = await readBody(request, 32 * 1024 * 1024);
+        const summary = await importPayload(db, config.rules, text, { sourceLabel: name });
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify(summary));
+      } catch (cause) {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: (cause as Error).message }));
+      }
+      return;
+    }
 
     if (url.pathname === '/optimise' || url.pathname === '/optimise.json') {
       const gwParam = url.searchParams.get('gw');
