@@ -42,6 +42,7 @@ export interface Recommendation {
     intelSources: string[];
     intelApplied: number;
     intelUnmatched: string[];
+    intelPriceMismatches: number;
     contextNotes: string[];
     eliteSampleSize: number;
     usingPreviousSeason: number;
@@ -245,6 +246,19 @@ export async function recommend(
   const intel = options.intel === undefined ? loadIntel() : options.intel;
   const intelResult = applyIntel(rawProjections, intel, event.id);
   if (intelResult.skippedReason) notes.push(intelResult.skippedReason);
+  if (intelResult.priceMismatches.length > 0) {
+    notes.push(
+      `${intelResult.priceMismatches.length} curated note(s) were withheld because the ` +
+        'researched price no longer matches the live price - the note is stale, or it matched ' +
+        'the wrong player: ' +
+        intelResult.priceMismatches
+          .map(
+            (m) =>
+              `${m.name} researched at £${(m.expected / 10).toFixed(1)}m, live £${(m.actual / 10).toFixed(1)}m`,
+          )
+          .join('; '),
+    );
+  }
   if (intelResult.unmatched.length > 0) {
     notes.push(
       `${intelResult.unmatched.length} curated note(s) matched no player and were ignored: ` +
@@ -291,6 +305,7 @@ export async function recommend(
     intelSources: intel?.sources ?? [],
     intelApplied: intelResult.applied.length,
     intelUnmatched: intelResult.unmatched,
+    intelPriceMismatches: intelResult.priceMismatches.length,
     contextNotes: intel && !intelResult.skippedReason ? intel.contextNotes : [],
     eliteSampleSize: elite.size,
     usingPreviousSeason: projections.filter((p) =>

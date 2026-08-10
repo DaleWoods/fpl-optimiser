@@ -161,6 +161,54 @@ describe('applying intel', () => {
     expect(result.players[0]!.breakdown.curatedIntel).toBeCloseTo(0.5, 5);
   });
 
+  it('withholds a note whose researched price no longer matches the live price', () => {
+    // The cheapest available check that a curated claim still describes reality. A price that
+    // has moved several notches means the note is stale; a wildly different one means it
+    // matched the wrong player.
+    const priced = { ...withClub(haaland, 'MCI'), price: 90 };
+    const result = applyIntel(
+      [priced],
+      baseIntel({
+        eliteConsensus: [
+          { webName: 'Haaland', club: 'MCI', expectedPrice: 155, consensus: 1, note: 'Template pick' },
+        ],
+      }),
+      1,
+    );
+
+    expect(result.priceMismatches).toHaveLength(1);
+    expect(result.priceMismatches[0]).toMatchObject({ expected: 155, actual: 90 });
+    expect(result.players[0]!.xPts).toBe(priced.xPts);
+    expect(result.applied).toHaveLength(0);
+  });
+
+  it('tolerates a small price drift, which is just normal in-season movement', () => {
+    const priced = { ...withClub(haaland, 'MCI'), price: 153 };
+    const result = applyIntel(
+      [priced],
+      baseIntel({
+        eliteConsensus: [
+          { webName: 'Haaland', club: 'MCI', expectedPrice: 155, consensus: 1, note: 'Template pick' },
+        ],
+      }),
+      1,
+    );
+    expect(result.priceMismatches).toHaveLength(0);
+    expect(result.players[0]!.xPts).toBeGreaterThan(priced.xPts);
+  });
+
+  it('still applies a note that gives no researched price', () => {
+    const result = applyIntel(
+      [withClub(haaland, 'MCI')],
+      baseIntel({
+        eliteConsensus: [{ webName: 'Haaland', club: 'MCI', consensus: 1, note: 'Template pick' }],
+      }),
+      1,
+    );
+    expect(result.priceMismatches).toHaveLength(0);
+    expect(result.applied).toHaveLength(1);
+  });
+
   it('never mutates the players it was given', () => {
     const original = withClub(haaland, 'MCI');
     const before = original.xPts;

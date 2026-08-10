@@ -90,8 +90,24 @@ export interface IntelApplication {
   /** Entries that matched no player. Reported rather than silently dropped. */
   unmatched: string[];
   applied: { playerId: number; name: string; kind: 'consensus' | 'availability'; note: string }[];
+  /**
+   * Entries whose researched price disagrees with the live price. Either the note is out of
+   * date, or it matched the wrong player. Both are reasons to distrust it.
+   */
+  priceMismatches: {
+    name: string;
+    expected: number;
+    actual: number;
+  }[];
   skippedReason: string | null;
 }
+
+/**
+ * How far a researched price may drift from the live price before the note is suspect,
+ * in tenths of a million. Prices move by 0.1m at a time in-season, so anything beyond a few
+ * notches means the curated entry is stale or matched to the wrong player.
+ */
+export const PRICE_TOLERANCE = 5;
 
 /**
  * Apply the curated intel to a set of projections.
@@ -105,7 +121,13 @@ export function applyIntel(
   eventId: number,
 ): IntelApplication {
   if (!intel) {
-    return { players: [...players], unmatched: [], applied: [], skippedReason: null };
+    return {
+      players: [...players],
+      unmatched: [],
+      applied: [],
+      priceMismatches: [],
+      skippedReason: null,
+    };
   }
 
   if (eventId > intel.staleAfterGameweek) {
@@ -113,6 +135,7 @@ export function applyIntel(
       players: [...players],
       unmatched: [],
       applied: [],
+      priceMismatches: [],
       skippedReason:
         `Curated pre-season notes are not applied after gameweek ${intel.staleAfterGameweek} - ` +
         'by then the API has real data for this season and that is a better guide.',
@@ -138,6 +161,7 @@ export function applyIntel(
   const adjustments = new Map<number, { xPts: number; availability?: Availability; reasons: string[] }>();
   const unmatched: string[] = [];
   const applied: IntelApplication['applied'] = [];
+  const priceMismatches: IntelApplication['priceMismatches'] = [];
 
   if (intel.weights.availabilityOverridesEnabled) {
     for (const flag of intel.availabilityFlags) {
@@ -169,6 +193,19 @@ export function applyIntel(
         unmatched.push(`${pick.webName} (${pick.club}) - elite consensus`);
         continue;
       }
+      // Cross-check the researched price against the live one. This is the cheapest available
+      // test that a curated note still describes reality: a price that has moved several
+      // notches means the note is stale, and a wildly different price means it matched the
+      // wrong player entirely. Either way the adjustment is withheld rather than trusted.
+      if (pick.expectedPrice !== undefined && Math.abs(pick.expectedPrice - player.price) > PRICE_TOLERANCE) {
+        priceMismatches.push({
+          name: `${pick.webName} (${pick.club})`,
+          expected: pick.expectedPrice,
+          actual: player.price,
+        });
+        continue;
+      }
+
       const bonus = intel.weights.eliteConsensusWeight * pick.consensus;
       const entry = adjustments.get(player.playerId) ?? { xPts: 0, reasons: [] };
       entry.xPts += bonus;
@@ -200,7 +237,7 @@ export function applyIntel(
     };
   });
 
-  return { players: adjusted, unmatched, applied, skippedReason: null };
+  return { players: adjusted, unmatched, applied, priceMismatches, skippedReason: null };
 }
 
 function round(value: number): number {
