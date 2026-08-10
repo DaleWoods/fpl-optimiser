@@ -1,0 +1,54 @@
+# Render Blueprint for the FPL optimiser.
+#
+# One web service that does three jobs: serves the status report, runs a background
+# ingestion on a schedule, and keeps its SQLite database on a mounted disk.
+#
+# WHY A DISK IS NOT OPTIONAL HERE
+# Render's filesystem is ephemeral - it is wiped on every deploy and every restart. This app
+# derives price trends, form trends and "what changed since last check" by comparing snapshots
+# it has stored over time. Without a persistent disk that history resets constantly and change
+# detection can never report anything, because there is never a previous snapshot to compare
+# against. The disk below is what makes the app's core feature work.
+#
+# COST: disks require a paid instance type. A free instance cannot mount one, and free
+# instances also spin down when idle, which would stop the scheduled ingestion. If you would
+# rather not pay, see README "Running locally instead" - the app is designed to run on your own
+# machine and that costs nothing.
+
+services:
+  - type: web
+    name: fpl-optimiser
+    runtime: node
+    plan: starter # Required for a persistent disk. 'free' cannot mount one.
+    region: frankfurt # Closest Render region to the UK.
+    branch: main
+    autoDeploy: true
+
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/report/cli.js serve
+
+    # Cheap, and deliberately independent of whether the FPL API is reachable - a health check
+    # that fails because a third party is down would put the service into a restart loop.
+    healthCheckPath: /healthz
+
+    disk:
+      name: fpl-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+
+      # Database and cache must live on the mounted disk, not in the checkout.
+      - key: FPL_DATABASE_PATH
+        value: /var/data/fpl.db
+      - key: FPL_CACHE_DIR
+        value: /var/data/cache
+
+      - key: FPL_TEAM_ID
+        value: "2651633"
+
+      # Identify the tool to the FPL API, as a good citizen should.
+      - key: FPL_USER_AGENT
+        value: "fpl-optimiser/0.1 (single-user personal tool; +https://github.com/DaleWoods/fpl-optimiser)"

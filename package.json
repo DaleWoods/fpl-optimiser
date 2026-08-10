@@ -9,7 +9,8 @@
   },
   "scripts": {
     "fpl": "tsx src/report/cli.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "start": "node dist/report/cli.js serve",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -212,8 +212,46 @@ export function loadModelWeights(dir: string = CONFIG_DIR): ModelWeights {
   );
 }
 
-export function loadAppConfig(dir: string = CONFIG_DIR): AppConfig {
-  return parseOrThrow(appConfigSchema, loadWithLocalOverride('app', dir), `${dir}/app.json`);
+/**
+ * Environment overrides, applied last.
+ *
+ * A deployed instance cannot edit a JSON file in the repo, and the database path in particular
+ * has to point at a mounted volume rather than the checkout. Only settings that genuinely differ
+ * per environment are overridable - rules and model weights stay in version control, where a
+ * change is reviewable.
+ */
+export function applyEnvOverrides(
+  app: AppConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): AppConfig {
+  const next: AppConfig = structuredClone(app);
+
+  if (env.FPL_TEAM_ID) {
+    const teamId = Number(env.FPL_TEAM_ID);
+    if (!Number.isInteger(teamId) || teamId <= 0) {
+      throw new ConfigError(`FPL_TEAM_ID must be a positive integer, got "${env.FPL_TEAM_ID}"`);
+    }
+    next.teamId = teamId;
+  }
+
+  if (env.FPL_DATABASE_PATH) {
+    next.database.path = env.FPL_DATABASE_PATH;
+  }
+
+  if (env.FPL_USER_AGENT) {
+    next.api.userAgent = env.FPL_USER_AGENT;
+  }
+
+  if (env.FPL_CACHE_DIR) {
+    next.api.cacheDir = env.FPL_CACHE_DIR;
+  }
+
+  return next;
+}
+
+export function loadAppConfig(dir: string = CONFIG_DIR, env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const parsed = parseOrThrow(appConfigSchema, loadWithLocalOverride('app', dir), `${dir}/app.json`);
+  return applyEnvOverrides(parsed, env);
 }
 
 export function loadConfig(dir: string = CONFIG_DIR): Config {

@@ -9,3 +9,5 @@ data/
 .DS_Store
 .env
 config/local.*.json
+
+dist/

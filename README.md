@@ -14,6 +14,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 2 | SQLite storage and migrations | done |
 | 3 | FPL API client (throttled, cached, replayable) | done |
 | 4 | Ingestion into storage + change detection | done |
+| 4b | CLI, report page and Render blueprint | done |
 | 5 | Availability classification and selling-price rules | next |
 | 6 | Rules engine (hard constraints) | todo |
 | 7 | Expected-points model | todo |
@@ -30,6 +31,59 @@ bundled as npm packages.
 npm install
 npm test
 ```
+
+## Commands
+
+```bash
+npm run fpl -- ingest              # pull fresh data into local storage
+npm run fpl -- ingest --summaries  # ...including per-player match history (slow)
+npm run fpl -- status              # state of play: freshness, squad, flags, changes
+npm run fpl -- serve               # serve the report at http://localhost:3000
+npm run fpl -- help
+```
+
+`ingest --replay <dir>` reads recorded API payloads from a directory instead of calling the
+FPL API — useful offline, and for reproducing a past recommendation exactly.
+
+## Deploying to Render
+
+`render.yaml` defines a single web service that serves the report, runs a background
+ingestion on a schedule, and stores its database on a mounted disk.
+
+**The disk is not optional.** Render's filesystem is wiped on every deploy and restart. This
+app derives price trends, form trends and "what changed since last check" by comparing
+snapshots stored over time — without persistence that history resets constantly and change
+detection can never report anything, because there is never a previous snapshot to compare
+against.
+
+That has a cost implication: **a persistent disk requires a paid instance type.** Free
+instances cannot mount one, and they also spin down when idle, which would stop the scheduled
+ingestion. The blueprint therefore specifies `plan: starter`. Change it if you want a
+different tier — but do not move it to `free`, because the disk will not attach.
+
+Endpoints once deployed:
+
+| Path | Purpose |
+|---|---|
+| `/` | The report page |
+| `/state.json` | The same data, machine-readable |
+| `/healthz` | Health check — deliberately independent of the FPL API |
+| `POST /ingest` | Trigger an ingestion immediately |
+
+The health check does **not** depend on the FPL API being reachable. If it did, an FPL outage
+would fail the health check and put the service into a restart loop.
+
+### Running locally instead
+
+Deployment is optional. The app is designed to run on your own machine, which costs nothing
+and keeps full snapshot history:
+
+```bash
+npm install && npm run fpl -- ingest && npm run fpl -- status
+```
+
+The only thing you lose is always-on scheduled ingestion — you run `ingest` yourself before a
+deadline, which is when freshness matters most anyway.
 
 ## Configuration
 
