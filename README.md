@@ -12,13 +12,14 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 |---|---|---|
 | 1 | Project scaffold, config loading + validation | done |
 | 2 | SQLite storage and migrations | done |
-| 3 | FPL API client (throttled, cached) + ingestion | in progress |
-| 4 | Availability classification and selling-price rules | todo |
-| 5 | Rules engine (hard constraints) | todo |
-| 6 | Expected-points model | todo |
-| 7 | ILP optimiser: best XI, captain, bench order | todo |
-| 8 | Single-transfer recommender | todo |
-| 9 | CLI report | todo |
+| 3 | FPL API client (throttled, cached, replayable) | done |
+| 4 | Ingestion into storage + change detection | next |
+| 5 | Availability classification and selling-price rules | todo |
+| 6 | Rules engine (hard constraints) | todo |
+| 7 | Expected-points model | todo |
+| 8 | ILP optimiser: best XI, captain, bench order | todo |
+| 9 | Single-transfer recommender | todo |
+| 10 | CLI report | todo |
 
 ## Requirements
 
