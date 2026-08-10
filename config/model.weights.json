@@ -1,0 +1,116 @@
+{
+  "$comment": [
+    "Tunable weights for the expected-points (xPts) heuristic. Every number that shapes a",
+    "projection lives here, not in code, so the model can be re-tuned without a rebuild.",
+    "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
+    "you change these numbers, or past advice can no longer be explained."
+  ],
+  "modelVersion": "heuristic-0.1.0",
+
+  "availability": {
+    "$comment": [
+      "status codes: a=available, d=doubtful, i=injured, s=suspended, u=unavailable, n=not in squad.",
+      "chance_of_playing_next_round, when the API supplies it, is authoritative and overrides the",
+      "status default - a 75% flagged player is weighted 0.75."
+    ],
+    "statusProbability": {
+      "a": 1.0,
+      "d": 0.5,
+      "i": 0.0,
+      "s": 0.0,
+      "u": 0.0,
+      "n": 0.0
+    },
+    "chanceOfPlayingOverridesStatus": true,
+    "unknownStatusProbability": 0.5
+  },
+
+  "minutes": {
+    "$comment": [
+      "Expected minutes drive appearance points and scale every other component.",
+      "Recent starts are blended with the season rate, then shrunk toward a prior so a",
+      "one-match sample cannot produce a confident projection."
+    ],
+    "recentMatches": 6,
+    "recentWeight": 0.65,
+    "startThresholdMinutes": 60,
+    "expectedMinutesIfStarting": 80,
+    "expectedMinutesIfBenched": 18,
+    "priorStartProbability": 0.35,
+    "priorWeightMatches": 3
+  },
+
+  "teamStrength": {
+    "$comment": [
+      "Converts bootstrap team strength ratings into expected goals for and against.",
+      "Expected goals = leagueAverage * (attack/opponentDefence)^exponent * venue factor."
+    ],
+    "leagueAverageGoalsPerGame": 1.45,
+    "homeAdvantage": 1.1,
+    "awayFactor": 0.92,
+    "strengthExponent": 1.0,
+    "minExpectedGoals": 0.2,
+    "maxExpectedGoals": 4.0,
+    "fallbackStrength": 1100
+  },
+
+  "attacking": {
+    "$comment": [
+      "Per-90 attacking rates. xG/xA are preferred where the API supplies them because they",
+      "stabilise far faster than raw goals; xgWeight blends the two. Rates are then scaled by",
+      "how good the fixture looks relative to an average one."
+    ],
+    "recentMatches": 6,
+    "recentWeight": 0.6,
+    "xgWeight": 0.7,
+    "fixtureScalingWeight": 1.0,
+    "priorWeightMinutes": 270
+  },
+
+  "cleanSheet": {
+    "$comment": "P(clean sheet) = exp(-expected goals conceded), a Poisson zero, capped for sanity.",
+    "maxProbability": 0.75,
+    "minProbability": 0.02
+  },
+
+  "saves": {
+    "$comment": "Goalkeeper saves scale with how much the opponent is expected to shoot.",
+    "savesPerExpectedGoalConceded": 2.6,
+    "recentWeight": 0.6
+  },
+
+  "defensiveContribution": {
+    "$comment": [
+      "P(hitting the DefCon threshold) from the player's per-90 CBIT/CBIRT rate via a logistic.",
+      "steepness controls how sharply probability rises once a player's rate passes the threshold.",
+      "If the API does not expose a usable per-90 defensive stat, fallbackProbability is used and",
+      "the projection is flagged as low-confidence rather than silently scoring zero."
+    ],
+    "steepness": 0.55,
+    "fallbackProbability": 0.12,
+    "recentWeight": 0.6
+  },
+
+  "bonus": {
+    "$comment": "Expected bonus points from the player's historical bonus rate per 90, damped toward zero.",
+    "recentWeight": 0.6,
+    "shrinkage": 0.7,
+    "maxExpectedBonus": 1.6
+  },
+
+  "differential": {
+    "$comment": [
+      "Open decision D4. weight 0 = pure expected-points maximisation (the default).",
+      "Above 0, players owned by less than ownershipPivot percent of managers get a small xPts",
+      "bonus, scaled by weight - use it to chase rank in a mini-league. Never a hard constraint."
+    ],
+    "weight": 0.0,
+    "ownershipPivot": 15.0,
+    "maxAdjustment": 1.0
+  },
+
+  "captain": {
+    "$comment": "Tiebreak between near-equal captain candidates: reward ceiling, not just mean.",
+    "ceilingWeight": 0.1
+  }
+}

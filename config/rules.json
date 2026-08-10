@@ -1,0 +1,79 @@
+{
+  "$comment": [
+    "FPL rules as HARD constraints. Source: fpl-optimiser-spec.md Section 7 (2026/27 defaults).",
+    "Nothing here identifies a player, a club or a deadline - those always come from the live API.",
+    "Position keys are FPL element_type short codes (singular_name_short). At load time every key",
+    "here is reconciled against the element_types actually returned by bootstrap-static, so a",
+    "position rename or a new position fails loudly instead of being silently ignored.",
+    "All money is in tenths of a million (integers), matching the API's now_cost units."
+  ],
+  "season": "2026/27",
+  "squad": {
+    "size": 15,
+    "budget": 1000,
+    "maxPerClub": 3,
+    "positionCounts": {
+      "GKP": 2,
+      "DEF": 5,
+      "MID": 5,
+      "FWD": 3
+    }
+  },
+  "startingXi": {
+    "size": 11,
+    "positionBounds": {
+      "GKP": { "min": 1, "max": 1 },
+      "DEF": { "min": 3, "max": 5 },
+      "MID": { "min": 2, "max": 5 },
+      "FWD": { "min": 1, "max": 3 }
+    }
+  },
+  "bench": {
+    "size": 4,
+    "positionCounts": {
+      "GKP": 1
+    }
+  },
+  "captain": {
+    "multiplier": 2,
+    "tripleCaptainMultiplier": 3
+  },
+  "transfers": {
+    "freePerGameweek": 1,
+    "maxBanked": 5,
+    "hitCost": 4,
+    "keepBankedOnWildcard": true,
+    "keepBankedOnFreeHit": true,
+    "unlimitedBeforeFirstDeadline": true
+  },
+  "sellingPrice": {
+    "$comment": "FPL splits profit: you bank half the rise, rounded down to the nearest 0.1m. Losses are passed on in full.",
+    "profitDivisor": 2,
+    "rounding": "floor"
+  },
+  "chips": {
+    "oneChipPerGameweek": true,
+    "firstSetExpiresAfterGameweek": 19,
+    "available": ["wildcard", "freehit", "3xc", "bboost"]
+  },
+  "scoring": {
+    "$comment": "Only the parts the xPts model needs to reason about. Full scoring lives in the model config.",
+    "appearance": { "anyMinutes": 1, "sixtyPlusMinutes": 2 },
+    "goal": { "GKP": 6, "DEF": 6, "MID": 5, "FWD": 4 },
+    "assist": 3,
+    "cleanSheet": { "GKP": 4, "DEF": 4, "MID": 1, "FWD": 0 },
+    "goalsConceded": { "$comment": "-1 per N conceded, GK and DEF only", "perGoals": 2, "points": -1, "appliesTo": ["GKP", "DEF"] },
+    "saves": { "perSaves": 3, "points": 1, "appliesTo": ["GKP"] },
+    "defensiveContribution": {
+      "$comment": "2026/27 DefCon. DEF counts clearances+blocks+interceptions+tackles; MID/FWD add recoveries.",
+      "points": 2,
+      "thresholds": {
+        "GKP": null,
+        "DEF": 10,
+        "MID": 12,
+        "FWD": 12
+      }
+    },
+    "bonus": { "max": 3 }
+  }
+}

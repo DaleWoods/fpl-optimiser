@@ -1,0 +1,32 @@
+{
+  "$comment": [
+    "Runtime settings. teamId is your FPL entry ID - the number in your fantasy.premierleague.com",
+    "URL (.../entry/<teamId>/event/<gw>). Leave it null and squad-dependent commands will tell you",
+    "what to set rather than guessing. Copy this file to config/local.app.json to override locally",
+    "without touching version control (config/local.*.json is gitignored)."
+  ],
+  "teamId": null,
+  "api": {
+    "baseUrl": "https://fantasy.premierleague.com/api/",
+    "userAgent": "fpl-optimiser/0.1 (single-user personal tool; +https://github.com/dalewoods/fpl-optimiser)",
+    "minRequestIntervalMs": 1200,
+    "requestTimeoutMs": 20000,
+    "maxRetries": 3,
+    "retryBackoffMs": 2000,
+    "cacheDir": ".cache",
+    "cacheTtlSeconds": {
+      "bootstrap": 3600,
+      "fixtures": 3600,
+      "elementSummary": 21600,
+      "entry": 300,
+      "live": 60
+    }
+  },
+  "database": {
+    "path": "data/fpl.db"
+  },
+  "staleness": {
+    "$comment": "Warn loudly if a recommendation is being generated from data older than this.",
+    "warnAfterSeconds": 21600
+  }
+}
