@@ -5,7 +5,7 @@
     "what to set rather than guessing. Copy this file to config/local.app.json to override locally",
     "without touching version control (config/local.*.json is gitignored)."
   ],
-  "teamId": null,
+  "teamId": 2651633,
   "api": {
     "baseUrl": "https://fantasy.premierleague.com/api/",
     "userAgent": "fpl-optimiser/0.1 (single-user personal tool; +https://github.com/dalewoods/fpl-optimiser)",

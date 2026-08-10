@@ -75,9 +75,9 @@ describe('the shipped config files', () => {
     expect(loadModelWeights().differential.weight).toBe(0);
   });
 
-  it('loads app config and ships without a team ID baked in', () => {
+  it('loads app config with the configured team ID', () => {
     const app = loadAppConfig();
-    expect(app.teamId).toBeNull();
+    expect(app.teamId).toBe(2651633);
     expect(app.api.userAgent).toMatch(/fpl-optimiser/);
     expect(app.api.minRequestIntervalMs).toBeGreaterThan(0);
   });
@@ -85,7 +85,7 @@ describe('the shipped config files', () => {
 
 describe('requireTeamId', () => {
   it('explains how to find the team ID rather than guessing one', () => {
-    const app = loadAppConfig();
+    const app = { ...loadAppConfig(), teamId: null };
     expect(() => requireTeamId(app)).toThrow(ConfigError);
     expect(() => requireTeamId(app)).toThrow(/config\/app\.json/);
   });

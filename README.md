@@ -13,8 +13,8 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 1 | Project scaffold, config loading + validation | done |
 | 2 | SQLite storage and migrations | done |
 | 3 | FPL API client (throttled, cached, replayable) | done |
-| 4 | Ingestion into storage + change detection | next |
-| 5 | Availability classification and selling-price rules | todo |
+| 4 | Ingestion into storage + change detection | done |
+| 5 | Availability classification and selling-price rules | next |
 | 6 | Rules engine (hard constraints) | todo |
 | 7 | Expected-points model | todo |
 | 8 | ILP optimiser: best XI, captain, bench order | todo |
@@ -56,6 +56,22 @@ your team ID is `1234567` — and set it in `config/app.json`:
 
 Commands that need your squad fail with a clear message until this is set. Nothing is
 guessed.
+
+## What the public API cannot tell us
+
+Three things the optimiser needs are not available without an authenticated session, so none
+of them are guessed. Each is recorded with an explicit source, and any advice resting on them
+says what it assumed:
+
+| Value | Why it is missing | What we do |
+|---|---|---|
+| Free transfers | Only on the authenticated `my-team` endpoint | Derived from transfer history under the rollover rules, with the workings kept and any drift from the hits the API actually charged flagged as a caveat |
+| Purchase / selling price | Not public at all | Left null with `price_source = 'unknown'`; the transfer engine declines to reason about budget rather than invent one |
+| Live bank balance | Public API gives the value as at the last deadline | Used as stated, labelled as such |
+
+Before the season's first deadline there is no squad to load at all — the picks endpoint has
+nothing to return. That is handled as an expected state, not an error: manager state is still
+recorded and a note explains why the squad is empty.
 
 ### Positions are never hardcoded
 
