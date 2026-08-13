@@ -2,9 +2,13 @@ import type { Database } from 'better-sqlite3';
 import {
   bootstrapSchema,
   elementSummarySchema,
+  entryHistorySchema,
+  entrySchema,
   fixturesSchema,
   picksSchema,
 } from '../api/schemas.js';
+import { deriveFreeTransfers } from '../domain/freeTransfers.js';
+import { toSqliteBool } from '../db/index.js';
 import type { Rules } from '../config/schema.js';
 import { nowSeconds } from '../db/index.js';
 import { ingestBootstrapPayload } from './bootstrap.js';
@@ -30,6 +34,8 @@ export type PayloadKind =
   | 'fixtures'
   | 'element-summary'
   | 'picks'
+  | 'entry'
+  | 'entry-history'
   | 'season-csv'
   | 'unknown';
 
@@ -67,8 +73,12 @@ export function detectPayloadKind(text: string): PayloadKind {
   if (typeof parsed === 'object' && parsed !== null) {
     const record = parsed as Record<string, unknown>;
     if ('elements' in record && 'teams' in record && 'element_types' in record) return 'bootstrap';
-    if ('history' in record || 'history_past' in record) return 'element-summary';
     if ('picks' in record) return 'picks';
+    // entry history has `current` (per-gameweek rows) and `chips`; a player summary has
+    // `history`/`history_past`. Check the manager shape first, it is more specific.
+    if ('current' in record && 'chips' in record) return 'entry-history';
+    if ('history' in record || 'history_past' in record) return 'element-summary';
+    if ('summary_overall_points' in record || 'last_deadline_bank' in record) return 'entry';
   }
 
   return 'unknown';
@@ -79,6 +89,11 @@ export interface ImportOptions {
   playerId?: number;
   /** Label recorded against the ingest run, e.g. the original filename. */
   sourceLabel?: string;
+  /**
+   * The manager's entry id. A saved picks file does not contain it, so it has to come from
+   * config - which is also a safety check that you are importing your own squad.
+   */
+  teamId?: number | null;
 }
 
 export async function importPayload(
@@ -159,16 +174,70 @@ export async function importPayload(
       });
 
     case 'picks':
-      return withIngestRun(db, 'import:picks', async () => {
-        const parsed = picksSchema.parse(JSON.parse(text));
+      return importPicks(db, rules, text, options);
+
+    case 'entry':
+      return withIngestRun(db, 'import:entry', async () => {
+        const parsed = entrySchema.parse(JSON.parse(text));
+        // Held for the next picks import, which is where bank and value actually get stored.
         return {
           kind,
           rowsWritten: 0,
           fromCache: false,
           detail:
-            `${parsed.picks.length} picks read. Squad import from a saved picks file is not ` +
-            'wired up yet - use the entry ingestion once the gameweek has started.',
-          warnings: ['Picks files are recognised but not yet imported.'],
+            `entry ${parsed.id}: bank £${((parsed.last_deadline_bank ?? 0) / 10).toFixed(1)}m, ` +
+            `squad value £${((parsed.last_deadline_value ?? 0) / 10).toFixed(1)}m` +
+            (parsed.current_event !== null ? `, currently GW${parsed.current_event}` : ', pre-season'),
+          warnings: [
+            'Entry summaries carry no squad. Import the picks file for the gameweek to load ' +
+              'your 15.',
+          ],
+        };
+      });
+
+    case 'entry-history':
+      return withIngestRun(db, 'import:entry-history', async () => {
+        const parsed = entryHistorySchema.parse(JSON.parse(text));
+        const chipUsage = new Map<number, string>();
+        for (const chip of parsed.chips) {
+          if (chip.event !== null) chipUsage.set(chip.event, chip.name);
+        }
+        const derivation = deriveFreeTransfers(
+          parsed.current.map((row) => ({
+            event: row.event,
+            transfersMade: row.event_transfers ?? 0,
+            transfersCost: row.event_transfers_cost ?? 0,
+            chip: chipUsage.get(row.event) ?? null,
+          })),
+          rules,
+          { chipUsage },
+        );
+
+        const teamId = options.teamId;
+        if (teamId) {
+          db.prepare(
+            `UPDATE manager_state SET free_transfers = ?, free_transfers_source = 'derived',
+                    chips_used_json = ?
+             WHERE id = (SELECT id FROM manager_state WHERE entry_id = ?
+                         ORDER BY captured_at DESC LIMIT 1)`,
+          ).run(
+            derivation.freeTransfers,
+            JSON.stringify(parsed.chips.map((c) => ({ name: c.name, event: c.event }))),
+            teamId,
+          );
+        }
+
+        return {
+          kind,
+          rowsWritten: parsed.current.length,
+          fromCache: false,
+          detail:
+            `${parsed.current.length} gameweek(s) of history, ${parsed.chips.length} chip(s) used. ` +
+            `Free transfers derived: ${derivation.freeTransfers}.`,
+          warnings: [
+            ...derivation.caveats,
+            ...(teamId ? [] : ['No team ID configured, so chip history was not stored.']),
+          ],
         };
       });
 
@@ -181,6 +250,111 @@ export async function importPayload(
           '(bootstrap-static, fixtures, element-summary) or a CSV of season stats.',
       );
   }
+}
+
+/**
+ * Import a saved picks file: the manager's 15 for one gameweek.
+ *
+ * This is how a squad gets loaded when the app cannot reach the API itself. The picks payload
+ * does not name the entry it belongs to, so the team id comes from config - which doubles as a
+ * check that you are importing your own squad rather than someone else's.
+ */
+export function importPicks(
+  db: Database,
+  rules: Rules,
+  text: string,
+  options: ImportOptions,
+): Promise<ImportSummary> {
+  return withIngestRun(db, 'import:picks', async () => {
+    const parsed = picksSchema.parse(JSON.parse(text));
+    const teamId = options.teamId;
+
+    if (!teamId) {
+      throw new Error(
+        'A picks file does not say which manager it belongs to. Set "teamId" in ' +
+          'config/app.json before importing one.',
+      );
+    }
+
+    const knownPlayers = new Set(
+      (db.prepare('SELECT id FROM player').all() as { id: number }[]).map((row) => row.id),
+    );
+    const storable = parsed.picks.filter((pick) => knownPlayers.has(pick.element));
+    const missing = parsed.picks.length - storable.length;
+
+    if (storable.length === 0) {
+      throw new Error(
+        'None of the players in this picks file are in the database. Import bootstrap-static first.',
+      );
+    }
+
+    const eventId = parsed.entry_history?.event ?? null;
+    const bank = parsed.entry_history?.bank ?? null;
+    const value = parsed.entry_history?.value ?? null;
+
+    const write = db.transaction((): number => {
+      const info = db
+        .prepare(
+          `INSERT INTO manager_state (entry_id, captured_at, event_id, bank, team_value,
+                                      free_transfers_source, chips_available_json, raw_json)
+           VALUES (?, ?, ?, ?, ?, 'unknown', ?, ?)`,
+        )
+        .run(
+          teamId,
+          nowSeconds(),
+          eventId,
+          bank,
+          value,
+          JSON.stringify(rules.chips.available),
+          JSON.stringify({ activeChip: parsed.active_chip }),
+        );
+      const stateId = Number(info.lastInsertRowid);
+
+      const insert = db.prepare(
+        `INSERT INTO squad_pick (manager_state_id, player_id, slot, multiplier, is_captain,
+                                 is_vice_captain, price_source)
+         VALUES (?, ?, ?, ?, ?, ?, 'unknown')`,
+      );
+      for (const pick of storable) {
+        insert.run(
+          stateId,
+          pick.element,
+          pick.position,
+          pick.multiplier,
+          toSqliteBool(pick.is_captain),
+          toSqliteBool(pick.is_vice_captain),
+        );
+      }
+      return stateId;
+    });
+
+    write();
+
+    const warnings: string[] = [];
+    if (missing > 0) {
+      warnings.push(
+        `${missing} pick(s) are not in the database and were skipped. Import a fresh ` +
+          'bootstrap-static, then re-import this file.',
+      );
+    }
+    if (parsed.active_chip) {
+      warnings.push(`This gameweek had the ${parsed.active_chip} chip active.`);
+    }
+    warnings.push(
+      'Selling prices are not in a picks file, so transfer budget still uses current prices.',
+    );
+
+    return {
+      kind: 'picks' as const,
+      rowsWritten: storable.length,
+      fromCache: false,
+      detail:
+        `squad loaded for entry ${teamId}` +
+        (eventId !== null ? `, gameweek ${eventId}` : '') +
+        `: ${storable.length} players`,
+      warnings,
+    };
+  });
 }
 
 /**

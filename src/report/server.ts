@@ -4,7 +4,9 @@ import { HttpFplApi } from '../api/httpClient.js';
 import type { Config } from '../config/schema.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll, importPayload } from '../ingest/index.js';
-import { recommend, type Recommendation } from './recommend.js';
+import { adviseChips, type ChipAdvice } from '../optimise/chips.js';
+import { GlpkSolver } from '../optimise/glpkSolver.js';
+import { loadSquadForChips, recommend, resolveTargetEvent, type Recommendation } from './recommend.js';
 import { formatDuration, formatMoney, getStateOfPlay, type StateOfPlay } from './state.js';
 
 export interface ServerOptions {
@@ -134,6 +136,7 @@ export function renderPage(state: StateOfPlay): string {
   <p><a class="button" href="/optimise">Pick my best team for ${escapeHtml(
     state.nextDeadline?.name ?? 'the next gameweek',
   )}</a>
+  &nbsp;<a href="/chips">Chip strategy&nbsp;&rarr;</a>
   &nbsp;<a href="/upload">Import data&nbsp;&rarr;</a></p>
 
   <h2>Data freshness</h2>
@@ -472,6 +475,93 @@ function readBody(request: IncomingMessage, limitBytes: number): Promise<string>
   });
 }
 
+export function renderChips(advice: ChipAdvice, fromEvent: number): string {
+  const rows = advice.horizon
+    .map((shape) => {
+      const marks: string[] = [];
+      if (shape.doubleClubs.length > 0) {
+        marks.push(`<strong>DOUBLE</strong> ${escapeHtml(shape.doubleClubs.join(', '))}`);
+      }
+      if (shape.blankClubs.length > 0) marks.push(`<strong>BLANK</strong> ${shape.blankClubs.length} clubs`);
+      if (shape.squadDoubles > 0) marks.push(`${shape.squadDoubles} of your 15 play twice`);
+      if (shape.squadBlanks > 0) marks.push(`${shape.squadBlanks} of your 15 blank`);
+      return `<tr${shape.doubleClubs.length || shape.blankClubs.length ? ' class="special"' : ''}>
+        <td>GW${shape.eventId}</td>
+        <td>${shape.fixtureCount}</td>
+        <td>${marks.join(' &middot; ') || '<span class="muted">normal</span>'}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const recs = advice.recommendations
+    .map(
+      (rec) => `<div class="rec">
+        <h3>${escapeHtml(rec.chipName)} &mdash; ${
+          rec.recommendedEvent !== null ? `GW${rec.recommendedEvent}` : 'hold for now'
+        }${rec.confident ? ` <span class="pill">+${rec.expectedGain} pts</span>` : ''}</h3>
+        <p class="muted">${escapeHtml(rec.reason)}</p>
+        ${
+          rec.alternatives.length > 0
+            ? `<p class="muted">Next best: ${rec.alternatives
+                .map((a) => `GW${a.eventId} (+${a.gain})`)
+                .join(', ')}</p>`
+            : ''
+        }
+        ${rec.warning ? `<p class="warnline">! ${escapeHtml(rec.warning)}</p>` : ''}
+      </div>`,
+    )
+    .join('');
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chip strategy</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e2e2e2;
+          --hi:#eef7ff; --warn:#7a4a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --fg:#e8e8e8; --muted:#9aa0a6; --line:#2c2f36;
+            --hi:#1b2733; --warn:#ffd591; }
+  }
+  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg);
+         font:15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:52rem; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:0 0 .5rem; }
+  h2 { font-size:1.05rem; margin:1.8rem 0 .5rem; }
+  .muted { color:var(--muted); }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:.4rem .6rem; border-bottom:1px solid var(--line); }
+  th { font-weight:600; font-size:.85rem; color:var(--muted); }
+  tr.special td { background:var(--hi); }
+  .rec { border:1px solid var(--line); border-radius:8px; padding:.8rem 1rem; margin:.7rem 0; }
+  .rec h3 { margin:0 0 .3rem; font-size:1rem; }
+  .pill { display:inline-block; background:var(--line); border-radius:99px;
+          padding:.1rem .6rem; font-size:.8rem; }
+  .warnline { color:var(--warn); margin:.3rem 0 0; }
+  .scroll { overflow-x:auto; }
+  a { color:inherit; }
+</style></head>
+<body><main>
+  <p><a href="/">&larr; back</a></p>
+  <h1>Chip strategy</h1>
+  <p class="muted">From GW${fromEvent}, looking ${advice.horizon.length} gameweek(s) ahead.</p>
+
+  <h2>Recommendations</h2>
+  ${recs || '<p class="muted">No chips left to advise on.</p>'}
+
+  <h2>Fixtures ahead</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Gameweek</th><th>Fixtures</th><th>Shape</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+
+  ${
+    advice.notes.length > 0
+      ? `<h2>Notes</h2><ul>${advice.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`
+      : ''
+  }
+</main></body></html>`;
+}
+
 /**
  * A minimal report server. No framework and no client-side JavaScript beyond the upload page,
  * which needs it to read files: this is a single-user status page, and every dependency added
@@ -524,12 +614,51 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       try {
         // bootstrap-static is a few MB; allow headroom but not unlimited.
         const text = await readBody(request, 32 * 1024 * 1024);
-        const summary = await importPayload(db, config.rules, text, { sourceLabel: name });
+        const summary = await importPayload(db, config.rules, text, {
+          sourceLabel: name,
+          teamId: config.app.teamId,
+        });
         response.writeHead(200, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(summary));
       } catch (cause) {
         response.writeHead(400, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: (cause as Error).message }));
+      }
+      return;
+    }
+
+    if (url.pathname === '/chips' || url.pathname === '/chips.json') {
+      try {
+        const event = resolveTargetEvent(db);
+        if (!event) throw new Error('No gameweeks stored yet. Import fixtures first.');
+
+        const horizonParam = url.searchParams.get('horizon');
+        const { squad, chipsUsed } = loadSquadForChips(
+          db, config.app.teamId, config.rules, config.weights, event.id,
+        );
+        const advice = await adviseChips(db, config.rules, config.weights, event.id, {
+          horizon: horizonParam ? Number(horizonParam) : undefined,
+          squad,
+          chipsUsed,
+          evaluateRebuilds: url.searchParams.get('deep') === '1',
+          solver: new GlpkSolver(),
+        });
+
+        if (url.pathname === '/chips.json') {
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify(advice, null, 2));
+          return;
+        }
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(renderChips(advice, event.id));
+      } catch (cause) {
+        response.writeHead(409, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(
+          `<!doctype html><meta charset="utf-8"><title>Cannot advise yet</title>` +
+            `<body style="font:15px system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
+            `<p><a href="/">&larr; back</a></p><h1>Cannot advise on chips yet</h1>` +
+            `<pre style="white-space:pre-wrap">${escapeHtml((cause as Error).message)}</pre></body>`,
+        );
       }
       return;
     }

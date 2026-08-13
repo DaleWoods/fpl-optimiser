@@ -126,6 +126,40 @@ function loadOwnedSquad(
 }
 
 /**
+ * The squad plus chip history, for the chip advisor. Exported so chip advice and squad advice
+ * always work from exactly the same view of the team.
+ */
+export function loadSquadForChips(
+  db: Database,
+  teamId: number | null | undefined,
+  rules: Rules,
+  weights: ModelWeights,
+  eventId: number,
+): { squad: ProjectedPlayer[] | undefined; chipsUsed: { name: string; event: number | null }[] } {
+  if (!teamId) return { squad: undefined, chipsUsed: [] };
+
+  const projections = buildProjections(db, eventId, rules, weights);
+  const owned = loadOwnedSquad(db, teamId, projections);
+
+  const state = db
+    .prepare(
+      'SELECT chips_used_json AS used FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1',
+    )
+    .get(teamId) as { used: string | null } | undefined;
+
+  let chipsUsed: { name: string; event: number | null }[] = [];
+  if (state?.used) {
+    try {
+      chipsUsed = JSON.parse(state.used) as { name: string; event: number | null }[];
+    } catch {
+      chipsUsed = [];
+    }
+  }
+
+  return { squad: owned?.squad, chipsUsed };
+}
+
+/**
  * Find the best single transfers.
  *
  * Each candidate swap is evaluated by re-solving the starting XI for the resulting squad, so

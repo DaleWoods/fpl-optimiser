@@ -5,7 +5,9 @@ import type { FplApi } from '../api/client.js';
 import { ConfigError, loadConfig } from '../config/load.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll, importPayload } from '../ingest/index.js';
-import { recommend } from './recommend.js';
+import { adviseChips } from '../optimise/chips.js';
+import { GlpkSolver } from '../optimise/glpkSolver.js';
+import { recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
 import { startServer } from './server.js';
 import { formatDuration, formatMoney, getStateOfPlay } from './state.js';
 
@@ -17,6 +19,7 @@ Usage:
   fpl status               Show the current state of play
   fpl import <path...>     Import saved FPL API JSON or a season CSV
   fpl optimise [--gw N]    Recommend the best team for a gameweek
+  fpl chips [--deep]       Recommend when to play each remaining chip
   fpl serve [--port N]     Serve the status report over HTTP
   fpl help                 Show this message
 
@@ -27,6 +30,11 @@ Import:
     https://fantasy.premierleague.com/api/element-summary/<id>/  (one player's history)
   A CSV of last season's stats also works - see the README for the columns.
   File type is detected from the contents, so filenames do not matter.
+
+Chip options:
+  --horizon N              Gameweeks to look ahead (default 8)
+  --deep                   Also value Free Hit and Wildcard, which needs a full
+                           squad rebuild per gameweek and is slower
 
 Optimise options:
   --gw N                   Gameweek to advise on (default: the next deadline)
@@ -208,6 +216,8 @@ async function commandImport(files: string[]): Promise<number> {
     const name = basename(path).toLowerCase();
     if (name.includes('bootstrap')) return 0;
     if (name.includes('fixture')) return 1;
+    if (name.includes('picks')) return 3;
+    if (name.includes('history')) return 4;
     return 2;
   };
   paths.sort((a, b) => order(a) - order(b));
@@ -218,6 +228,7 @@ async function commandImport(files: string[]): Promise<number> {
     try {
       const summary = await importPayload(db, config.rules, readFileSync(path, 'utf8'), {
         sourceLabel: label,
+        teamId: config.app.teamId,
       });
       console.log(`${label}: ${summary.kind} - ${summary.detail}`);
       for (const warning of summary.warnings) console.log(`  ! ${warning}`);
@@ -335,6 +346,68 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
   return 0;
 }
 
+async function commandChips(flags: Map<string, string | true>): Promise<number> {
+  const config = loadConfig();
+  const db = openDatabase({ path: config.app.database.path });
+
+  const event = resolveTargetEvent(db);
+  if (!event) {
+    console.error('No gameweeks stored. Import fixtures first.');
+    return 1;
+  }
+
+  const horizonFlag = flags.get('horizon');
+  const { squad, chipsUsed } = loadSquadForChips(db, config.app.teamId, config.rules, config.weights, event.id);
+
+  const advice = await adviseChips(db, config.rules, config.weights, event.id, {
+    horizon: typeof horizonFlag === 'string' ? Number(horizonFlag) : undefined,
+    squad,
+    chipsUsed,
+    evaluateRebuilds: Boolean(flags.get('deep')),
+    solver: new GlpkSolver(),
+  });
+
+  console.log(`Chip strategy from ${event.name ?? `GW${event.id}`}`);
+  console.log('='.repeat(64));
+
+  console.log('\nFixtures ahead:');
+  for (const shape of advice.horizon) {
+    const marks: string[] = [];
+    if (shape.doubleClubs.length > 0) marks.push(`DOUBLE: ${shape.doubleClubs.join(', ')}`);
+    if (shape.blankClubs.length > 0) marks.push(`BLANK: ${shape.blankClubs.length} club(s)`);
+    if (squad) {
+      if (shape.squadDoubles > 0) marks.push(`${shape.squadDoubles} of your 15 play twice`);
+      if (shape.squadBlanks > 0) marks.push(`${shape.squadBlanks} of your 15 blank`);
+    }
+    console.log(
+      `  GW${String(shape.eventId).padStart(2)}  ${String(shape.fixtureCount).padStart(2)} fixtures` +
+        (marks.length > 0 ? `  ${marks.join(' | ')}` : ''),
+    );
+  }
+
+  console.log('\nRecommendations:');
+  for (const rec of advice.recommendations) {
+    const when =
+      rec.recommendedEvent !== null ? `GW${rec.recommendedEvent}` : 'hold for now';
+    console.log(`\n  ${rec.chipName}: ${when}` + (rec.confident ? ` (+${rec.expectedGain} pts)` : ''));
+    console.log(`    ${rec.reason}`);
+    if (rec.alternatives.length > 0) {
+      console.log(
+        `    Next best: ${rec.alternatives.map((a) => `GW${a.eventId} (+${a.gain})`).join(', ')}`,
+      );
+    }
+    if (rec.warning) console.log(`    ! ${rec.warning}`);
+  }
+
+  if (advice.notes.length > 0) {
+    console.log('\nNotes:');
+    for (const note of advice.notes) console.log(`  - ${note}`);
+  }
+
+  db.close();
+  return 0;
+}
+
 async function commandServe(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
   const portFlag = flags.get('port');
@@ -358,6 +431,8 @@ async function main(): Promise<number> {
       return commandStatus();
     case 'import':
       return commandImport(process.argv.slice(3).filter((arg) => !arg.startsWith('--')));
+    case 'chips':
+      return commandChips(flags);
     case 'optimise':
     case 'optimize':
       return commandOptimise(flags);

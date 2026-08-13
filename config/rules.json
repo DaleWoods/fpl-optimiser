@@ -52,9 +52,35 @@
     "rounding": "floor"
   },
   "chips": {
+    "$comment": [
+      "2026/27 runs TWO sets of chips: one of each per half of the season. The first set is",
+      "lost if unused by the GW19 deadline; the second set unlocks after GW19.",
+      "Codes are the API's own (active_chip / the chips array in entry history)."
+    ],
     "oneChipPerGameweek": true,
     "firstSetExpiresAfterGameweek": 19,
-    "available": ["wildcard", "freehit", "3xc", "bboost"]
+    "setsPerSeason": 2,
+    "available": ["wildcard", "freehit", "3xc", "bboost"],
+    "names": {
+      "wildcard": "Wildcard",
+      "freehit": "Free Hit",
+      "3xc": "Triple Captain",
+      "bboost": "Bench Boost"
+    },
+    "effects": {
+      "$comment": [
+        "What each chip actually does, so the advisor values them from the rules rather than",
+        "from hardcoded assumptions.",
+        "unlimitedTransfers: squad may be rebuilt for free that gameweek.",
+        "revertsAfterGameweek: the rebuild lasts one gameweek only (Free Hit).",
+        "benchScores: all 15 score, not just the XI (Bench Boost).",
+        "captainMultiplier: overrides the normal captain multiplier (Triple Captain)."
+      ],
+      "wildcard": { "unlimitedTransfers": true, "revertsAfterGameweek": false },
+      "freehit": { "unlimitedTransfers": true, "revertsAfterGameweek": true },
+      "bboost": { "benchScores": true },
+      "3xc": { "captainMultiplier": 3 }
+    }
   },
   "scoring": {
     "$comment": "Only the parts the xPts model needs to reason about. Full scoring lives in the model config.",

@@ -53,7 +53,18 @@ export const rulesSchema = z.strictObject({
   chips: z.strictObject({
     oneChipPerGameweek: z.boolean(),
     firstSetExpiresAfterGameweek: positiveInt,
+    setsPerSeason: positiveInt,
     available: z.array(z.string()).min(1),
+    names: z.record(z.string(), z.string()),
+    effects: z.record(
+      z.string(),
+      z.strictObject({
+        unlimitedTransfers: z.boolean().optional(),
+        revertsAfterGameweek: z.boolean().optional(),
+        benchScores: z.boolean().optional(),
+        captainMultiplier: positiveInt.optional(),
+      }),
+    ),
   }),
   scoring: z.strictObject({
     appearance: z.strictObject({

@@ -7,7 +7,14 @@ import { num, parseCsv, pick, toTable } from '../../src/ingest/csv.js';
 import { detectPayloadKind, importPayload } from '../../src/ingest/import.js';
 import { ingestBootstrap } from '../../src/ingest/index.js';
 import { buildProjections } from '../../src/model/build.js';
-import { defaultPlayers, fakeBootstrap, fakeEvent, fakeFixture } from '../support/fakeApi.js';
+import {
+  defaultPlayers,
+  fakeBootstrap,
+  fakeEntry,
+  fakeEvent,
+  fakeFixture,
+  fakePicks,
+} from '../support/fakeApi.js';
 
 const rules = loadRules();
 const weights = loadModelWeights();
@@ -145,6 +152,63 @@ describe('importing saved API files', () => {
       .prepare('SELECT total_points AS pts FROM player_season_history WHERE player_id = 1')
       .get() as { pts: number };
     expect(season.pts).toBe(180);
+  });
+
+  it('imports a saved picks file as the squad', async () => {
+    await importPayload(db, rules, JSON.stringify(fakeBootstrap()));
+    const summary = await importPayload(
+      db,
+      rules,
+      JSON.stringify(fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])),
+      { teamId: 2651633, sourceLabel: 'picks.json' },
+    );
+
+    expect(summary.kind).toBe('picks');
+    expect(summary.rowsWritten).toBe(15);
+
+    const picks = db.prepare('SELECT COUNT(*) AS n FROM squad_pick').get() as { n: number };
+    expect(picks.n).toBe(15);
+
+    const captain = db
+      .prepare('SELECT player_id AS id FROM squad_pick WHERE is_captain = 1')
+      .get() as { id: number };
+    expect(captain.id).toBe(1);
+  });
+
+  it('refuses a picks file without a configured team id, rather than guessing whose it is', async () => {
+    await importPayload(db, rules, JSON.stringify(fakeBootstrap()));
+    await expect(
+      importPayload(db, rules, JSON.stringify(fakePicks([1, 2, 3])), { teamId: null }),
+    ).rejects.toThrow(/teamId.*config\/app\.json/s);
+  });
+
+  it('tells you when a picks file arrives before the players it references', async () => {
+    await expect(
+      importPayload(db, rules, JSON.stringify(fakePicks([1, 2, 3])), { teamId: 2651633 }),
+    ).rejects.toThrow(/Import bootstrap-static first/);
+  });
+
+  it('recognises an entry summary and an entry history separately', async () => {
+    await importPayload(db, rules, JSON.stringify(fakeBootstrap()));
+
+    const entry = await importPayload(db, rules, JSON.stringify(fakeEntry(2651633)), {
+      teamId: 2651633,
+    });
+    expect(entry.kind).toBe('entry');
+
+    const history = await importPayload(
+      db,
+      rules,
+      JSON.stringify({
+        current: [
+          { event: 1, points: 60, total_points: 60, bank: 5, value: 1000, event_transfers: 0, event_transfers_cost: 0, points_on_bench: 3 },
+        ],
+        chips: [{ name: 'wildcard', event: 1, time: '2026-08-21T10:00:00Z' }],
+      }),
+      { teamId: 2651633 },
+    );
+    expect(history.kind).toBe('entry-history');
+    expect(history.detail).toMatch(/Free transfers derived/);
   });
 
   it('refuses a file it cannot identify rather than importing nonsense', async () => {

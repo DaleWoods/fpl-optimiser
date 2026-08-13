@@ -23,6 +23,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 10 | CLI + web report | done |
 | 11 | Last-season stats, curated intel, elite ownership, justifications | done |
 | 12 | File import: saved API JSON and season CSV, CLI + web upload | done |
+| 13 | Chip strategy: when to play Wildcard, Free Hit, Bench Boost, Triple Captain | done |
 
 ## Requirements
 
@@ -45,6 +46,8 @@ npm run fpl -- optimise --gw 1     # ...for a specific gameweek
 npm run fpl -- optimise --scratch  # build a squad from scratch, ignoring the one loaded
 npm run fpl -- ingest --summaries  # includes last season's totals per player
 npm run fpl -- ingest --elite      # sample what top-ranked managers own (needs a played GW)
+npm run fpl -- chips               # when to play each remaining chip
+npm run fpl -- chips --deep        # ...including Free Hit and Wildcard (slower)
 npm run fpl -- serve               # serve the report at http://localhost:3000
 npm run fpl -- help
 ```
@@ -65,6 +68,8 @@ with no scraping and no transformation.
 | `fantasy.premierleague.com/api/bootstrap-static/` | Every player, price, position, club, status, news and season stat |
 | `fantasy.premierleague.com/api/fixtures/` | Every fixture with difficulty ratings |
 | `fantasy.premierleague.com/api/element-summary/<player id>/` | One player's match-by-match and previous-season history |
+| `fantasy.premierleague.com/api/entry/<team id>/event/<gw>/picks/` | **Your 15 for that gameweek** (only public once the gameweek has started) |
+| `fantasy.premierleague.com/api/entry/<team id>/history/` | Your chip usage and transfer history |
 
 Then either:
 
@@ -109,6 +114,36 @@ dropped — a silently ignored row is how a season of stats goes missing unnotic
 
 Re-uploading the same file updates rather than duplicates.
 
+## What to upload, and how often
+
+| Data | How often | Why |
+|---|---|---|
+| Last season's stats (`element-summary`, or a CSV) | **Once** | It never changes. Stored permanently. |
+| `bootstrap-static` | **Every week, before the deadline** | Prices, form, injuries and news all move. Each upload also stores a snapshot, so price and form *trends* accumulate — the more often you upload, the better change detection gets. |
+| `fixtures` | **Whenever games are rearranged** | European progress and cup ties move Premier League games, which is what creates the double and blank gameweeks that decide chip timing. |
+| Your `picks` | **Each week once the gameweek has started** | Loads your actual 15, which turns on transfer advice and points-based chip valuation. |
+
+## Chip strategy
+
+`fpl chips` (or `/chips`) says when to play each remaining chip, valuing each one in expected
+points rather than by rule of thumb:
+
+| Chip | Valued as | Which is why it wants |
+|---|---|---|
+| **Bench Boost** | your four bench players' projected points | a double gameweek — everyone plays twice, so the bench is worth roughly double |
+| **Triple Captain** | one further multiple of your captain's projection | a double gameweek, on a premium player |
+| **Free Hit** | best XI from the whole pool minus best XI from your squad | a blank gameweek, when much of your squad has no fixture |
+| **Wildcard** | the same gap, but kept permanently | a fixture swing, or a squad that has drifted |
+
+The chip rules come from `config/rules.json`, not from assumptions: **two sets per season**, one
+of each per half, the first set lost at the **GW19 deadline**, and one chip per gameweek. The
+advisor warns as that deadline approaches, and tells you when two chips are competing for the
+same week.
+
+Free Hit and Wildcard need a full squad rebuild per gameweek to value, so they are only
+evaluated with `--deep` (or `?deep=1`). Without a squad loaded, chip advice falls back to
+fixture shape alone and says so rather than inventing a points figure.
+
 ## Deploying to Render
 
 `render.yaml` defines a single web service that serves the report, runs a background
@@ -131,6 +166,7 @@ Endpoints once deployed:
 |---|---|
 | `/` | The report page, with the "pick my best team" button |
 | `/optimise` | The recommendation: XI, captain, bench, transfers |
+| `/chips` | Chip strategy: when to play each one, and why |
 | `/optimise.json` | The same, machine-readable |
 | `/state.json` | The same data, machine-readable |
 | `/healthz` | Health check — deliberately independent of the FPL API |
