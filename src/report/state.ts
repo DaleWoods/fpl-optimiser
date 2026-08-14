@@ -60,7 +60,23 @@ export interface StateOfPlay {
   flaggedInSquad: SquadPlayerView[];
 }
 
-const SOURCES = ['bootstrap-static', 'fixtures', 'element-summary', 'entry'] as const;
+/**
+ * Each row of the freshness table, and every ingest_run source that can fill it.
+ *
+ * Data arrives two ways - pulled from the API, or imported from a file - and they record
+ * different source names. Counting only the API ones made the dashboard report "never" for
+ * someone who imports files, along with a permanent staleness warning, however recently they
+ * had uploaded.
+ */
+const SOURCES = [
+  { label: 'players & prices', runs: ['bootstrap-static', 'import:bootstrap-static'] },
+  { label: 'fixtures', runs: ['fixtures', 'import:fixtures'] },
+  {
+    label: 'last season',
+    runs: ['element-summary', 'import:element-summary', 'import:season-csv'],
+  },
+  { label: 'your squad', runs: ['entry', 'import:entry', 'import:picks', 'import:entry-history'] },
+] as const;
 
 /**
  * A single read-only view of everything worth knowing before a deadline. Shared by the CLI and
@@ -73,11 +89,16 @@ export function getStateOfPlay(
   const now = nowSeconds();
 
   const freshness: IngestFreshness[] = SOURCES.map((source) => {
-    const run = lastSuccessfulRun(db, source);
-    const lastSuccessAt = run?.startedAt ?? null;
+    let lastSuccessAt: number | null = null;
+    for (const runSource of source.runs) {
+      const run = lastSuccessfulRun(db, runSource);
+      if (run && (lastSuccessAt === null || run.startedAt > lastSuccessAt)) {
+        lastSuccessAt = run.startedAt;
+      }
+    }
     const ageSeconds = lastSuccessAt === null ? null : now - lastSuccessAt;
     return {
-      source,
+      source: source.label,
       lastSuccessAt,
       ageSeconds,
       stale: ageSeconds === null || ageSeconds > options.staleAfterSeconds,

@@ -25,6 +25,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 12 | File import: saved API JSON and season CSV, CLI + web upload | done |
 | 13 | Chip strategy: when to play Wildcard, Free Hit, Bench Boost, Triple Captain | done |
 | 14 | Reset scopes, no-cache headers on dynamic pages | done |
+| 15 | Tabbed UI with FPL-inspired styling, per-slot import screen | done |
 
 ## Requirements
 
@@ -81,7 +82,18 @@ npm run fpl -- import ~/Downloads/bootstrap-static.json ~/Downloads/fixtures.jso
 npm run fpl -- import ~/Downloads/fpl-files/     # a whole folder works too
 ```
 
-…or open **`/upload`** in the deployed app and drop the files in.
+…or open the **Import Data** tab in the deployed app, which has a slot per kind of data:
+
+| Slot | Cadence | Accepts |
+|---|---|---|
+| This season's player data | Every week | `bootstrap-static` |
+| Fixtures | When games move | `fixtures` |
+| Last season's stats | One time only | a season CSV, or `element-summary` files |
+| Your squad | Every week | your `picks`, entry or history files |
+
+Each slot checks what you give it, so a file dropped in the wrong place is **refused with an
+explanation** rather than quietly imported as the wrong thing. Every slot shows when it was
+last filled.
 
 **Import `bootstrap-static` first.** Fixtures and player histories reference clubs and players,
 so the other order silently drops rows. The CLI and the upload page both sort files
@@ -200,6 +212,7 @@ Endpoints once deployed:
 | Path | Purpose |
 |---|---|
 | `/` | The report page, with the "pick my best team" button |
+| `/import` | Import screen, one slot per kind of data |
 | `/optimise` | The recommendation: XI, captain, bench, transfers |
 | `/chips` | Chip strategy: when to play each one, and why |
 | `/reset` | Delete stored data by scope, with confirmation |

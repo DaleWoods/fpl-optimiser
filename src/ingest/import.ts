@@ -94,7 +94,25 @@ export interface ImportOptions {
    * config - which is also a safety check that you are importing your own squad.
    */
   teamId?: number | null;
+  /**
+   * Restrict what this import will accept. The import screen has a slot per kind of data, so
+   * a bootstrap file dropped into the "last season" slot should be refused with an explanation
+   * rather than quietly imported as something the user did not intend.
+   */
+  expectedKinds?: PayloadKind[];
 }
+
+/** Human-readable names, for error messages that say what a file actually was. */
+export const KIND_LABELS: Record<PayloadKind, string> = {
+  bootstrap: 'this season\'s player data (bootstrap-static)',
+  fixtures: 'the fixture list',
+  'element-summary': "one player's history",
+  picks: 'a saved squad (picks)',
+  entry: 'a manager summary',
+  'entry-history': 'a manager history',
+  'season-csv': 'a season stats spreadsheet',
+  unknown: 'an unrecognised file',
+};
 
 export async function importPayload(
   db: Database,
@@ -104,6 +122,14 @@ export async function importPayload(
 ): Promise<ImportSummary> {
   const kind = detectPayloadKind(text);
   const label = options.sourceLabel ?? 'upload';
+
+  if (options.expectedKinds && !options.expectedKinds.includes(kind)) {
+    throw new Error(
+      `${label} looks like ${KIND_LABELS[kind]}, but this slot expects ` +
+        `${options.expectedKinds.map((k) => KIND_LABELS[k]).join(' or ')}. ` +
+        'Check you have the right file, or use the slot that matches it.',
+    );
+  }
 
   switch (kind) {
     case 'bootstrap':

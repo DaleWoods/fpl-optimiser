@@ -4,7 +4,8 @@ import { StubFplApi } from '../../src/api/replayClient.js';
 import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } from '../../src/config/load.js';
 import { openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
-import { renderPage, startServer, type RunningServer } from '../../src/report/server.js';
+import { startServer, type RunningServer } from '../../src/report/server.js';
+import { renderDashboard } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
 import { defaultPlayers, fakeBootstrap, fakeEntry, fakeEvent, fakePicks } from '../support/fakeApi.js';
 
@@ -59,10 +60,22 @@ describe('state of play', () => {
     expect(state.playerCount).toBe(0);
   });
 
+  it('counts a file import as fresh data, not just an API pull', async () => {
+    // Both routes write ingest_run rows under different source names. Counting only the API
+    // ones made the dashboard say "never" for anyone who imports files.
+    const { importPayload } = await import('../../src/ingest/import.js');
+    await importPayload(db, rules, JSON.stringify(fakeBootstrap()));
+
+    const state = getStateOfPlay(db, { teamId, staleAfterSeconds: 3600 });
+    const players = state.freshness.find((entry) => entry.source === 'players & prices');
+    expect(players?.lastSuccessAt).not.toBeNull();
+    expect(players?.stale).toBe(false);
+  });
+
   it('reports fresh data as fresh after an ingest', async () => {
     await ingestBootstrap(db, new StubFplApi({ bootstrap: fakeBootstrap() }), rules);
     const state = getStateOfPlay(db, { teamId, staleAfterSeconds: 3600 });
-    const bootstrap = state.freshness.find((entry) => entry.source === 'bootstrap-static');
+    const bootstrap = state.freshness.find((entry) => entry.source === 'players & prices');
     expect(bootstrap?.stale).toBe(false);
     expect(state.playerCount).toBe(60);
   });
@@ -212,6 +225,73 @@ describe('report server', () => {
     expect(body).toMatch(/Some data is stale/);
   });
 
+  it('shows the tab bar on every page, so navigation is consistent', async () => {
+    const base = await start();
+    for (const path of ['/', '/import', '/reset']) {
+      const body = await (await fetch(`${base}${path}`)).text();
+      expect(body, path).toMatch(/nav class="tabs"/);
+      for (const label of ['Dashboard', 'My Team', 'Chips', 'Import Data', 'Reset']) {
+        expect(body, `${path} missing ${label}`).toContain(label);
+      }
+    }
+  });
+
+  it('marks exactly one tab as current', async () => {
+    const base = await start();
+    const body = await (await fetch(`${base}/import`)).text();
+    // Count only the attribute on a real element - the stylesheet contains a matching
+    // selector, which is not a second active tab.
+    const current = body.match(/aria-current="page">/g) ?? [];
+    expect(current).toHaveLength(1);
+    expect(body).toMatch(/href="\/import"[^>]*aria-current="page"/);
+  });
+
+  it('serves the import screen with a slot for each kind of data', async () => {
+    const base = await start();
+    const body = await (await fetch(`${base}/import`)).text();
+
+    expect(body).toContain("This season's player data");
+    expect(body).toContain('Fixtures');
+    expect(body).toContain("Last season's stats");
+    expect(body).toContain('Your squad');
+    // Cadence is the point of splitting them up.
+    expect(body).toContain('One time only');
+    expect(body).toContain('Every week');
+  });
+
+  it('keeps the old /upload link working', async () => {
+    const base = await start();
+    const response = await fetch(`${base}/upload`, { redirect: 'manual' });
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/import');
+  });
+
+  it('refuses a file dropped into the wrong slot, and says what it actually was', async () => {
+    const base = await start();
+    // A fixtures array pushed into the last-season slot.
+    const response = await fetch(`${base}/import?slot=last-season&name=fixtures.json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify([{ id: 1, event: 1, team_h: 1, team_a: 2 }]),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/looks like the fixture list/);
+    expect(body.error).toMatch(/this slot expects/);
+  });
+
+  it('rejects an unknown slot rather than importing anyway', async () => {
+    const base = await start();
+    const response = await fetch(`${base}/import?slot=nonsense`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: '{}',
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(/Unknown import slot/);
+  });
+
   it('404s an unknown path', async () => {
     const base = await start();
     expect((await fetch(`${base}/nope`)).status).toBe(404);
@@ -221,7 +301,7 @@ describe('report server', () => {
     // News and player names come from the FPL API - text this app does not control, rendered
     // straight into HTML. It must be escaped, not trusted.
     const hostile = '<script>alert("xss")</script>';
-    const page = renderPage({
+    const page = renderDashboard({
       generatedAt: 1_760_000_000,
       teamId: 2651633,
       freshness: [],
