@@ -4,6 +4,7 @@ import { HttpFplApi } from '../api/httpClient.js';
 import type { Config } from '../config/schema.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll, importPayload } from '../ingest/index.js';
+import { planReset, resetData, RESET_PLANS, type ResetScope } from '../ingest/reset.js';
 import { adviseChips, type ChipAdvice } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { loadSquadForChips, recommend, resolveTargetEvent, type Recommendation } from './recommend.js';
@@ -15,6 +16,21 @@ export interface ServerOptions {
   /** Minutes between background ingestions. 0 disables the scheduler. */
   ingestIntervalMinutes: number;
 }
+
+/**
+ * Every page here is computed from live data, so none of it may be cached.
+ *
+ * Without this a browser happily serves a previous /optimise from its own cache when you
+ * navigate back to it - so a genuinely updated recommendation looks like it never changed.
+ */
+const NO_STORE = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+  Pragma: 'no-cache',
+  Expires: '0',
+} as const;
+
+const HTML = { 'Content-Type': 'text/html; charset=utf-8', ...NO_STORE } as const;
+const JSON_HEADERS = { 'Content-Type': 'application/json', ...NO_STORE } as const;
 
 function escapeHtml(value: string): string {
   return value
@@ -137,7 +153,8 @@ export function renderPage(state: StateOfPlay): string {
     state.nextDeadline?.name ?? 'the next gameweek',
   )}</a>
   &nbsp;<a href="/chips">Chip strategy&nbsp;&rarr;</a>
-  &nbsp;<a href="/upload">Import data&nbsp;&rarr;</a></p>
+  &nbsp;<a href="/upload">Import data&nbsp;&rarr;</a>
+  &nbsp;<a href="/reset">Reset&nbsp;&rarr;</a></p>
 
   <h2>Data freshness</h2>
   <div class="scroll"><table><thead><tr><th>Source</th><th>Last successful pull</th></tr></thead>
@@ -315,18 +332,25 @@ export function renderRecommendation(rec: Recommendation): string {
   <h2>Evidence behind these projections</h2>
   <ul>
     <li>${rec.playersConsidered} players considered, model ${escapeHtml(rec.modelVersion)}</li>
-    ${
+    <li>${
       rec.evidence.usingPreviousSeason > 0
-        ? `<li>${rec.evidence.usingPreviousSeason} player(s) projected from last season's rates,
-            because this season has no minutes yet</li>`
-        : ''
-    }
-    ${
+        ? `${rec.evidence.usingPreviousSeason} player(s) projected from last season's rates,
+           because this season has no minutes yet`
+        : `<strong>No last-season history loaded.</strong> Import element-summary files, or a
+           season CSV, to project from real rates rather than the API's own estimate`
+    }</li>
+    <li>${
       rec.evidence.intelCompiledAt
-        ? `<li>Curated pre-season notes compiled ${escapeHtml(rec.evidence.intelCompiledAt)},
-            ${rec.evidence.intelApplied} adjustment(s) applied</li>`
-        : ''
-    }
+        ? `Curated pre-season notes compiled ${escapeHtml(rec.evidence.intelCompiledAt)},
+           ${rec.evidence.intelApplied} adjustment(s) applied` +
+          (rec.evidence.intelPriceMismatches > 0
+            ? `, ${rec.evidence.intelPriceMismatches} withheld on a price mismatch`
+            : '') +
+          (rec.evidence.intelUnmatched.length > 0
+            ? `, ${rec.evidence.intelUnmatched.length} matched no player`
+            : '')
+        : 'No curated notes file loaded'
+    }</li>
     <li>${
       rec.evidence.eliteSampleSize > 0
         ? `Elite-manager ownership sampled for ${rec.evidence.eliteSampleSize} players`
@@ -456,6 +480,80 @@ async function send(files) {
 }
 </script>
 </main></body></html>`;
+
+function renderReset(plans: { scope: ResetScope; rows: number; description: string; keeps: string }[]): string {
+  const cards = plans
+    .map(
+      (plan) => `<div class="rec">
+        <h3>${escapeHtml(plan.scope)}</h3>
+        <p><strong>Removes:</strong> ${escapeHtml(plan.description)}</p>
+        <p class="muted"><strong>Keeps:</strong> ${escapeHtml(plan.keeps)}</p>
+        <p class="muted">${plan.rows} row(s) would be deleted.</p>
+        <button class="danger" data-scope="${escapeHtml(plan.scope)}" ${plan.rows === 0 ? 'disabled' : ''}>
+          Delete ${escapeHtml(plan.scope)}
+        </button>
+      </div>`,
+    )
+    .join('');
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset data</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e2e2e2;
+          --danger:#b3261e; --ok:#0a7c42; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --fg:#e8e8e8; --muted:#9aa0a6; --line:#2c2f36;
+            --danger:#ffb4ab; --ok:#6ee7a8; }
+  }
+  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg);
+         font:15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:44rem; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:0 0 .5rem; }
+  .muted { color:var(--muted); }
+  .rec { border:1px solid var(--line); border-radius:8px; padding:.9rem 1rem; margin:.8rem 0; }
+  .rec h3 { margin:0 0 .4rem; font-size:1rem; text-transform:uppercase; letter-spacing:.04em; }
+  .rec p { margin:.25rem 0; }
+  button.danger { margin-top:.6rem; background:transparent; color:var(--danger);
+                  border:1px solid var(--danger); border-radius:8px; padding:.45rem .9rem;
+                  font-weight:600; cursor:pointer; font-size:.95rem; }
+  button.danger:disabled { opacity:.4; cursor:default; }
+  #log { margin-top:1rem; }
+  .done { border-left:4px solid var(--ok); padding:.5rem .8rem; border:1px solid var(--line);
+          border-radius:8px; }
+  a { color:inherit; }
+</style></head>
+<body><main>
+  <p><a href="/">&larr; back</a></p>
+  <h1>Reset data</h1>
+  <p class="muted">Each scope says exactly what it removes and what survives. Nothing happens
+  until you confirm, and the confirmation names the scope so a stray click cannot wipe
+  everything.</p>
+
+  ${cards}
+  <div id="log"></div>
+
+<script>
+document.querySelectorAll('button.danger').forEach((btn) => {
+  btn.onclick = async () => {
+    const scope = btn.dataset.scope;
+    if (!confirm('Delete "' + scope + '"? This cannot be undone.')) return;
+    btn.disabled = true;
+    const res = await fetch('/reset?scope=' + encodeURIComponent(scope), { method: 'POST' });
+    const body = await res.json();
+    const log = document.getElementById('log');
+    const el = document.createElement('div');
+    el.className = 'done';
+    el.textContent = res.ok
+      ? 'Deleted ' + body.totalRows + ' row(s) from "' + scope + '". Reload to see the new state.'
+      : 'Failed: ' + (body.error || res.statusText);
+    log.appendChild(el);
+  };
+});
+</script>
+</main></body></html>`;
+}
 
 function readBody(request: IncomingMessage, limitBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -603,8 +701,42 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
 
+    if (url.pathname === '/reset' && request.method !== 'POST') {
+      const plans = (Object.keys(RESET_PLANS) as ResetScope[]).map((scope) => {
+        const plan = planReset(db, scope);
+        return {
+          scope,
+          rows: plan.totalRows,
+          description: plan.description,
+          keeps: plan.keeps,
+        };
+      });
+      response.writeHead(200, HTML);
+      response.end(renderReset(plans));
+      return;
+    }
+
+    if (url.pathname === '/reset' && request.method === 'POST') {
+      // POST only, and never from a plain link: a GET here could be triggered by a browser
+      // prefetching, which must never delete anything.
+      const scope = (url.searchParams.get('scope') ?? '') as ResetScope;
+      if (!(scope in RESET_PLANS)) {
+        response.writeHead(400, JSON_HEADERS);
+        response.end(
+          JSON.stringify({
+            error: `Unknown scope '${scope}'. Choose one of: ${Object.keys(RESET_PLANS).join(', ')}.`,
+          }),
+        );
+        return;
+      }
+      const result = resetData(db, scope);
+      response.writeHead(200, JSON_HEADERS);
+      response.end(JSON.stringify(result));
+      return;
+    }
+
     if (url.pathname === '/upload' && request.method !== 'POST') {
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      response.writeHead(200, HTML);
       response.end(UPLOAD_PAGE);
       return;
     }
@@ -618,10 +750,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           sourceLabel: name,
           teamId: config.app.teamId,
         });
-        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.writeHead(200, JSON_HEADERS);
         response.end(JSON.stringify(summary));
       } catch (cause) {
-        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.writeHead(400, JSON_HEADERS);
         response.end(JSON.stringify({ error: (cause as Error).message }));
       }
       return;
@@ -645,14 +777,14 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         });
 
         if (url.pathname === '/chips.json') {
-          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.writeHead(200, JSON_HEADERS);
           response.end(JSON.stringify(advice, null, 2));
           return;
         }
-        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.writeHead(200, HTML);
         response.end(renderChips(advice, event.id));
       } catch (cause) {
-        response.writeHead(409, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.writeHead(409, HTML);
         response.end(
           `<!doctype html><meta charset="utf-8"><title>Cannot advise yet</title>` +
             `<body style="font:15px system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
@@ -673,16 +805,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         });
 
         if (url.pathname === '/optimise.json') {
-          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.writeHead(200, JSON_HEADERS);
           response.end(JSON.stringify(result, null, 2));
           return;
         }
 
-        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.writeHead(200, HTML);
         response.end(renderRecommendation(result));
       } catch (cause) {
         const message = (cause as Error).message;
-        response.writeHead(409, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.writeHead(409, HTML);
         response.end(
           `<!doctype html><meta charset="utf-8"><title>Cannot recommend yet</title>` +
             `<body style="font:15px system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
@@ -695,14 +827,14 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
     // Health check: must stay cheap and must not depend on the FPL API being up.
     if (url.pathname === '/healthz') {
-      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.writeHead(200, JSON_HEADERS);
       response.end(JSON.stringify({ ok: true, ingesting, lastIngestError }));
       return;
     }
 
     if (url.pathname === '/ingest' && request.method === 'POST') {
       void runIngest();
-      response.writeHead(202, { 'Content-Type': 'application/json' });
+      response.writeHead(202, JSON_HEADERS);
       response.end(JSON.stringify({ started: true }));
       return;
     }
@@ -713,18 +845,18 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     });
 
     if (url.pathname === '/state.json') {
-      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.writeHead(200, JSON_HEADERS);
       response.end(JSON.stringify(state, null, 2));
       return;
     }
 
     if (url.pathname !== '/') {
-      response.writeHead(404, { 'Content-Type': 'text/plain' });
+      response.writeHead(404, { 'Content-Type': 'text/plain', ...NO_STORE });
       response.end('Not found');
       return;
     }
 
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    response.writeHead(200, HTML);
     response.end(renderPage(state));
   };
 

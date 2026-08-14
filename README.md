@@ -24,6 +24,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 11 | Last-season stats, curated intel, elite ownership, justifications | done |
 | 12 | File import: saved API JSON and season CSV, CLI + web upload | done |
 | 13 | Chip strategy: when to play Wildcard, Free Hit, Bench Boost, Triple Captain | done |
+| 14 | Reset scopes, no-cache headers on dynamic pages | done |
 
 ## Requirements
 
@@ -48,6 +49,8 @@ npm run fpl -- ingest --summaries  # includes last season's totals per player
 npm run fpl -- ingest --elite      # sample what top-ranked managers own (needs a played GW)
 npm run fpl -- chips               # when to play each remaining chip
 npm run fpl -- chips --deep        # ...including Free Hit and Wildcard (slower)
+npm run fpl -- reset               # show what a reset would delete (deletes nothing)
+npm run fpl -- reset --scope squad --yes   # actually clear the squad
 npm run fpl -- serve               # serve the report at http://localhost:3000
 npm run fpl -- help
 ```
@@ -144,6 +147,38 @@ Free Hit and Wildcard need a full squad rebuild per gameweek to value, so they a
 evaluated with `--deep` (or `?deep=1`). Without a squad loaded, chip advice falls back to
 fixture shape alone and says so rather than inventing a points figure.
 
+## Starting again
+
+`fpl reset` (or `/reset`) deletes stored data in scopes, because wiping everything is rarely
+what you want:
+
+| Scope | Removes | Keeps |
+|---|---|---|
+| `squad` | Your squad, bank and chip history | All player data, fixtures, last season |
+| `projections` | Stored projections and past recommendations | Everything else |
+| `season` | This season's players, prices, fixtures, snapshots and squad | **Last season's history**, so it never needs uploading again |
+| `all` | Everything | Nothing — a clean database |
+
+Nothing is deleted without confirmation: the CLI shows the plan and row counts unless you pass
+`--yes`, and the web page requires a POST naming the scope, so a stray click or a browser
+prefetch cannot wipe anything.
+
+### If a recommendation looks like it never changes
+
+The optimiser is **deterministic** — the same data and the same model weights always produce
+the same squad. That is intentional, and it means an unchanged recommendation usually means
+unchanged inputs. Check, in order:
+
+1. **The evidence panel at the bottom of `/optimise`.** It states how many players were
+   projected from last season's rates and how many curated notes applied. If it says no
+   last-season history is loaded, the model is falling back to the API's own estimate and the
+   extra logic has nothing to work with.
+2. **Did the upload land?** The front page lists the last successful import per source.
+3. **Did the deploy land?** Render redeploys on push; check the deploy finished.
+
+All dynamic pages are served `Cache-Control: no-store`, so a stale browser cache is no longer a
+possible cause.
+
 ## Deploying to Render
 
 `render.yaml` defines a single web service that serves the report, runs a background
@@ -167,6 +202,7 @@ Endpoints once deployed:
 | `/` | The report page, with the "pick my best team" button |
 | `/optimise` | The recommendation: XI, captain, bench, transfers |
 | `/chips` | Chip strategy: when to play each one, and why |
+| `/reset` | Delete stored data by scope, with confirmation |
 | `/optimise.json` | The same, machine-readable |
 | `/state.json` | The same data, machine-readable |
 | `/healthz` | Health check — deliberately independent of the FPL API |

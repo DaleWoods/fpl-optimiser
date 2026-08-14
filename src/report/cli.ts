@@ -5,6 +5,7 @@ import type { FplApi } from '../api/client.js';
 import { ConfigError, loadConfig } from '../config/load.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll, importPayload } from '../ingest/index.js';
+import { planReset, resetData, RESET_PLANS, type ResetScope } from '../ingest/reset.js';
 import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
@@ -20,6 +21,7 @@ Usage:
   fpl import <path...>     Import saved FPL API JSON or a season CSV
   fpl optimise [--gw N]    Recommend the best team for a gameweek
   fpl chips [--deep]       Recommend when to play each remaining chip
+  fpl reset [--scope S]    Delete stored data and start again
   fpl serve [--port N]     Serve the status report over HTTP
   fpl help                 Show this message
 
@@ -30,6 +32,13 @@ Import:
     https://fantasy.premierleague.com/api/element-summary/<id>/  (one player's history)
   A CSV of last season's stats also works - see the README for the columns.
   File type is detected from the contents, so filenames do not matter.
+
+Reset scopes (default: squad). Nothing is deleted without --yes:
+  --scope squad            Your squad, bank and chip history
+  --scope projections      Stored projections and past recommendations
+  --scope season           This season's data, KEEPING last season's history
+  --scope all              Everything, including last season
+  --yes                    Actually do it (without this you only see the plan)
 
 Chip options:
   --horizon N              Gameweeks to look ahead (default 8)
@@ -314,12 +323,13 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
 
   console.log('\nEvidence behind these projections:');
   console.log(`  - ${result.playersConsidered} players considered, model ${result.modelVersion}`);
-  if (result.evidence.usingPreviousSeason > 0) {
-    console.log(
-      `  - ${result.evidence.usingPreviousSeason} player(s) projected from last season's rates ` +
-        '(no minutes yet this season)',
-    );
-  }
+  console.log(
+    result.evidence.usingPreviousSeason > 0
+      ? `  - ${result.evidence.usingPreviousSeason} player(s) projected from last season's rates ` +
+          '(no minutes yet this season)'
+      : "  - no last-season history loaded: import element-summary files or a season CSV to " +
+          "project from real rates rather than the API's own estimate",
+  );
   if (result.evidence.intelCompiledAt) {
     console.log(
       `  - curated pre-season notes compiled ${result.evidence.intelCompiledAt}, ` +
@@ -341,6 +351,54 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
     console.log('\nNotes:');
     for (const note of result.notes) console.log(`  - ${note}`);
   }
+
+  db.close();
+  return 0;
+}
+
+function commandReset(flags: Map<string, string | true>): number {
+  const config = loadConfig();
+  const db = openDatabase({ path: config.app.database.path });
+
+  const scopeFlag = flags.get('scope');
+  const scope = (typeof scopeFlag === 'string' ? scopeFlag : 'squad') as ResetScope;
+
+  if (!(scope in RESET_PLANS)) {
+    console.error(
+      `Unknown scope '${scope}'. Choose one of: ${Object.keys(RESET_PLANS).join(', ')}.`,
+    );
+    return 1;
+  }
+
+  const plan = planReset(db, scope);
+
+  console.log(`Reset scope: ${scope}`);
+  console.log(`  Removes: ${plan.description}`);
+  console.log(`  Keeps:   ${plan.keeps}`);
+  console.log('\nRows that would be deleted:');
+  for (const [table, count] of Object.entries(plan.deleted)) {
+    if (count > 0) console.log(`  ${table.padEnd(24)} ${count}`);
+  }
+  if (plan.totalRows === 0) {
+    console.log('  (nothing - already empty)');
+    db.close();
+    return 0;
+  }
+
+  if (!flags.get('yes')) {
+    console.log(`\n${plan.totalRows} row(s) would be deleted. Nothing has been changed.`);
+    console.log(`Run again with --yes to go ahead:  fpl reset --scope ${scope} --yes`);
+    db.close();
+    return 0;
+  }
+
+  const result = resetData(db, scope);
+  console.log(`\nDeleted ${result.totalRows} row(s).`);
+  console.log(
+    scope === 'all' || scope === 'season'
+      ? 'Import bootstrap-static and fixtures again to rebuild.'
+      : 'Run `fpl optimise` for a fresh recommendation.',
+  );
 
   db.close();
   return 0;
@@ -433,6 +491,8 @@ async function main(): Promise<number> {
       return commandImport(process.argv.slice(3).filter((arg) => !arg.startsWith('--')));
     case 'chips':
       return commandChips(flags);
+    case 'reset':
+      return commandReset(flags);
     case 'optimise':
     case 'optimize':
       return commandOptimise(flags);
