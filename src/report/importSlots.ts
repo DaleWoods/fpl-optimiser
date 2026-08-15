@@ -69,13 +69,20 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
     what:
       'Points, minutes and underlying stats from a completed season. It never changes, so this ' +
       'is a one-off. Before a ball is kicked it is the only real evidence there is, and it is ' +
-      'what stops opening-gameweek projections ranking on noise. Accepts a CSV, or the FPL ' +
-      "API's own element-summary files.",
+      'what stops opening-gameweek projections ranking on noise. Accepts a CSV - either one row ' +
+      "per player per gameweek (richer, preferred) or season totals - or the FPL API's own " +
+      'element-summary files. Players are matched by name and club, never by the id in the ' +
+      'file, because FPL reassigns ids between seasons.',
     source: `${FPL}/element-summary/1/`,
     sourceLabel: 'element-summary (one per player)',
     accepts: ['season-csv', 'element-summary'],
     acceptAttr: '.csv,.json',
-    runSources: ['import:season-csv', 'import:element-summary', 'element-summary'],
+    runSources: [
+      'import:season-csv',
+      'import:gameweek-csv',
+      'import:element-summary',
+      'element-summary',
+    ],
   },
   {
     id: 'my-squad',

@@ -26,6 +26,7 @@ Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
 | 13 | Chip strategy: when to play Wildcard, Free Hit, Bench Boost, Triple Captain | done |
 | 14 | Reset scopes, no-cache headers on dynamic pages | done |
 | 15 | Tabbed UI with FPL-inspired styling, per-slot import screen | done |
+| 16 | Per-gameweek stats CSV, and accuracy tracking against real results | done |
 
 ## Requirements
 
@@ -50,6 +51,8 @@ npm run fpl -- ingest --summaries  # includes last season's totals per player
 npm run fpl -- ingest --elite      # sample what top-ranked managers own (needs a played GW)
 npm run fpl -- chips               # when to play each remaining chip
 npm run fpl -- chips --deep        # ...including Free Hit and Wildcard (slower)
+npm run fpl -- accuracy            # how close projections were to what happened
+npm run fpl -- accuracy --gw 3     # ...for one gameweek, with the biggest misses
 npm run fpl -- reset               # show what a reset would delete (deletes nothing)
 npm run fpl -- reset --scope squad --yes   # actually clear the squad
 npm run fpl -- serve               # serve the report at http://localhost:3000
@@ -102,10 +105,28 @@ automatically, so dropping everything at once is fine.
 File type is detected from the *contents*, not the filename — `download (3).json` imports
 correctly.
 
-### Last season's stats as a CSV
+### Stats spreadsheets
 
-A spreadsheet of a previous season also imports. Headers are matched loosely (case, spaces and
-punctuation are ignored), and these aliases are accepted:
+Two shapes import, and the app tells them apart by whether there is a **`gameweek` column**:
+
+**Per-gameweek** (one row per player per gameweek) is preferred — it keeps the detail a season
+total throws away, and a season who scored steadily looks nothing like one who had three hauls.
+Recognised columns include `gameweek`, `web_name`, `team_name`, `minutes`, `total_points`,
+`expected_goals`, `expected_assists`, `expected_goals_conceded`, `clean_sheet`,
+`defensive_contribution`, `clearances_blocks_interceptions`, `recoveries`, `tackles` and
+`expected_points`. Rows are rolled up into season totals automatically, so the model can use
+them straight away.
+
+**Players are matched by name and club, never by the `id` in the file.** FPL reassigns element
+ids between seasons, so last season's id 1 belongs to a different player now. Trusting it would
+silently attribute one player's season to another — an error that never announces itself. Where
+two players share a name, club and then position are used to separate them; anything still
+ambiguous is reported rather than guessed.
+
+Prices are accepted in either unit: `6.2` and `62` both mean £6.2m.
+
+**Season totals** (one row per player) also import. Headers are matched loosely (case, spaces
+and punctuation ignored), and these aliases are accepted:
 
 | Column | Aliases |
 |---|---|
@@ -137,6 +158,30 @@ Re-uploading the same file updates rather than duplicates.
 | `bootstrap-static` | **Every week, before the deadline** | Prices, form, injuries and news all move. Each upload also stores a snapshot, so price and form *trends* accumulate — the more often you upload, the better change detection gets. |
 | `fixtures` | **Whenever games are rearranged** | European progress and cup ties move Premier League games, which is what creates the double and blank gameweeks that decide chip timing. |
 | Your `picks` | **Each week once the gameweek has started** | Loads your actual 15, which turns on transfer advice and points-based chip valuation. |
+
+## Measuring the model
+
+`fpl accuracy` (or the **Accuracy** tab) grades past projections against what actually
+happened. Every recommendation is stored with its model version when it is made, so once
+results arrive the two can be joined.
+
+Two numbers matter, and they answer different questions:
+
+- **Mean absolute error** — how far a typical projection was out, in points.
+- **Bias** — the direction. Positive means systematically too optimistic. This is the *fixable*
+  kind of wrong: an unbiased model with high error is noisy, but a biased one is tuned
+  incorrectly and the weights in `config/model.weights.json` can be adjusted for it.
+
+It also breaks error down **by position** (so a defensive blind spot shows up separately from
+an attacking one) and **by confidence**, names the players it got most wrong in both
+directions, and compares three numbers per gameweek: what the recommended XI was projected to
+score, what it actually scored, and what the **best XI available from that squad** would have
+scored in hindsight. That last gap is what better projections were worth, in real points.
+
+To use it: run an optimise before the deadline, then after the gameweek import a stats file
+covering it. Only players with **both** a projection and a result are scored — counting a
+player who was never projected would flatter the model, and counting one with no result would
+slander it.
 
 ## Chip strategy
 

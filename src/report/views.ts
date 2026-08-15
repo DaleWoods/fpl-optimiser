@@ -1,3 +1,4 @@
+import type { GameweekAccuracy, SeasonAccuracy } from '../model/accuracy.js';
 import type { ChipAdvice } from '../optimise/chips.js';
 import type { PayloadKind } from '../ingest/import.js';
 import type { ResetScope } from '../ingest/reset.js';
@@ -502,6 +503,139 @@ for (const slotId of slots) {
     subtitle: 'Feed the optimiser real data',
     body,
     script,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Accuracy
+// ---------------------------------------------------------------------------
+
+function errorRows(players: GameweekAccuracy['overRated']): string {
+  return players
+    .map(
+      (p) => `<tr>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.position)}</td>
+        <td>${escapeHtml(p.club)}</td>
+        <td>${p.predicted.toFixed(2)}</td>
+        <td><strong>${p.actual}</strong></td>
+        <td style="color:${p.error > 0 ? 'var(--danger)' : 'var(--ok)'}">${p.error > 0 ? '+' : ''}${p.error.toFixed(2)}</td>
+      </tr>`,
+    )
+    .join('');
+}
+
+export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy | null): string {
+  const errHead = `<thead><tr><th>Player</th><th>Pos</th><th>Club</th><th>Predicted</th><th>Actual</th><th>Error</th></tr></thead>`;
+
+  const seasonRows = season.gameweeks
+    .map(
+      (gw) => `<tr>
+        <td><strong>GW${gw.eventId}</strong></td>
+        <td>${gw.playersScored}</td>
+        <td>${gw.meanAbsoluteError.toFixed(2)}</td>
+        <td style="color:${Math.abs(gw.bias) < 0.25 ? 'var(--ok)' : 'var(--warn-fg)'}">${gw.bias > 0 ? '+' : ''}${gw.bias.toFixed(2)}</td>
+        <td>${gw.recommendedXiActual ?? '<span class="muted">&mdash;</span>'}</td>
+        <td>${gw.bestPossibleFromSquad ?? '<span class="muted">&mdash;</span>'}</td>
+        <td>${gw.yourActual ?? '<span class="muted">&mdash;</span>'}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const body = `
+  ${
+    season.overall
+      ? `<div class="grid">
+          <div class="stat"><div class="label">Gameweeks graded</div><div class="value">${season.overall.gameweeks}</div></div>
+          <div class="stat"><div class="label">Projections scored</div><div class="value">${season.overall.playersScored}</div></div>
+          <div class="stat"><div class="label">Mean error</div><div class="value">${season.overall.meanAbsoluteError.toFixed(2)}</div><div class="muted" style="font-size:.78rem">points per player</div></div>
+          <div class="stat"><div class="label">Bias</div><div class="value">${season.overall.bias > 0 ? '+' : ''}${season.overall.bias.toFixed(2)}</div><div class="muted" style="font-size:.78rem">${
+            season.overall.bias > 0.1
+              ? 'too optimistic'
+              : season.overall.bias < -0.1
+                ? 'too pessimistic'
+                : 'well centred'
+          }</div></div>
+        </div>`
+      : ''
+  }
+
+  ${
+    season.notes.length > 0
+      ? `<div class="banner info">${season.notes.map((n) => escapeHtml(n)).join('<br>')}</div>`
+      : ''
+  }
+
+  ${
+    season.gameweeks.length > 0
+      ? `<h2>By gameweek</h2>
+         <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+           <thead><tr><th>GW</th><th>Players</th><th>Mean error</th><th>Bias</th>
+             <th>Our XI scored</th><th>Best possible</th><th>You scored</th></tr></thead>
+           <tbody>${seasonRows}</tbody></table></div></div>
+         <p class="muted" style="font-size:.9rem">Mean error is how far a typical projection was
+         out, in points. Bias is the direction: positive means the model was too optimistic,
+         which is the fixable kind of wrong &mdash; it can be tuned out in
+         <code>config/model.weights.json</code>.</p>`
+      : ''
+  }
+
+  ${
+    latest && latest.playersScored > 0
+      ? `<h2>Gameweek ${latest.eventId} in detail</h2>
+         <div class="card">
+           <p style="margin:.2rem 0">Model <strong>${escapeHtml(latest.modelVersion ?? 'unknown')}</strong>,
+              ${latest.playersScored} projections scored.
+              Mean error <strong>${latest.meanAbsoluteError.toFixed(2)}</strong>,
+              bias <strong>${latest.bias > 0 ? '+' : ''}${latest.bias.toFixed(2)}</strong>,
+              RMSE ${latest.rootMeanSquareError.toFixed(2)}.</p>
+           ${
+             latest.recommendedXiActual !== null
+               ? `<p style="margin:.2rem 0">The recommended XI was projected at
+                  <strong>${latest.recommendedXiPredicted?.toFixed(1)}</strong> and actually scored
+                  <strong>${latest.recommendedXiActual}</strong>.${
+                    latest.bestPossibleFromSquad !== null
+                      ? ` The best XI available from that squad would have scored
+                         <strong>${latest.bestPossibleFromSquad}</strong> &mdash; a gap of
+                         ${latest.bestPossibleFromSquad - latest.recommendedXiActual} points.`
+                      : ''
+                  }</p>`
+               : ''
+           }
+         </div>
+
+         <h2>By position</h2>
+         <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+           <thead><tr><th>Position</th><th>Players</th><th>Mean error</th><th>Bias</th></tr></thead>
+           <tbody>${latest.byPosition
+             .map(
+               (row) => `<tr><td>${escapeHtml(row.position)}</td><td>${row.players}</td>
+                 <td>${row.meanAbsoluteError.toFixed(2)}</td>
+                 <td>${row.bias > 0 ? '+' : ''}${row.bias.toFixed(2)}</td></tr>`,
+             )
+             .join('')}</tbody></table></div></div>
+
+         <h2>Most over-rated <span class="muted" style="font-weight:400">(we said more than they scored)</span></h2>
+         <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${errHead}
+           <tbody>${errorRows(latest.overRated)}</tbody></table></div></div>
+
+         <h2>Most under-rated <span class="muted" style="font-weight:400">(they beat the projection)</span></h2>
+         <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${errHead}
+           <tbody>${errorRows(latest.underRated)}</tbody></table></div></div>
+
+         ${
+           latest.notes.length > 0
+             ? `<div class="banner info">${latest.notes.map((n) => escapeHtml(n)).join('<br>')}</div>`
+             : ''
+         }`
+      : ''
+  }`;
+
+  return renderShell({
+    title: 'Accuracy - FPL Optimiser',
+    activePath: '/accuracy',
+    subtitle: 'How close the projections were to what actually happened',
+    body,
   });
 }
 

@@ -10,7 +10,9 @@ import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { escapeHtml } from './layout.js';
 import { loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { getStateOfPlay } from './state.js';
+import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
 import {
+  renderAccuracy,
   renderChips,
   renderDashboard,
   renderError,
@@ -178,6 +180,21 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         response.writeHead(400, JSON_HEADERS);
         response.end(JSON.stringify({ error: (cause as Error).message }));
       }
+      return;
+    }
+
+    if (url.pathname === '/accuracy' || url.pathname === '/accuracy.json') {
+      const season = evaluateSeason(db, config.rules);
+      const lastGraded = season.gameweeks.at(-1);
+      const latest = lastGraded ? evaluateGameweek(db, lastGraded.eventId, config.rules) : null;
+
+      if (url.pathname === '/accuracy.json') {
+        response.writeHead(200, JSON_HEADERS);
+        response.end(JSON.stringify({ season, latest }, null, 2));
+        return;
+      }
+      response.writeHead(200, HTML);
+      response.end(renderAccuracy(season, latest));
       return;
     }
 

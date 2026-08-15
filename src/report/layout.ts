@@ -27,6 +27,7 @@ export const TABS: Tab[] = [
   { href: '/', label: 'Dashboard', match: '/' },
   { href: '/optimise', label: 'My Team', match: '/optimise' },
   { href: '/chips', label: 'Chips', match: '/chips' },
+  { href: '/accuracy', label: 'Accuracy', match: '/accuracy' },
   { href: '/import', label: 'Import Data', match: '/import' },
   { href: '/reset', label: 'Reset', match: '/reset' },
 ];

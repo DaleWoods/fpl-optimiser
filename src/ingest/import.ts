@@ -8,6 +8,7 @@ import {
   picksSchema,
 } from '../api/schemas.js';
 import { deriveFreeTransfers } from '../domain/freeTransfers.js';
+import { recordGameweekResult } from '../model/accuracy.js';
 import { toSqliteBool } from '../db/index.js';
 import type { Rules } from '../config/schema.js';
 import { nowSeconds } from '../db/index.js';
@@ -15,6 +16,7 @@ import { ingestBootstrapPayload } from './bootstrap.js';
 import { ingestFixturesPayload } from './fixtures.js';
 import { ingestElementSummaryPayload } from './playerSummaries.js';
 import { num, pick, toTable } from './csv.js';
+import { importGameweekCsv, isGameweekTable } from './gameweekCsv.js';
 import { withIngestRun } from './run.js';
 
 /**
@@ -100,6 +102,11 @@ export interface ImportOptions {
    * rather than quietly imported as something the user did not intend.
    */
   expectedKinds?: PayloadKind[];
+  /**
+   * True when a per-gameweek stats file describes the season now being played, in which case
+   * its points are also recorded as actual results to score projections against.
+   */
+  currentSeasonCsv?: boolean;
 }
 
 /** Human-readable names, for error messages that say what a file actually was. */
@@ -241,6 +248,16 @@ export async function importPayload(
 
         const teamId = options.teamId;
         if (teamId) {
+          // Each gameweek's real score, so model advice can be graded against what happened.
+          for (const row of parsed.current) {
+            recordGameweekResult(db, teamId, row.event, {
+              actualPoints: row.points,
+              benchPoints: row.points_on_bench,
+              transfersMade: row.event_transfers,
+              transferCost: row.event_transfers_cost,
+              chip: chipUsage.get(row.event) ?? null,
+            });
+          }
           db.prepare(
             `UPDATE manager_state SET free_transfers = ?, free_transfers_source = 'derived',
                     chips_used_json = ?
@@ -267,8 +284,14 @@ export async function importPayload(
         };
       });
 
-    case 'season-csv':
-      return importSeasonCsv(db, text, label);
+    case 'season-csv': {
+      // A spreadsheet is either one row per player per gameweek, or one row per player per
+      // season. They need completely different handling, and the gameweek column says which.
+      const table = toTable(text);
+      return isGameweekTable(table)
+        ? importGameweekCsv(db, text, { label, currentSeason: options.currentSeasonCsv ?? false })
+        : importSeasonCsv(db, text, label);
+    }
 
     default:
       throw new Error(

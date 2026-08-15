@@ -4,6 +4,7 @@ import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
 import { latestEliteOwnership } from '../ingest/elite.js';
 import { buildProjections, saveProjections } from '../model/build.js';
 import { applyIntel, loadIntel, type Intel } from '../model/intel.js';
+import { saveRecommendation } from '../model/accuracy.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
 import { selectBestEleven, selectBestSquad } from '../optimise/squad.js';
@@ -369,6 +370,25 @@ export async function recommend(
       budget: options.budget,
     });
 
+    saveRecommendation(db, {
+      eventId: event.id,
+      entryId: options.teamId ?? null,
+      kind: 'squad',
+      modelVersion: weights.modelVersion,
+      summary:
+        `Built a squad from scratch: ${selection.eleven.formation}, ` +
+        `${selection.eleven.expectedPoints.toFixed(1)} projected points`,
+      detail: {
+        starters: selection.eleven.starters.map((p) => ({ playerId: p.playerId, name: p.name, xPts: p.xPts })),
+        bench: selection.eleven.bench.map((p) => ({ playerId: p.playerId, name: p.name, xPts: p.xPts })),
+        captainId: selection.eleven.captain.playerId,
+        viceCaptainId: selection.eleven.viceCaptain.playerId,
+        squad: selection.squad.map((p) => ({ playerId: p.playerId, position: p.position })),
+        formation: selection.eleven.formation,
+      },
+      dataTakenAt: null,
+    });
+
     return {
       mode: 'build-squad',
       eventId: event.id,
@@ -417,6 +437,27 @@ export async function recommend(
   }
 
   const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);
+
+  saveRecommendation(db, {
+    eventId: event.id,
+    entryId: options.teamId ?? null,
+    kind: 'xi',
+    modelVersion: weights.modelVersion,
+    summary:
+      `${eleven.formation}, ${eleven.expectedPoints.toFixed(1)} projected points, ` +
+      `captain ${eleven.captain.name}` +
+      (transfers.length > 0 ? `, ${transfers.length} transfer(s) suggested` : ''),
+    detail: {
+      starters: eleven.starters.map((p) => ({ playerId: p.playerId, name: p.name, xPts: p.xPts })),
+      bench: eleven.bench.map((p) => ({ playerId: p.playerId, name: p.name, xPts: p.xPts })),
+      captainId: eleven.captain.playerId,
+      viceCaptainId: eleven.viceCaptain.playerId,
+      squad: owned.squad.map((p) => ({ playerId: p.playerId, position: p.position })),
+      formation: eleven.formation,
+      transfers: transfers.map((t) => ({ out: t.out.name, in: t.in.name, netGain: t.netGain })),
+    },
+    dataTakenAt: null,
+  });
 
   return {
     mode: 'existing-squad',

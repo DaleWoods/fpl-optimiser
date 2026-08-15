@@ -6,6 +6,7 @@ import { ConfigError, loadConfig } from '../config/load.js';
 import { openDatabase } from '../db/index.js';
 import { ingestAll, importPayload } from '../ingest/index.js';
 import { planReset, resetData, RESET_PLANS, type ResetScope } from '../ingest/reset.js';
+import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
 import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
@@ -21,6 +22,7 @@ Usage:
   fpl import <path...>     Import saved FPL API JSON or a season CSV
   fpl optimise [--gw N]    Recommend the best team for a gameweek
   fpl chips [--deep]       Recommend when to play each remaining chip
+  fpl accuracy [--gw N]    Compare projections against what actually happened
   fpl reset [--scope S]    Delete stored data and start again
   fpl serve [--port N]     Serve the status report over HTTP
   fpl help                 Show this message
@@ -356,6 +358,81 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
   return 0;
 }
 
+function commandAccuracy(flags: Map<string, string | true>): number {
+  const config = loadConfig();
+  const db = openDatabase({ path: config.app.database.path });
+
+  const gwFlag = flags.get('gw');
+  const season = evaluateSeason(db, config.rules);
+
+  console.log('Model accuracy');
+  console.log('='.repeat(64));
+
+  if (season.overall) {
+    console.log(
+      `\n${season.overall.gameweeks} gameweek(s) graded, ${season.overall.playersScored} projections scored.`,
+    );
+    console.log(`  Mean absolute error: ${season.overall.meanAbsoluteError.toFixed(2)} points per player`);
+    console.log(
+      `  Bias:                ${season.overall.bias > 0 ? '+' : ''}${season.overall.bias.toFixed(2)} ` +
+        `(${season.overall.bias > 0.1 ? 'too optimistic' : season.overall.bias < -0.1 ? 'too pessimistic' : 'well centred'})`,
+    );
+
+    console.log('\nBy gameweek:');
+    console.log('  GW   players   error   bias    our XI   best    you');
+    for (const gw of season.gameweeks) {
+      console.log(
+        `  ${String(gw.eventId).padStart(2)}   ${String(gw.playersScored).padStart(7)}   ` +
+          `${gw.meanAbsoluteError.toFixed(2).padStart(5)}   ` +
+          `${(gw.bias > 0 ? '+' : '') + gw.bias.toFixed(2)}`.padStart(6) +
+          `   ${String(gw.recommendedXiActual ?? '-').padStart(6)}   ` +
+          `${String(gw.bestPossibleFromSquad ?? '-').padStart(4)}   ` +
+          `${String(gw.yourActual ?? '-').padStart(3)}`,
+      );
+    }
+  }
+
+  for (const note of season.notes) console.log(`\n  ${note}`);
+
+  const targetGw =
+    typeof gwFlag === 'string' ? Number(gwFlag) : season.gameweeks.at(-1)?.eventId;
+
+  if (targetGw !== undefined) {
+    const detail = evaluateGameweek(db, targetGw, config.rules);
+    if (detail.playersScored > 0) {
+      console.log(`\nGameweek ${targetGw} in detail (model ${detail.modelVersion}):`);
+      console.log('\n  By position:');
+      for (const row of detail.byPosition) {
+        console.log(
+          `    ${row.position.padEnd(4)} ${String(row.players).padStart(4)} players   ` +
+            `error ${row.meanAbsoluteError.toFixed(2)}   bias ${row.bias > 0 ? '+' : ''}${row.bias.toFixed(2)}`,
+        );
+      }
+      console.log('\n  Most over-rated (we said more than they scored):');
+      for (const p of detail.overRated) {
+        console.log(`    ${p.name.padEnd(18)} ${p.position}  predicted ${p.predicted.toFixed(2)}, actual ${p.actual}`);
+      }
+      console.log('\n  Most under-rated (they beat the projection):');
+      for (const p of detail.underRated) {
+        console.log(`    ${p.name.padEnd(18)} ${p.position}  predicted ${p.predicted.toFixed(2)}, actual ${p.actual}`);
+      }
+      if (detail.recommendedXiActual !== null) {
+        console.log(
+          `\n  The recommended XI was projected at ${detail.recommendedXiPredicted?.toFixed(1)} ` +
+            `and scored ${detail.recommendedXiActual}.` +
+            (detail.bestPossibleFromSquad !== null
+              ? ` Best available from that squad: ${detail.bestPossibleFromSquad}.`
+              : ''),
+        );
+      }
+      for (const note of detail.notes) console.log(`\n  ${note}`);
+    }
+  }
+
+  db.close();
+  return 0;
+}
+
 function commandReset(flags: Map<string, string | true>): number {
   const config = loadConfig();
   const db = openDatabase({ path: config.app.database.path });
@@ -491,6 +568,8 @@ async function main(): Promise<number> {
       return commandImport(process.argv.slice(3).filter((arg) => !arg.startsWith('--')));
     case 'chips':
       return commandChips(flags);
+    case 'accuracy':
+      return commandAccuracy(flags);
     case 'reset':
       return commandReset(flags);
     case 'optimise':

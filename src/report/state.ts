@@ -73,7 +73,12 @@ const SOURCES = [
   { label: 'fixtures', runs: ['fixtures', 'import:fixtures'] },
   {
     label: 'last season',
-    runs: ['element-summary', 'import:element-summary', 'import:season-csv'],
+    runs: [
+      'element-summary',
+      'import:element-summary',
+      'import:season-csv',
+      'import:gameweek-csv',
+    ],
   },
   { label: 'your squad', runs: ['entry', 'import:entry', 'import:picks', 'import:entry-history'] },
 ] as const;

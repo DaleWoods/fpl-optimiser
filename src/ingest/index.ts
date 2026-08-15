@@ -12,6 +12,7 @@ export * from './elite.js';
 export * from './import.js';
 export * from './reset.js';
 export * from './csv.js';
+export * from './gameweekCsv.js';
 export * from './entry.js';
 export * from './fixtures.js';
 export * from './playerSummaries.js';
