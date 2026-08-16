@@ -116,6 +116,8 @@ export const modelWeightsSchema = z.strictObject({
     homeAdvantage: z.number().positive(),
     awayFactor: z.number().positive(),
     strengthExponent: z.number().min(0),
+    /** How much the computed league table bends club strength. 0 disables it. */
+    tableWeight: z.number().min(0),
     minExpectedGoals: z.number().min(0),
     maxExpectedGoals: z.number().positive(),
     fallbackStrength: z.number().positive(),

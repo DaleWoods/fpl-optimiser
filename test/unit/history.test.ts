@@ -136,6 +136,39 @@ describe('previous-season history', () => {
     expect(projection.reasons.join(' ')).toMatch(/roles change over a summer/);
   });
 
+  it('shrinks a lucky cameo below a genuine full-season rate, even at the same per-90', async () => {
+    // Scale every counting stat's total to the same per-90 rate for both players, so the only
+    // thing that differs is the sample size behind it: 90 minutes of a hot streak versus a full
+    // season backing it up. The cameo must not outrank the real starter.
+    const perNinety = (minutes: number) => (rate: number) => (rate * minutes) / 90;
+    const scaledSeason = (minutes: number) => {
+      const scale = perNinety(minutes);
+      return pastSeason({
+        minutes,
+        expected_goals: String(scale(1.0)),
+        expected_assists: String(scale(0.5)),
+        goals_scored: Math.round(scale(1)),
+        assists: Math.round(scale(0.5)),
+        bonus: Math.round(scale(0.5)),
+        defensive_contribution: String(scale(4)),
+      });
+    };
+
+    const api = new StubFplApi({
+      elementSummary: {
+        11: { ...fakeElementSummary(11, []), history_past: [scaledSeason(90)] },
+        12: { ...fakeElementSummary(12, []), history_past: [scaledSeason(3000)] },
+      },
+    });
+    await ingestPlayerSummaries(db, api, { playerIds: [11, 12] });
+
+    const projections = buildProjections(db, 1, rules, weights);
+    const cameo = projections.find((p) => p.playerId === 11)!;
+    const fullSeason = projections.find((p) => p.playerId === 12)!;
+
+    expect(cameo.xPts).toBeLessThan(fullSeason.xPts);
+  });
+
   it('never treats last season as high confidence', async () => {
     const api = new StubFplApi({
       elementSummary: { 11: { ...fakeElementSummary(11, []), history_past: [pastSeason()] } },

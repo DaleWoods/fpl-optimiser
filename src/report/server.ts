@@ -8,12 +8,14 @@ import { planReset, resetData, RESET_PLANS, type ResetScope } from '../ingest/re
 import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { escapeHtml } from './layout.js';
-import { loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
+import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
+import { computeLeagueTable } from '../model/table.js';
 import {
   renderAccuracy,
   renderChips,
+  renderGenerate,
   renderDashboard,
   renderError,
   renderImport,
@@ -109,6 +111,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         const plan = planReset(db, scope);
         return {
           scope,
+          title: plan.title,
           rows: plan.totalRows,
           description: plan.description,
           keeps: plan.keeps,
@@ -233,6 +236,35 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
     if (url.pathname === '/optimise' || url.pathname === '/optimise.json') {
       const gwParam = url.searchParams.get('gw');
+      const wantsGenerate = url.searchParams.get('generate') === '1';
+      const readiness = checkReadiness(db);
+      const event = resolveTargetEvent(db);
+      const squadLoaded =
+        (db.prepare('SELECT COUNT(*) AS n FROM squad_pick').get() as { n: number }).n > 0;
+
+      // A JSON caller asked explicitly, so gate on readiness alone; the page never generates
+      // without the button - visiting or refreshing the tab must not silently build a team.
+      if (url.pathname === '/optimise.json') {
+        if (!readiness.ready) {
+          response.writeHead(409, JSON_HEADERS);
+          response.end(
+            JSON.stringify({ error: 'Not ready to generate', missing: readiness.missing, checks: readiness.checks }, null, 2),
+          );
+          return;
+        }
+      } else if (!wantsGenerate || !readiness.ready) {
+        response.writeHead(readiness.ready || !wantsGenerate ? 200 : 409, HTML);
+        response.end(
+          renderGenerate({
+            readiness,
+            eventName: event?.name ?? null,
+            squadLoaded,
+            blockedAttempt: wantsGenerate && !readiness.ready,
+          }),
+        );
+        return;
+      }
+
       try {
         const result = await recommend(db, config.rules, config.weights, {
           teamId: config.app.teamId,
@@ -289,7 +321,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     }
 
     response.writeHead(200, HTML);
-    response.end(renderDashboard(state));
+    response.end(renderDashboard({ ...state, leagueTable: computeLeagueTable(db) }));
   };
 
   const server = createServer((request, response) => {

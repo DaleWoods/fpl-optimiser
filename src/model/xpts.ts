@@ -61,6 +61,8 @@ export interface PlayerModelInput {
   previousSeasonName?: string | null;
   /** Total points in that previous season, for the explanation. */
   previousSeasonPoints?: number | null;
+  /** Minutes behind those rates. A per-90 rate from 90 minutes is noise, not evidence. */
+  previousSeasonMinutes?: number | null;
 
   /**
    * The FPL API's own expected-points figure (ep_next), used only as a fallback.
@@ -374,8 +376,15 @@ export function projectPlayer(
     reasons.unshift(
       `Rates are from ${input.previousSeasonName ?? 'last season'}` +
         (input.previousSeasonPoints != null ? ` (${input.previousSeasonPoints} points)` : '') +
+        (input.previousSeasonMinutes != null ? ` over ${input.previousSeasonMinutes} minutes` : '') +
         ' because this season has no minutes yet - treat with caution, roles change over a summer.',
     );
+    if ((input.previousSeasonMinutes ?? 0) < 900) {
+      reasons.push(
+        `Small sample: only ${input.previousSeasonMinutes ?? 0} minutes last season, so these ` +
+          'rates are heavily damped and this projection is low confidence.',
+      );
+    }
   }
 
   if (input.availability.probability < 1) {
@@ -400,8 +409,11 @@ function assessConfidence(
   weights: ModelWeights,
 ): 'high' | 'medium' | 'low' {
   // Last season's rates are real evidence, but a summer of transfers and new managers means
-  // they can never be high confidence.
-  if (input.usingPreviousSeason) return input.xgPer90 !== null ? 'medium' : 'low';
+  // they can never be high confidence - and a thin sample of minutes is barely evidence at all.
+  if (input.usingPreviousSeason) {
+    if ((input.previousSeasonMinutes ?? 0) < 900) return 'low';
+    return input.xgPer90 !== null ? 'medium' : 'low';
+  }
   if (input.minutesPlayed >= weights.attacking.priorWeightMinutes && input.xgPer90 !== null) {
     return 'high';
   }

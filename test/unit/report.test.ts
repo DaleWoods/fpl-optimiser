@@ -7,7 +7,14 @@ import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
 import { startServer, type RunningServer } from '../../src/report/server.js';
 import { renderDashboard } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
-import { defaultPlayers, fakeBootstrap, fakeEntry, fakeEvent, fakePicks } from '../support/fakeApi.js';
+import {
+  defaultPlayers,
+  fakeBootstrap,
+  fakeEntry,
+  fakeEvent,
+  fakeFixture,
+  fakePicks,
+} from '../support/fakeApi.js';
 
 const rules = loadRules();
 const teamId = 2651633;
@@ -295,6 +302,121 @@ describe('report server', () => {
   it('404s an unknown path', async () => {
     const base = await start();
     expect((await fetch(`${base}/nope`)).status).toBe(404);
+  });
+
+  describe('/optimise readiness gate', () => {
+    async function importSlot(base: string, slot: string, body: unknown): Promise<void> {
+      const response = await fetch(`${base}/import?slot=${slot}&name=${slot}.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(body),
+      });
+      expect(response.status, `importing ${slot}`).toBe(200);
+    }
+
+    /**
+     * A minimal but genuinely feasible squad: exactly 2 GKP/5 DEF/5 MID/3 FWD spread across
+     * five clubs (never more than three per club), all cheap enough to fit the budget with
+     * room to spare. defaultPlayers()'s four clubs cannot build a 15 at all - three-per-club
+     * caps them at 12 - so a solver failure there would be mistaken for the readiness gate
+     * still being shut.
+     */
+    function feasibleBootstrap() {
+      const teams = Array.from({ length: 5 }, (_, i) => ({
+        id: i + 1,
+        name: `Club ${i + 1}`,
+        short_name: `C${i + 1}`,
+      }));
+      // [element_type, club] pairs, three per club, position totals exactly 2/5/5/3.
+      const shape: Array<[number, number]> = [
+        [1, 1], [2, 1], [2, 1], // club 1: 1 GKP, 2 DEF
+        [1, 2], [2, 2], [2, 2], // club 2: 1 GKP, 2 DEF
+        [2, 3], [3, 3], [3, 3], // club 3: 1 DEF, 2 MID
+        [3, 4], [3, 4], [3, 4], // club 4: 3 MID
+        [4, 5], [4, 5], [4, 5], // club 5: 3 FWD
+      ];
+      const players = shape.map(([elementType, team], index) => ({
+        id: index + 1,
+        web_name: `P${index + 1}`,
+        team,
+        element_type: elementType,
+        now_cost: 40,
+        minutes: 900,
+        starts: 10,
+      }));
+      return fakeBootstrap({
+        teams,
+        players,
+        events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+      });
+    }
+
+    async function importReadyData(base: string): Promise<void> {
+      await importSlot(base, 'this-season', feasibleBootstrap());
+      await importSlot(base, 'fixtures', [fakeFixture(1, 1, 1, 2), fakeFixture(2, 1, 3, 4)]);
+      await importSlot(base, 'last-season', {
+        history: [{ element: 1, fixture: 500, minutes: 90 }],
+        history_past: [{ season_name: '2025/26', total_points: 180, minutes: 3000 }],
+      });
+    }
+
+    it('never generates a team just from visiting the page', async () => {
+      const base = await start();
+      const response = await fetch(`${base}/optimise`);
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatch(/Nothing is generated until you click the button/);
+      expect(body).not.toMatch(/Regenerate/);
+    });
+
+    it('lists what is missing when nothing has been imported yet', async () => {
+      const base = await start();
+      const body = await (await fetch(`${base}/optimise`)).text();
+
+      expect(body).toContain("This season's player data");
+      expect(body).toContain("Last season's stats");
+    });
+
+    it('refuses to generate over the JSON API until the required imports are in', async () => {
+      const base = await start();
+      const response = await fetch(`${base}/optimise.json`);
+      const body = (await response.json()) as { error: string; missing: string[] };
+
+      expect(response.status).toBe(409);
+      expect(body.error).toMatch(/Not ready to generate/);
+      expect(body.missing.length).toBeGreaterThan(0);
+    });
+
+    it('blocks an explicit generate attempt with a 409 and explains why', async () => {
+      const base = await start();
+      const response = await fetch(`${base}/optimise?generate=1`);
+      const body = await response.text();
+
+      expect(response.status).toBe(409);
+      expect(body).toMatch(/Not ready to generate yet/);
+    });
+
+    it('generates once every required import is present', async () => {
+      const base = await start();
+      await importReadyData(base);
+
+      const response = await fetch(`${base}/optimise?generate=1`);
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatch(/Regenerate/);
+    });
+
+    it('serves the JSON recommendation once ready, without needing generate=1', async () => {
+      const base = await start();
+      await importReadyData(base);
+
+      const response = await fetch(`${base}/optimise.json`);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { mode: string };
+      expect(body.mode).toBeDefined();
+    });
   });
 
   it('escapes third-party text before putting it in the page', () => {

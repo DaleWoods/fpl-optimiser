@@ -3,7 +3,8 @@ import type { ChipAdvice } from '../optimise/chips.js';
 import type { PayloadKind } from '../ingest/import.js';
 import type { ResetScope } from '../ingest/reset.js';
 import { escapeHtml, renderShell } from './layout.js';
-import type { Recommendation } from './recommend.js';
+import type { Readiness, Recommendation } from './recommend.js';
+import type { LeagueTableRow } from '../model/table.js';
 import { formatDuration, formatMoney, type StateOfPlay } from './state.js';
 
 /** Every page in the app, sharing one shell so the tabs and styling stay consistent. */
@@ -23,7 +24,16 @@ export function renderError(title: string, message: string, activePath: string):
 // Dashboard
 // ---------------------------------------------------------------------------
 
-export function renderDashboard(state: StateOfPlay): string {
+export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTableRow[] }): string {
+  const table = (state.leagueTable ?? []).filter((row) => row.played > 0);
+  const leagueRows = table
+    .map(
+      (row) => `<tr>
+        <td>${row.position}</td><td>${escapeHtml(row.name)}</td><td>${row.played}</td>
+        <td>${row.goalDifference > 0 ? '+' : ''}${row.goalDifference}</td><td><strong>${row.points}</strong></td>
+      </tr>`,
+    )
+    .join('');
   const staleBanner = state.anyStale
     ? `<div class="banner warn"><strong>Some data is stale.</strong> Import a fresh
        bootstrap-static before trusting a recommendation.</div>`
@@ -90,7 +100,7 @@ export function renderDashboard(state: StateOfPlay): string {
   </div>
 
   <p style="margin-top:1.2rem">
-    <a class="btn accent" href="/optimise">Pick my best team for ${escapeHtml(
+    <a class="btn accent" href="/optimise">Generate my best team for ${escapeHtml(
       state.nextDeadline?.name ?? 'the next gameweek',
     )}</a>
     <a class="btn ghost" href="/chips" style="margin-left:.4rem">Chip strategy</a>
@@ -112,6 +122,16 @@ export function renderDashboard(state: StateOfPlay): string {
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
     <thead><tr><th>Source</th><th>Last successful import</th></tr></thead>
     <tbody>${freshnessRows}</tbody></table></div></div>
+
+  ${
+    table.length > 0
+      ? `<h2>League table <span class="muted" style="font-weight:400">(computed from imported
+         results - it feeds back into club strength)</span></h2>
+         <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+           <thead><tr><th>#</th><th>Club</th><th>P</th><th>GD</th><th>Pts</th></tr></thead>
+           <tbody>${leagueRows}</tbody></table></div></div>`
+      : ''
+  }
 
   <h2>Recent changes</h2>
   ${
@@ -210,6 +230,11 @@ export function renderRecommendation(rec: Recommendation): string {
       : '';
 
   const body = `
+  <p style="margin:0 0 .6rem">
+    <a class="btn ghost" href="/optimise?generate=1">Regenerate</a>
+    <button class="btn danger" data-clear-squad style="margin-left:.4rem">Clear squad</button>
+  </p>
+
   ${
     rec.mode === 'build-squad'
       ? `<div class="banner info">This is a squad built from scratch within the budget, because
@@ -291,6 +316,90 @@ export function renderRecommendation(rec: Recommendation): string {
     activePath: '/optimise',
     subtitle: `${rec.eventName ?? `Gameweek ${rec.eventId}`} · deadline ${rec.deadlineIso ?? 'unknown'}`,
     body,
+    script: CLEAR_SQUAD_SCRIPT,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Generate gate (My Team, before a team has been generated)
+// ---------------------------------------------------------------------------
+
+const CLEAR_SQUAD_SCRIPT = `
+document.querySelectorAll('[data-clear-squad]').forEach((btn) => {
+  btn.onclick = async () => {
+    if (!confirm('Clear the loaded squad? Imports and last-season history are kept.')) return;
+    btn.disabled = true;
+    await fetch('/reset?scope=squad', { method: 'POST' });
+    location.href = '/optimise';
+  };
+});
+`;
+
+export function renderGenerate(options: {
+  readiness: Readiness;
+  eventName: string | null;
+  squadLoaded: boolean;
+  blockedAttempt?: boolean;
+}): string {
+  const { readiness } = options;
+
+  const rows = readiness.checks
+    .map(
+      (check) => `<div class="card" style="display:flex;gap:.8rem;align-items:flex-start">
+        <div style="font-size:1.2rem;line-height:1.3">${
+          check.ok ? '<span style="color:var(--ok)">&#10003;</span>' : check.required ? '<span style="color:var(--danger)">&#10007;</span>' : '<span class="muted">&ndash;</span>'
+        }</div>
+        <div>
+          <strong>${escapeHtml(check.label)}</strong>
+          ${check.required ? '' : '<span class="pill" style="margin-left:.4rem">signal</span>'}
+          <div class="muted" style="font-size:.9rem">${escapeHtml(check.detail)}</div>
+        </div>
+      </div>`,
+    )
+    .join('');
+
+  const body = `
+  ${
+    options.blockedAttempt
+      ? `<div class="banner warn"><strong>Not ready to generate yet.</strong> Missing:
+         ${readiness.missing.map((m) => escapeHtml(m)).join(', ')}. Import them on the
+         <a href="/import">Import Data</a> tab first.</div>`
+      : ''
+  }
+
+  <div class="banner info"><strong>Nothing is generated until you click the button.</strong>
+  A team is only worth acting on when it is built from all the evidence at once, so generation
+  is blocked until this season's players, the fixtures and last season's stats are all in.</div>
+
+  ${rows}
+
+  <p style="margin-top:1.2rem">
+    ${
+      readiness.ready
+        ? `<a class="btn accent" href="/optimise?generate=1">Generate my best team for ${escapeHtml(
+            options.eventName ?? 'the next gameweek',
+          )}</a>`
+        : `<button class="btn accent" disabled title="Import the missing data first">Generate my best team</button>
+           <a class="btn ghost" href="/import" style="margin-left:.4rem">Go to Import Data</a>`
+    }
+    ${
+      options.squadLoaded
+        ? `<button class="btn danger" data-clear-squad style="margin-left:.4rem">Clear squad</button>`
+        : ''
+    }
+  </p>
+  ${
+    options.squadLoaded
+      ? '<p class="muted" style="font-size:.9rem">Clear squad removes the loaded 15 (and bank/chip history) so the next generate starts from a blank slate. Your imports are kept.</p>'
+      : ''
+  }`;
+
+  return renderShell({
+    title: 'My Team - FPL Optimiser',
+    activePath: '/optimise',
+    subtitle: 'Generate a team when you are ready - never automatically',
+    body,
+    script: options.squadLoaded ? CLEAR_SQUAD_SCRIPT : undefined,
   });
 }
 
@@ -644,12 +753,12 @@ export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy 
 // ---------------------------------------------------------------------------
 
 export function renderReset(
-  plans: { scope: ResetScope; rows: number; description: string; keeps: string }[],
+  plans: { scope: ResetScope; title: string; rows: number; description: string; keeps: string }[],
 ): string {
   const cards = plans
     .map(
       (plan) => `<div class="card">
-        <h3 style="text-transform:uppercase;letter-spacing:.04em">${escapeHtml(plan.scope)}</h3>
+        <h3>${escapeHtml(plan.title)}</h3>
         <p style="margin:.2rem 0"><strong>Removes:</strong> ${escapeHtml(plan.description)}</p>
         <p class="muted" style="margin:.2rem 0"><strong>Keeps:</strong> ${escapeHtml(plan.keeps)}</p>
         <p class="muted" style="margin:.2rem 0">${plan.rows} row(s) would be deleted.</p>
@@ -681,8 +790,9 @@ document.querySelectorAll('button[data-scope]').forEach((btn) => {
 `;
 
   const body = `
-  <div class="banner info">Each scope names exactly what it removes and what survives. Nothing
-  happens until you confirm.</div>
+  <div class="banner info">The first four cards undo one import each, mirroring the Import Data
+  tab. The wider scopes are below. Each names exactly what it removes and what survives, and
+  nothing happens until you confirm.</div>
   ${cards}`;
 
   return renderShell({

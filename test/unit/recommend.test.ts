@@ -4,8 +4,9 @@ import { StubFplApi } from '../../src/api/replayClient.js';
 import { loadModelWeights, loadRules } from '../../src/config/load.js';
 import { openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry, ingestFixtures } from '../../src/ingest/index.js';
+import { importPayload } from '../../src/ingest/import.js';
 import { buildProjections } from '../../src/model/build.js';
-import { recommend, resolveTargetEvent } from '../../src/report/recommend.js';
+import { checkReadiness, recommend, resolveTargetEvent } from '../../src/report/recommend.js';
 import { validateSquad, validateStartingEleven } from '../../src/rules/validate.js';
 import {
   defaultTeams,
@@ -130,6 +131,172 @@ describe('projection building', () => {
       .get() as { n: number; version: string };
     expect(row.n).toBeGreaterThan(0);
     expect(row.version).toBe(weights.modelVersion);
+  });
+});
+
+describe('league table blend', () => {
+  /**
+   * Four clubs of identical underlying strength, so any projection difference between their
+   * players can only come from the computed table, not the API's own ratings.
+   */
+  function equalStrengthTeams(): ReturnType<typeof defaultTeams> {
+    return [
+      { id: 1, name: 'Club A', short_name: 'CLA', attack: 1100, defence: 1100 },
+      { id: 2, name: 'Club B', short_name: 'CLB', attack: 1100, defence: 1100 },
+      { id: 3, name: 'Club C', short_name: 'CLC', attack: 1100, defence: 1100 },
+      { id: 4, name: 'Club D', short_name: 'CLD', attack: 1100, defence: 1100 },
+    ];
+  }
+
+  function identicalPlayer(id: number, team: number): FakePlayerSpec {
+    return {
+      id,
+      web_name: `P${id}`,
+      team,
+      element_type: 3,
+      now_cost: 70,
+      minutes: 900,
+      starts: 10,
+      goals_scored: 5,
+      assists: 4,
+      expected_goals: 4,
+      expected_assists: 3,
+      defensive_contribution: 40,
+      bonus: 5,
+      selected_by_percent: 10,
+    };
+  }
+
+  it('nudges a club on a hot streak above an out-of-form club with the same rating', async () => {
+    const teams = equalStrengthTeams();
+    const players = [identicalPlayer(101, 1), identicalPlayer(102, 2)];
+    const events = [
+      fakeEvent(1, { is_next: false, finished: true, deadline_time: '2020-08-14T17:30:00Z' }),
+      fakeEvent(2, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' }),
+    ];
+
+    const db = openTestDatabase();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({ bootstrap: fakeBootstrap({ teams, players, events }) }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          // Gameweek 1, already played: Club A thrashes Club B, Club C draws Club D.
+          fakeFixture(1, 1, 1, 2, { team_h_score: 4, team_a_score: 0, finished: true }),
+          fakeFixture(2, 1, 3, 4, { team_h_score: 1, team_a_score: 1, finished: true }),
+          // Gameweek 2, the target: A and B each face an opponent of identical current form.
+          fakeFixture(3, 2, 1, 3),
+          fakeFixture(4, 2, 2, 4),
+        ],
+      }),
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    const hotClub = projections.find((p) => p.playerId === 101)!;
+    const coldClub = projections.find((p) => p.playerId === 102)!;
+
+    expect(hotClub.xPts).toBeGreaterThan(coldClub.xPts);
+  });
+
+  it('does nothing before any result exists, since the table is empty', async () => {
+    const teams = equalStrengthTeams();
+    const players = [identicalPlayer(101, 1), identicalPlayer(102, 2)];
+    const events = [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })];
+
+    const db = openTestDatabase();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({ bootstrap: fakeBootstrap({ teams, players, events }) }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        // Both players' clubs at home, against equal-strength opposition - home advantage
+        // must not be the thing that tells them apart, only the (currently empty) table.
+        fixtures: [fakeFixture(1, 1, 1, 3), fakeFixture(2, 1, 2, 4)],
+      }),
+    );
+
+    const projections = buildProjections(db, 1, rules, weights);
+    const a = projections.find((p) => p.playerId === 101)!;
+    const b = projections.find((p) => p.playerId === 102)!;
+    expect(a.xPts).toBeCloseTo(b.xPts, 6);
+  });
+});
+
+describe('generation readiness', () => {
+  it('is not ready and names every missing requirement on an empty database', () => {
+    const empty = openTestDatabase();
+    const readiness = checkReadiness(empty);
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.missing).toEqual([
+      "This season's player data",
+      expect.stringMatching(/^Fixtures for/),
+      "Last season's stats",
+    ]);
+    for (const check of readiness.checks.filter((c) => c.required)) {
+      expect(check.ok).toBe(false);
+    }
+  });
+
+  it('lists exactly what is still missing once some imports are in', async () => {
+    const db = openTestDatabase();
+    await seedLeague(db);
+
+    const readiness = checkReadiness(db);
+    // Player data and fixtures for gameweek 1 exist; last season's history does not.
+    expect(readiness.ready).toBe(false);
+    expect(readiness.missing).toEqual(["Last season's stats"]);
+
+    const playerCheck = readiness.checks.find((c) => c.id === 'this-season')!;
+    expect(playerCheck.ok).toBe(true);
+    const fixtureCheck = readiness.checks.find((c) => c.id === 'fixtures')!;
+    expect(fixtureCheck.ok).toBe(true);
+  });
+
+  it('becomes ready once the three required imports are all present', async () => {
+    const db = openTestDatabase();
+    await seedLeague(db);
+    await importPayload(
+      db,
+      rules,
+      JSON.stringify({
+        history: [{ element: 1, fixture: 500, minutes: 90 }],
+        history_past: [{ season_name: '2025/26', total_points: 180, minutes: 3000 }],
+      }),
+    );
+
+    const readiness = checkReadiness(db);
+    expect(readiness.ready).toBe(true);
+    expect(readiness.missing).toEqual([]);
+  });
+
+  it('treats curated news and elite ownership as soft signals that never block readiness', async () => {
+    const db = openTestDatabase();
+    await seedLeague(db);
+    await importPayload(
+      db,
+      rules,
+      JSON.stringify({
+        history: [{ element: 1, fixture: 500, minutes: 90 }],
+        history_past: [{ season_name: '2025/26', total_points: 180, minutes: 3000 }],
+      }),
+    );
+
+    const readiness = checkReadiness(db);
+    const news = readiness.checks.find((c) => c.id === 'news')!;
+    const elite = readiness.checks.find((c) => c.id === 'elite')!;
+
+    expect(news.required).toBe(false);
+    expect(elite.required).toBe(false);
+    // Neither has been supplied by seedLeague, yet readiness is unaffected.
+    expect(readiness.ready).toBe(true);
   });
 });
 

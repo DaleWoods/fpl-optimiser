@@ -69,6 +69,101 @@ interface EventRow {
   deadlineIso: string | null;
 }
 
+export interface ReadinessCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  /** Hard requirements block generation; soft ones are informative signals. */
+  required: boolean;
+  detail: string;
+}
+
+export interface Readiness {
+  checks: ReadinessCheck[];
+  ready: boolean;
+  missing: string[];
+}
+
+/**
+ * Whether enough data exists to generate a team worth acting on.
+ *
+ * Generation is refused until this season's players, the fixtures for the target gameweek and
+ * last season's history are all in - a projection built on a subset quietly degrades instead of
+ * failing, which is worse. The curated-news and elite-picks signals are reported too, but as
+ * soft checks: elite squads are structurally unavailable before the first gameweek starts, so
+ * requiring them would make pre-season generation impossible.
+ */
+export function checkReadiness(db: Database): Readiness {
+  const event = resolveTargetEvent(db);
+
+  const playerCount = (db.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n;
+  const snapshotCount = (db.prepare('SELECT COUNT(*) AS n FROM snapshot').get() as { n: number }).n;
+  const fixtureCount = event
+    ? (db.prepare('SELECT COUNT(*) AS n FROM fixture WHERE event_id = ?').get(event.id) as { n: number }).n
+    : 0;
+  const lastSeasonCount = (
+    db.prepare('SELECT COUNT(*) AS n FROM player_season_history').get() as { n: number }
+  ).n;
+
+  const intel = loadIntel();
+  const elite = latestEliteOwnership(db);
+
+  const checks: ReadinessCheck[] = [
+    {
+      id: 'this-season',
+      label: "This season's player data",
+      ok: playerCount > 0 && snapshotCount > 0,
+      required: true,
+      detail:
+        playerCount > 0
+          ? `${playerCount} players imported`
+          : 'Not imported yet - the Import Data tab explains where to get it',
+    },
+    {
+      id: 'fixtures',
+      label: `Fixtures for ${event?.name ?? 'the next gameweek'}`,
+      ok: fixtureCount > 0,
+      required: true,
+      detail:
+        fixtureCount > 0
+          ? `${fixtureCount} fixture(s) for ${event?.name ?? 'the target gameweek'}`
+          : 'No fixtures imported for the target gameweek',
+    },
+    {
+      id: 'last-season',
+      label: "Last season's stats",
+      ok: lastSeasonCount > 0,
+      required: true,
+      detail:
+        lastSeasonCount > 0
+          ? `${lastSeasonCount} players with last-season history`
+          : 'Not imported yet - without it, early-season projections rank on noise',
+    },
+    {
+      id: 'news',
+      label: 'Player and team news (curated notes)',
+      ok: intel !== null,
+      required: false,
+      detail: intel
+        ? `Curated notes compiled ${intel.compiledAt}: injury flags and elite-manager consensus from published FPL coverage`
+        : 'No curated notes file present',
+    },
+    {
+      id: 'elite',
+      label: 'What top-ranked managers own',
+      ok: elite.size > 0,
+      required: false,
+      detail:
+        elite.size > 0
+          ? `Sampled ownership for ${elite.size} players from top-ranked squads`
+          : 'Squads are private until a gameweek has been played - until then the curated notes carry the elite-consensus signal',
+    },
+  ];
+
+  const missing = checks.filter((check) => check.required && !check.ok).map((check) => check.label);
+  return { checks, ready: missing.length === 0, missing };
+}
+
 /** The gameweek to advise on: the next one with a deadline still in the future. */
 export function resolveTargetEvent(db: Database, eventId?: number): EventRow | null {
   if (eventId !== undefined) {

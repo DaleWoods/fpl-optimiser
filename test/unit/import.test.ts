@@ -109,7 +109,7 @@ describe('importing saved API files', () => {
     });
 
     expect(summary.kind).toBe('bootstrap');
-    expect(summary.detail).toMatch(/60 players, 4 clubs/);
+    expect(summary.detail).toMatch(/60 players across 4 clubs/);
 
     const players = db.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number };
     expect(players.n).toBe(60);

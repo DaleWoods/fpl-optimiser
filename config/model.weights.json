@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.1.0",
+  "modelVersion": "heuristic-0.2.0",
 
   "availability": {
     "$comment": [
@@ -51,6 +51,7 @@
     "homeAdvantage": 1.1,
     "awayFactor": 0.92,
     "strengthExponent": 1.0,
+    "tableWeight": 0.3,
     "minExpectedGoals": 0.2,
     "maxExpectedGoals": 4.0,
     "fallbackStrength": 1100

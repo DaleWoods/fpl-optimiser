@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ModelWeights, Rules } from '../config/schema.js';
 import { classifyAvailability } from '../domain/availability.js';
 import type { ProjectedPlayer } from '../domain/types.js';
+import { computeLeagueTable } from './table.js';
 import { projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
 
 interface PlayerRow {
@@ -67,6 +68,25 @@ function per90(total: number | null, minutes: number | null): number | null {
 }
 
 /**
+ * Shrink a per-90 rate toward zero in proportion to how few minutes sit behind it.
+ *
+ * Two goal involvements in 90 minutes is not a superstar rate, it is one good afternoon. With
+ * priorWeightMinutes at 270, a 90-minute sample keeps a quarter of its face-value rate while a
+ * full season keeps nearly all of it. Without this, fringe players with lucky cameos outscore
+ * genuine starters in the projections - which is exactly how a 6-point season can look like a
+ * must-have pick.
+ */
+function shrinkRate(
+  rate: number | null,
+  minutes: number | null,
+  priorWeightMinutes: number,
+): number | null {
+  if (rate === null) return null;
+  const mins = minutes ?? 0;
+  return rate * (mins / (mins + priorWeightMinutes));
+}
+
+/**
  * Turn stored data into projections for a gameweek.
  *
  * Reads the most recent snapshot for every player, the fixtures for the gameweek, and the club
@@ -122,6 +142,24 @@ export function buildProjections(
     )
     .all(eventId) as FixtureRow[];
 
+  // Current league form, blended into club strength. Computed from imported fixture results,
+  // so it needs no separate upload and updates the moment results land. Bounded so a hot start
+  // nudges rather than dominates the API's own strength ratings.
+  const strengthAdjust = new Map<number, number>();
+  if (weights.teamStrength.tableWeight > 0) {
+    const table = computeLeagueTable(db);
+    const played = table.filter((row) => row.played > 0);
+    if (played.length > 0) {
+      const averagePpg =
+        played.reduce((sum, row) => sum + row.ppg, 0) / played.length || 1;
+      for (const row of played) {
+        const factor = (row.ppg > 0 ? row.ppg / averagePpg : 0.5) ** weights.teamStrength.tableWeight;
+        strengthAdjust.set(row.teamId, Math.min(1.3, Math.max(0.7, factor)));
+      }
+    }
+  }
+  const adjustFor = (teamId: number): number => strengthAdjust.get(teamId) ?? 1;
+
   // Every club's fixtures this gameweek: none is a blank, two is a double.
   const fixturesByTeam = new Map<number, FixtureContext[]>();
   for (const fixture of fixtures) {
@@ -132,20 +170,20 @@ export function buildProjections(
     const fallback = weights.teamStrength.fallbackStrength;
 
     push(fixturesByTeam, fixture.teamH, {
-      teamAttack: home.attackHome ?? fallback,
-      teamDefence: home.defenceHome ?? fallback,
-      opponentAttack: away.attackAway ?? fallback,
-      opponentDefence: away.defenceAway ?? fallback,
+      teamAttack: (home.attackHome ?? fallback) * adjustFor(fixture.teamH),
+      teamDefence: (home.defenceHome ?? fallback) * adjustFor(fixture.teamH),
+      opponentAttack: (away.attackAway ?? fallback) * adjustFor(fixture.teamA),
+      opponentDefence: (away.defenceAway ?? fallback) * adjustFor(fixture.teamA),
       isHome: true,
       opponentShort: away.shortName,
       difficulty: fixture.difficultyH,
     });
 
     push(fixturesByTeam, fixture.teamA, {
-      teamAttack: away.attackAway ?? fallback,
-      teamDefence: away.defenceAway ?? fallback,
-      opponentAttack: home.attackHome ?? fallback,
-      opponentDefence: home.defenceHome ?? fallback,
+      teamAttack: (away.attackAway ?? fallback) * adjustFor(fixture.teamA),
+      teamDefence: (away.defenceAway ?? fallback) * adjustFor(fixture.teamA),
+      opponentAttack: (home.attackHome ?? fallback) * adjustFor(fixture.teamH),
+      opponentDefence: (home.defenceHome ?? fallback) * adjustFor(fixture.teamH),
       isHome: false,
       opponentShort: home.shortName,
       difficulty: fixture.difficultyA,
@@ -199,6 +237,16 @@ export function buildProjections(
     const source = usingPrevious ? previous : row;
     const sourceMinutes = usingPrevious ? previous.minutes : row.minutes;
 
+    // Previous-season rates are shrunk by their sample size: a per-90 from 90 minutes keeps a
+    // quarter of its face value, a full season keeps nearly all of it. This is what stops a
+    // player with one lucky cameo outscoring genuine starters. Defcon is a stable volume stat
+    // and keeps the same treatment for consistency.
+    const priorMins = weights.attacking.priorWeightMinutes;
+    const rate = (total: number | null): number | null =>
+      usingPrevious
+        ? shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins)
+        : per90(total, sourceMinutes);
+
     const input: PlayerModelInput = {
       playerId: row.playerId,
       name: row.name,
@@ -210,17 +258,18 @@ export function buildProjections(
         ? Math.round((previous.minutes ?? 0) / 90)
         : (playedByTeam.get(row.teamId) ?? 0),
       starts: usingPrevious ? (previous.starts ?? 0) : (row.starts ?? 0),
-      xgPer90: per90(source.expectedGoals, sourceMinutes),
-      xaPer90: per90(source.expectedAssists, sourceMinutes),
-      goalsPer90: per90(source.goals, sourceMinutes),
-      assistsPer90: per90(source.assists, sourceMinutes),
-      savesPer90: per90(source.saves, sourceMinutes),
-      defconPer90: per90(source.defensiveContribution, sourceMinutes),
-      bonusPer90: per90(source.bonus, sourceMinutes),
+      xgPer90: rate(source.expectedGoals),
+      xaPer90: rate(source.expectedAssists),
+      goalsPer90: rate(source.goals),
+      assistsPer90: rate(source.assists),
+      savesPer90: rate(source.saves),
+      defconPer90: rate(source.defensiveContribution),
+      bonusPer90: rate(source.bonus),
       fixtures: fixturesByTeam.get(row.teamId) ?? [],
       usingPreviousSeason: usingPrevious,
       previousSeasonName: usingPrevious ? previous.seasonName : null,
       previousSeasonPoints: usingPrevious ? previous.totalPoints : null,
+      previousSeasonMinutes: usingPrevious ? previous.minutes : null,
       fallbackExpectedPoints: row.epNext,
     };
 

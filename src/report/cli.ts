@@ -9,7 +9,7 @@ import { planReset, resetData, RESET_PLANS, type ResetScope } from '../ingest/re
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
 import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
-import { recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
+import { checkReadiness, recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
 import { startServer } from './server.js';
 import { formatDuration, formatMoney, getStateOfPlay } from './state.js';
 
@@ -35,10 +35,14 @@ Import:
   A CSV of last season's stats also works - see the README for the columns.
   File type is detected from the contents, so filenames do not matter.
 
-Reset scopes (default: squad). Nothing is deleted without --yes:
+Reset scopes (default: squad). Nothing is deleted without --yes. The first
+four undo one import each:
+  --scope this-season      This season's snapshots (the bootstrap import)
+  --scope fixtures         The fixture list
+  --scope last-season      Last season's stats
   --scope squad            Your squad, bank and chip history
-  --scope projections      Stored projections and past recommendations
-  --scope season           This season's data, KEEPING last season's history
+  --scope projections      Generated teams and stored projections
+  --scope season           Whole current season, KEEPING last season
   --scope all              Everything, including last season
   --yes                    Actually do it (without this you only see the plan)
 
@@ -51,6 +55,7 @@ Optimise options:
   --gw N                   Gameweek to advise on (default: the next deadline)
   --scratch                Build a squad from scratch, ignoring any loaded squad
   --budget N               Budget in tenths of a million (default: from rules)
+  --force                  Generate even though required imports are missing
 
 Ingest options:
   --summaries              Also pull per-player match history (one request per
@@ -259,6 +264,19 @@ async function commandImport(files: string[]): Promise<number> {
 async function commandOptimise(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
   const db = openDatabase({ path: config.app.database.path });
+
+  // Same gate as the web app: a team built from a subset of the evidence quietly degrades
+  // rather than failing, so generation refuses until the required imports are in.
+  const readiness = checkReadiness(db);
+  if (!readiness.ready && !flags.get('force')) {
+    console.error('Not ready to generate a team yet. Missing:');
+    for (const check of readiness.checks.filter((c) => c.required && !c.ok)) {
+      console.error(`  - ${check.label}: ${check.detail}`);
+    }
+    console.error('\nImport the missing data (see `fpl import`), or pass --force to override.');
+    db.close();
+    return 1;
+  }
 
   const gw = flags.get('gw');
   const budget = flags.get('budget');

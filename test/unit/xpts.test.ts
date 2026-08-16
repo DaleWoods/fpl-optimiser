@@ -271,3 +271,55 @@ describe('player projection', () => {
     expect(first).toEqual(second);
   });
 });
+
+describe('previous-season confidence and disclosure', () => {
+  it('flags a thin previous-season sample as low confidence', () => {
+    const thin = projectPlayer(
+      input({ usingPreviousSeason: true, previousSeasonMinutes: 90 }),
+      weights,
+      rules,
+    );
+    expect(thin.confidence).toBe('low');
+  });
+
+  it('allows a full previous season to reach medium confidence', () => {
+    const solid = projectPlayer(
+      input({ usingPreviousSeason: true, previousSeasonMinutes: 3000 }),
+      weights,
+      rules,
+    );
+    expect(solid.confidence).toBe('medium');
+  });
+
+  it('names the minutes behind a previous-season rate in the explanation', () => {
+    const projection = projectPlayer(
+      input({
+        usingPreviousSeason: true,
+        previousSeasonName: '2024/25',
+        previousSeasonPoints: 120,
+        previousSeasonMinutes: 2500,
+      }),
+      weights,
+      rules,
+    );
+    expect(projection.reasons.join(' ')).toMatch(/2024\/25/);
+    expect(projection.reasons.join(' ')).toMatch(/120 points/);
+    expect(projection.reasons.join(' ')).toMatch(/2500 minutes/);
+  });
+
+  it('adds an explicit small-sample warning under 900 minutes, but not above it', () => {
+    const thin = projectPlayer(
+      input({ usingPreviousSeason: true, previousSeasonMinutes: 400 }),
+      weights,
+      rules,
+    );
+    expect(thin.reasons.join(' ')).toMatch(/small sample/i);
+
+    const solid = projectPlayer(
+      input({ usingPreviousSeason: true, previousSeasonMinutes: 2500 }),
+      weights,
+      rules,
+    );
+    expect(solid.reasons.join(' ')).not.toMatch(/small sample/i);
+  });
+});

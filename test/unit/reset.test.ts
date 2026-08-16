@@ -47,6 +47,42 @@ describe('reset', () => {
     expect(count(db, 'squad_pick')).toBe(before);
   });
 
+  it("clears this season's snapshots but keeps the player list, fixtures and squad", () => {
+    const before = count(db, 'player');
+    const result = resetData(db, 'this-season');
+
+    expect(result.totalRows).toBeGreaterThan(0);
+    expect(count(db, 'player_snapshot')).toBe(0);
+    expect(count(db, 'snapshot')).toBe(0);
+    // The point of the scope: everything else survives, ready for a fresh bootstrap import.
+    expect(count(db, 'player')).toBe(before);
+    expect(count(db, 'fixture')).toBe(1);
+    expect(count(db, 'squad_pick')).toBe(15);
+    expect(count(db, 'player_season_history')).toBe(1);
+  });
+
+  it('clears fixtures only', () => {
+    const result = resetData(db, 'fixtures');
+
+    expect(result.totalRows).toBe(1);
+    expect(count(db, 'fixture')).toBe(0);
+    // Nothing else is touched.
+    expect(count(db, 'player')).toBe(60);
+    expect(count(db, 'squad_pick')).toBe(15);
+    expect(count(db, 'player_season_history')).toBe(1);
+  });
+
+  it("clears last season's stats but keeps this season, including the squad", () => {
+    const result = resetData(db, 'last-season');
+
+    expect(result.totalRows).toBeGreaterThan(0);
+    expect(count(db, 'player_season_history')).toBe(0);
+    // This season is unaffected.
+    expect(count(db, 'player')).toBe(60);
+    expect(count(db, 'fixture')).toBe(1);
+    expect(count(db, 'squad_pick')).toBe(15);
+  });
+
   it('clears the squad but keeps every player and their history', () => {
     const result = resetData(db, 'squad');
 
@@ -111,10 +147,21 @@ describe('reset', () => {
   it('names what each scope removes and keeps, so the choice is informed', () => {
     for (const scope of Object.keys(RESET_PLANS) as (keyof typeof RESET_PLANS)[]) {
       const plan = RESET_PLANS[scope];
+      expect(plan.title.length).toBeGreaterThan(0);
       expect(plan.description.length).toBeGreaterThan(10);
       expect(plan.keeps.length).toBeGreaterThan(10);
       expect(plan.tables.length).toBeGreaterThan(0);
     }
+  });
+
+  it('orders the first four scopes to mirror the Import Data slots', () => {
+    // "Undo one import" only reads as a straight mapping if the order matches the import tabs.
+    expect(Object.keys(RESET_PLANS).slice(0, 4)).toEqual([
+      'this-season',
+      'fixtures',
+      'last-season',
+      'squad',
+    ]);
   });
 
   it('deletes children before parents so foreign keys never block it', () => {

@@ -146,14 +146,30 @@ export async function importPayload(
           fetchedAt: nowSeconds(),
           fromCache: false,
         });
+        // The detail line doubles as a sanity check: the priciest players and the next
+        // deadline are things the user can eyeball against the FPL site in seconds.
+        const nextEvent =
+          parsed.events.find((event) => event.is_next) ??
+          parsed.events.find((event) => !event.finished);
+        const priciest = [...parsed.elements]
+          .sort((a, b) => b.now_cost - a.now_cost)
+          .slice(0, 3)
+          .map((element) => `${element.web_name} £${(element.now_cost / 10).toFixed(1)}m`)
+          .join(', ');
+        const flagged = parsed.elements.filter((element) => element.status !== 'a').length;
+
         return {
           kind,
           rowsWritten: result.rowsWritten,
           fromCache: false,
           detail:
-            `${parsed.elements.length} players, ${parsed.teams.length} clubs, ` +
+            `${parsed.elements.length} players across ${parsed.teams.length} clubs, ` +
             `${parsed.events.length} gameweeks` +
-            (result.changes.length > 0 ? `, ${result.changes.length} change(s) detected` : ''),
+            (nextEvent ? `, next deadline ${nextEvent.name ?? `GW${nextEvent.id}`}` : '') +
+            `. Priciest: ${priciest}. ${flagged} player(s) carrying an injury/availability flag` +
+            (result.changes.length > 0
+              ? `. ${result.changes.length} change(s) since the previous import`
+              : ''),
           warnings: [],
         };
       });
@@ -165,11 +181,22 @@ export async function importPayload(
           fetchedAt: nowSeconds(),
           fromCache: false,
         });
+        const eventIds = [...new Set(parsed.map((f) => f.event).filter((e): e is number => e !== null))];
+        const finished = parsed.filter((f) => f.finished).length;
+        const span =
+          eventIds.length > 0
+            ? ` across GW${Math.min(...eventIds)}-GW${Math.max(...eventIds)}`
+            : '';
+
         return {
           kind,
           rowsWritten: result.rowsWritten,
           fromCache: false,
-          detail: `${result.rowsWritten} fixtures imported`,
+          detail:
+            `${result.rowsWritten} fixtures imported${span}` +
+            (finished > 0
+              ? `, ${finished} already played (results feed the league table)`
+              : ', none played yet'),
           warnings:
             result.skipped > 0
               ? [
