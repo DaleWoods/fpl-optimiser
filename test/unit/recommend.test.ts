@@ -4,6 +4,7 @@ import { StubFplApi } from '../../src/api/replayClient.js';
 import { loadModelWeights, loadRules } from '../../src/config/load.js';
 import { openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry, ingestFixtures } from '../../src/ingest/index.js';
+import { ingestEliteOwnership } from '../../src/ingest/elite.js';
 import { importPayload } from '../../src/ingest/import.js';
 import { buildProjections } from '../../src/model/build.js';
 import { checkReadiness, recommend, resolveTargetEvent } from '../../src/report/recommend.js';
@@ -226,6 +227,73 @@ describe('league table blend', () => {
     const a = projections.find((p) => p.playerId === 101)!;
     const b = projections.find((p) => p.playerId === 102)!;
     expect(a.xPts).toBeCloseTo(b.xPts, 6);
+  });
+});
+
+describe('elite ownership blend', () => {
+  it("moves a player's projection once top managers are shown to own and captain them", async () => {
+    const db = openTestDatabase();
+    await seedLeague(db);
+
+    const before = buildProjections(db, 1, rules, weights).find((p) => p.playerId === 1)!;
+
+    const api = new StubFplApi({
+      leagues: {
+        '314:1': {
+          standings: {
+            results: [
+              { entry: 1001, entry_name: 'Top', player_name: 'A', rank: 1, total: 100 },
+              { entry: 1002, entry_name: 'Second', player_name: 'B', rank: 2, total: 99 },
+            ],
+          },
+        },
+      },
+      picks: {
+        // Player 1 goes first in both squads, so fakePicks marks it captain in both.
+        '1001:1': fakePicks(
+          Array.from({ length: 15 }, (_, i) => (i === 0 ? 1 : i + 100)),
+        ),
+        '1002:1': fakePicks(
+          Array.from({ length: 15 }, (_, i) => (i === 0 ? 1 : i + 200)),
+        ),
+      },
+    });
+    await ingestEliteOwnership(db, api, { eventId: 1, managers: 2 });
+
+    await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    // recommend() saves every projection, elite-ownership bump included, to the projection
+    // table - reading it back confirms the bump reached the stored (and therefore displayed)
+    // figure, not just some intermediate value.
+    const row = db
+      .prepare(
+        `SELECT xpts_raw AS xptsRaw, breakdown_json AS breakdownJson
+         FROM projection WHERE player_id = 1 AND event_id = 1
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get() as { xptsRaw: number; breakdownJson: string };
+
+    expect(row.xptsRaw).toBeGreaterThan(before.xPtsRaw);
+    const breakdown = JSON.parse(row.breakdownJson) as Record<string, number>;
+    expect(breakdown.eliteOwnership).toBeGreaterThan(0);
+  });
+
+  it('leaves projections untouched before any elite sample exists', async () => {
+    const db = openTestDatabase();
+    await seedLeague(db);
+
+    const before = buildProjections(db, 1, rules, weights).find((p) => p.playerId === 1)!;
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    const row = db
+      .prepare(
+        `SELECT xpts_raw AS xptsRaw FROM projection WHERE player_id = 1 AND event_id = 1
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get() as { xptsRaw: number };
+
+    expect(result.evidence.eliteSampleSize).toBe(0);
+    expect(row.xptsRaw).toBeCloseTo(before.xPtsRaw, 6);
   });
 });
 

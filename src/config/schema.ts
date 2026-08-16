@@ -152,6 +152,12 @@ export const modelWeightsSchema = z.strictObject({
     ownershipPivot: z.number().min(0).max(100),
     maxAdjustment: z.number().min(0),
   }),
+  /** Real evidence of what top-ranked managers actually own, once their squads go public. */
+  eliteOwnership: z.strictObject({
+    weight: z.number().min(0),
+    captainWeight: z.number().min(0),
+    maxAdjustment: z.number().min(0),
+  }),
   captain: z.strictObject({
     ceilingWeight: z.number().min(0),
   }),

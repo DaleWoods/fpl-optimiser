@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.2.0",
+  "modelVersion": "heuristic-0.3.0",
 
   "availability": {
     "$comment": [
@@ -110,6 +110,20 @@
     "weight": 0.0,
     "ownershipPivot": 15.0,
     "maxAdjustment": 1.0
+  },
+
+  "eliteOwnership": {
+    "$comment": [
+      "What top-ranked managers actually own, sampled from public league standings. Squads are",
+      "private until a gameweek starts, so this is zero for every projection before then - that",
+      "is a platform limit, not a bug. Once sampled, elite ownership nudges xPts up (never down:",
+      "the absence of elite ownership this early is not evidence against a player), with an extra",
+      "nudge for players the elite sample is actually captaining.",
+      "weight is per 100% elite ownership; captainWeight is per 100% of the sample captaining."
+    ],
+    "weight": 1.0,
+    "captainWeight": 0.5,
+    "maxAdjustment": 1.5
   },
 
   "captain": {

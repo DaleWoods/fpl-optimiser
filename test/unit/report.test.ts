@@ -304,6 +304,38 @@ describe('report server', () => {
     expect((await fetch(`${base}/nope`)).status).toBe(404);
   });
 
+  it('explains the league table is automatic once player data exists, with nothing to import', async () => {
+    const base = await start();
+    await fetch(`${base}/import?slot=this-season&name=a.json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(fakeBootstrap()),
+    });
+
+    const body = await (await fetch(base)).text();
+    expect(body).toMatch(/There is\s*\n?\s*nothing to import for this either/);
+    expect(body).toMatch(/gameweek 1 fills this in automatically/);
+  });
+
+  it('shows no league table section at all before any data is imported', async () => {
+    const base = await start();
+    const body = await (await fetch(base)).text();
+    expect(body).not.toContain('League table');
+  });
+
+  it('labels each reset button with the human title, not the raw scope slug', async () => {
+    const base = await start();
+    const body = await (await fetch(`${base}/reset`)).text();
+
+    expect(body).toContain('Remove This season\'s player data');
+    expect(body).toContain('Remove Fixtures');
+    expect(body).toContain('Remove Last season\'s stats');
+    expect(body).toContain('Remove Your squad');
+    // The raw slug must not leak into the visible label.
+    expect(body).not.toMatch(/Remove this-season\b/);
+    expect(body).not.toMatch(/Remove last-season\b/);
+  });
+
   describe('/optimise readiness gate', () => {
     async function importSlot(base: string, slot: string, body: unknown): Promise<void> {
       const response = await fetch(`${base}/import?slot=${slot}&name=${slot}.json`, {

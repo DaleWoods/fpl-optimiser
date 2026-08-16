@@ -397,16 +397,34 @@ export async function recommend(
     );
   }
 
+  // What top-ranked managers actually own, once their squads are public. Real evidence of
+  // "what good players are doing", so it moves the projection itself - not just a footnote -
+  // bounded and one-directional: elite ownership is a vote of confidence, but the absence of
+  // it this early (before a gameweek starts) is not evidence against a player.
   const elite = latestEliteOwnership(db);
   const projections = intelResult.players.map((player) => {
     const owned = elite.get(player.playerId);
     if (!owned) return player;
+
+    const captainShare = owned.managers > 0 ? owned.captainedBy / owned.managers : 0;
+    const adjustment = Math.min(
+      weights.eliteOwnership.maxAdjustment,
+      owned.ownership * weights.eliteOwnership.weight + captainShare * weights.eliteOwnership.captainWeight,
+    );
+
+    const raw = player.xPtsRaw + adjustment;
+    const xPts = player.availability.excluded ? 0 : raw * player.availability.probability;
+
     return {
       ...player,
+      xPtsRaw: round(raw),
+      xPts: round(Math.max(0, xPts)),
+      breakdown: { ...player.breakdown, eliteOwnership: round(adjustment) },
       reasons: [
         ...player.reasons,
         `Owned by ${Math.round(owned.ownership * 100)}% of the top ${owned.managers} managers` +
-          (owned.captainedBy > 0 ? `, captained by ${owned.captainedBy} of them` : ''),
+          (owned.captainedBy > 0 ? `, captained by ${owned.captainedBy} of them` : '') +
+          ` (+${adjustment.toFixed(2)} xPts).`,
       ],
     };
   });
@@ -571,4 +589,8 @@ export async function recommend(
     lowConfidence,
     evidence,
   };
+}
+
+function round(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }

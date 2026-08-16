@@ -130,7 +130,13 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
          <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
            <thead><tr><th>#</th><th>Club</th><th>P</th><th>GD</th><th>Pts</th></tr></thead>
            <tbody>${leagueRows}</tbody></table></div></div>`
-      : ''
+      : state.playerCount > 0
+        ? `<h2>League table</h2>
+           <div class="card"><p class="muted" style="margin:0">No results yet, so there is
+           nothing to show. There is nothing to import for this either &mdash; the Fixtures file
+           already carries the score once a match finishes, so re-importing fixtures after
+           gameweek 1 fills this in automatically and feeds it straight back into club strength.</p></div>`
+        : ''
   }
 
   <h2>Recent changes</h2>
@@ -286,8 +292,12 @@ export function renderRecommendation(rec: Recommendation): string {
     }</li>
     <li>${
       rec.evidence.eliteSampleSize > 0
-        ? `Elite-manager ownership sampled for ${rec.evidence.eliteSampleSize} players`
-        : 'Elite-manager ownership: not available yet &mdash; squads stay private until a gameweek starts'
+        ? `Elite-manager ownership sampled for ${rec.evidence.eliteSampleSize} players, and it is
+           nudging their projections up where it applies &mdash; see "Owned by...% of the top
+           managers" in a player's reasons`
+        : 'Elite-manager ownership: not available yet &mdash; squads stay private until a gameweek ' +
+          'starts, which the FPL platform itself enforces. Once it is, top managers\' actual picks ' +
+          'will boost those players\' projections directly, not just get mentioned.'
     }</li>
     ${rec.evidence.contextNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}
   </ul></div>
@@ -763,8 +773,8 @@ export function renderReset(
         <p class="muted" style="margin:.2rem 0"><strong>Keeps:</strong> ${escapeHtml(plan.keeps)}</p>
         <p class="muted" style="margin:.2rem 0">${plan.rows} row(s) would be deleted.</p>
         <p style="margin:.6rem 0 0">
-          <button class="btn danger" data-scope="${escapeHtml(plan.scope)}" ${plan.rows === 0 ? 'disabled' : ''}>
-            Delete ${escapeHtml(plan.scope)}
+          <button class="btn danger" data-scope="${escapeHtml(plan.scope)}" data-title="${escapeHtml(plan.title)}" ${plan.rows === 0 ? 'disabled' : ''}>
+            Remove ${escapeHtml(plan.title)}
           </button>
         </p>
       </div>`,
@@ -775,14 +785,15 @@ export function renderReset(
 document.querySelectorAll('button[data-scope]').forEach((btn) => {
   btn.onclick = async () => {
     const scope = btn.dataset.scope;
-    if (!confirm('Delete "' + scope + '"? This cannot be undone.')) return;
+    const title = btn.dataset.title;
+    if (!confirm('Remove ' + title + '? This cannot be undone.')) return;
     btn.disabled = true;
     const res = await fetch('/reset?scope=' + encodeURIComponent(scope), { method: 'POST' });
     const body = await res.json();
     const el = document.createElement('div');
     el.className = 'banner info';
     el.textContent = res.ok
-      ? 'Deleted ' + body.totalRows + ' row(s) from "' + scope + '". Reload to see the new state.'
+      ? 'Removed ' + title + ' (' + body.totalRows + ' row(s)). Reload to see the new state.'
       : 'Failed: ' + (body.error || res.statusText);
     btn.parentElement.appendChild(el);
   };

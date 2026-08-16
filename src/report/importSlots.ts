@@ -54,7 +54,9 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
     what:
       'Every fixture with its difficulty rating. Re-import whenever games are rearranged - ' +
       'European progress and cup ties are what create the double and blank gameweeks that ' +
-      'decide chip timing, and the chip advice changes as soon as this does.',
+      'decide chip timing, and the chip advice changes as soon as this does. This file also ' +
+      'carries the score once a match finishes, so re-importing it after kickoffs is also how ' +
+      'the league table on the Dashboard updates - there is no separate table import.',
     source: `${FPL}/fixtures/`,
     sourceLabel: 'fixtures',
     accepts: ['fixtures'],
