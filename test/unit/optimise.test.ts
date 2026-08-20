@@ -3,7 +3,7 @@ import { loadModelWeights, loadRules } from '../../src/config/load.js';
 import type { ProjectedPlayer } from '../../src/domain/types.js';
 import { GlpkSolver } from '../../src/optimise/glpkSolver.js';
 import { InfeasibleError } from '../../src/optimise/solver.js';
-import { orderBench, selectBestEleven, selectBestSquad } from '../../src/optimise/squad.js';
+import { orderBench, selectBestEleven, selectBestSquad, selectionValue } from '../../src/optimise/squad.js';
 import { validateSquad, validateStartingEleven } from '../../src/rules/validate.js';
 import { legalSquad, player, playerPool } from '../support/players.js';
 
@@ -45,6 +45,27 @@ function bruteForceBestEleven(squad: ProjectedPlayer[]): { ids: number[]; total:
   combine(0, []);
   return best;
 }
+
+describe('selection value (confidence discount)', () => {
+  it('leaves a high-confidence projection undiscounted', () => {
+    const p = player({ xPts: 6, confidence: 'high' });
+    expect(selectionValue(p, weights)).toBeCloseTo(6, 6);
+  });
+
+  it('discounts medium and low confidence, low more than medium', () => {
+    const base = { xPts: 6 };
+    const medium = selectionValue(player({ ...base, confidence: 'medium' }), weights);
+    const low = selectionValue(player({ ...base, confidence: 'low' }), weights);
+    expect(medium).toBeLessThan(6);
+    expect(low).toBeLessThan(medium);
+  });
+
+  it('never touches the underlying xPts field itself', () => {
+    const p = player({ xPts: 6, confidence: 'low' });
+    selectionValue(p, weights);
+    expect(p.xPts).toBe(6);
+  });
+});
 
 describe('best starting XI', () => {
   it('matches an exhaustive brute-force search', async () => {
@@ -116,6 +137,27 @@ describe('best starting XI', () => {
     expect(eleven.viceCaptain.playerId).toBe(9);
   });
 
+  it('prefers a proven starter over a speculative punt scoring marginally higher', async () => {
+    // Player 8's raw projection edges out player 7's, but it is low confidence - discounted by
+    // 20%, it no longer beats a solid, high-confidence starter. This is the risk adjustment
+    // that keeps a noisy punt from crowding out an established pick on paper-thin margins.
+    const squad = legalSquad((index) => ({
+      xPts: index === 6 ? 10 : index === 7 ? 10.5 : 3,
+      confidence: index === 7 ? 'low' : 'high',
+    }));
+    const eleven = await selectBestEleven(squad, rules, weights, solver);
+    expect(eleven.captain.playerId).toBe(7);
+  });
+
+  it('still prefers the punt once its edge is too big for the discount to close', async () => {
+    const squad = legalSquad((index) => ({
+      xPts: index === 6 ? 10 : index === 7 ? 20 : 3,
+      confidence: index === 7 ? 'low' : 'high',
+    }));
+    const eleven = await selectBestEleven(squad, rules, weights, solver);
+    expect(eleven.captain.playerId).toBe(8);
+  });
+
   it('picks a valid formation and reports it', async () => {
     const squad = legalSquad((index) => ({ xPts: 3 + (index % 4) }));
     const eleven = await selectBestEleven(squad, rules, weights, solver);
@@ -132,7 +174,7 @@ describe('best starting XI', () => {
       player({ playerId: 103, position: 'MID', xPts: 5 }),
       player({ playerId: 104, position: 'FWD', xPts: 3 }),
     ];
-    const ordered = orderBench(bench, rules);
+    const ordered = orderBench(bench, rules, weights);
     expect(ordered.map((p) => p.playerId)).toEqual([101, 103, 104, 102]);
   });
 
@@ -165,6 +207,49 @@ describe('best squad from the whole pool', () => {
     const byClub = new Map<number, number>();
     for (const p of result.squad) byClub.set(p.clubId, (byClub.get(p.clubId) ?? 0) + 1);
     for (const count of byClub.values()) expect(count).toBeLessThanOrEqual(3);
+  });
+
+  it('is not swayed by a marginal edge once the low-confidence discount is applied', async () => {
+    const basePool = playerPool({ clubs: 12, perPosition: 3 });
+    const target = basePool.find((p) => p.position === 'FWD')!;
+    // A small raw bump (0.5 xPts) marked low confidence: discounted by 20%, it no longer beats
+    // what the player would otherwise have scored, so the squad should be unchanged.
+    const bumped = basePool.map((p) =>
+      p.playerId === target.playerId
+        ? { ...p, xPts: target.xPts + 0.5, confidence: 'low' as const }
+        : p,
+    );
+
+    const baseline = await selectBestSquad(basePool, rules, weights, solver);
+    const withMarginalPunt = await selectBestSquad(bumped, rules, weights, solver);
+
+    expect(withMarginalPunt.squad.map((p) => p.playerId).sort()).toEqual(
+      baseline.squad.map((p) => p.playerId).sort(),
+    );
+  });
+
+  it('still lets a big enough raw edge overcome the confidence discount', async () => {
+    const basePool = playerPool({ clubs: 12, perPosition: 3 });
+    const target = basePool.find((p) => p.position === 'FWD')!;
+    const bumped = basePool.map((p) =>
+      p.playerId === target.playerId ? { ...p, xPts: 100, confidence: 'low' as const } : p,
+    );
+
+    const result = await selectBestSquad(bumped, rules, weights, solver);
+    expect(result.squad.some((p) => p.playerId === target.playerId)).toBe(true);
+  });
+
+  it('reports expectedPoints using the true xPts, never the risk-adjusted selection value', async () => {
+    const squad = legalSquad((index) => ({
+      xPts: index === 7 ? 12 : 3,
+      confidence: index === 7 ? 'low' : 'high',
+    }));
+    const eleven = await selectBestEleven(squad, rules, weights, solver);
+
+    const expected =
+      eleven.starters.reduce((sum, p) => sum + p.xPts, 0) +
+      eleven.captain.xPts * (rules.captain.multiplier - 1);
+    expect(eleven.expectedPoints).toBeCloseTo(Math.round(expected * 100) / 100, 2);
   });
 
   it('never selects an unavailable player', async () => {

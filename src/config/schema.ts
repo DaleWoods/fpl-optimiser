@@ -166,6 +166,16 @@ export const modelWeightsSchema = z.strictObject({
     captainWeight: z.number().min(0),
     maxAdjustment: z.number().min(0),
   }),
+  /**
+   * A selection-time risk discount on xPts, by confidence tier. Applied only when the solver is
+   * choosing between players - never to what is displayed or graded for accuracy, so the app
+   * never shows a number different from the one it optimised on. 1.0 means no discount.
+   */
+  confidence: z.strictObject({
+    high: probability,
+    medium: probability,
+    low: probability,
+  }),
   captain: z.strictObject({
     ceilingWeight: z.number().min(0),
   }),

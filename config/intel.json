@@ -19,7 +19,7 @@
     "whole lot without deleting anything."
   ],
 
-  "compiledAt": "2026-08-10",
+  "compiledAt": "2026-08-20",
   "season": "2026/27",
   "staleAfterGameweek": 4,
 
@@ -30,7 +30,9 @@
     "https://www.fantasyfootballscout.co.uk/2026/07/22/fpl-2026-27-price-reveals-live-haaland-rises-to-record-high",
     "https://onefpl.com/blog/who-will-miss-fpl-gameweek-1-2026-27",
     "https://www.chaseyoursport.com/fantasy-football/highest-scoring-defenders-fpl-2025-26/12249",
-    "https://www.fplpilot.com/blog/fpl-2025-26-season-review-data"
+    "https://www.fplpilot.com/blog/fpl-2025-26-season-review-data",
+    "https://www.fantasyfootballscout.co.uk/2026/07/31/best-5-0m-goalkeepers-for-fpl-2026-27",
+    "https://feeds.bbci.co.uk/sport/football/articles/cr5r5m9p99mo"
   ],
 
   "weights": {
@@ -109,6 +111,14 @@
       "expectedPrice": 45,
       "consensus": 0.3,
       "note": "Popular budget goalkeeper, freeing money for the outfield."
+    },
+    {
+      "webName": "Lammens",
+      "club": "MUN",
+      "position": "GKP",
+      "expectedPrice": 50,
+      "consensus": 0.7,
+      "note": "Firmly established as United's undisputed no.1 after a full 2025/26 debut season (32 appearances, 2.5 saves per game), not a fresh or contested signing - the model's own thin-sample caution does not really apply to him. Opens away to Hull, one of the two promoted sides."
     }
   ],
 

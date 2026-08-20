@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.4.0",
+  "modelVersion": "heuristic-0.5.0",
 
   "availability": {
     "$comment": [
@@ -131,6 +131,20 @@
     "weight": 1.0,
     "captainWeight": 0.5,
     "maxAdjustment": 1.5
+  },
+
+  "confidence": {
+    "$comment": [
+      "Selection-time risk discount, by confidence tier. Two players projected at the same xPts",
+      "are not equally trustworthy - a proven, high-confidence starter should beat a speculative",
+      "low-confidence punt scoring the same on paper, because the punt's number is more likely to",
+      "be wrong in either direction. This only affects which players the solver picks; the xPts",
+      "shown on the page, and the number graded for accuracy, are always the undiscounted figure.",
+      "1.0 = no discount."
+    ],
+    "high": 1.0,
+    "medium": 0.93,
+    "low": 0.8
   },
 
   "captain": {

@@ -24,16 +24,32 @@ function benchWeightFor(player: ProjectedPlayer, rules: Rules, weights: ModelWei
 }
 
 /**
- * Order the bench for auto-subs: the goalkeeper sits outside the ordering (they can only
- * replace the keeper), and the outfield reserves are ranked by expected points.
+ * xPts alone is not enough to choose between two players: confidence describes how much to
+ * trust the number itself. This is a selection-time risk discount only, used everywhere the
+ * solver (or a tiebreak sort standing in for it, like bench order) compares players against
+ * each other - display and accuracy grading always use the raw xPts, so the app never shows a
+ * different number than the one it optimised on.
  */
-export function orderBench(bench: ProjectedPlayer[], rules: Rules): ProjectedPlayer[] {
+export function selectionValue(player: ProjectedPlayer, weights: ModelWeights): number {
+  return player.xPts * weights.confidence[player.confidence];
+}
+
+/**
+ * Order the bench for auto-subs: the goalkeeper sits outside the ordering (they can only
+ * replace the keeper), and the outfield reserves are ranked by risk-adjusted expected points -
+ * the auto-sub who actually comes on should be the safer bet, not just the highest raw number.
+ */
+export function orderBench(
+  bench: ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+): ProjectedPlayer[] {
   const goalkeepers = bench.filter(
     (player) => (rules.startingXi.positionBounds[player.position]?.max ?? 99) === 1,
   );
   const outfield = bench
     .filter((player) => !goalkeepers.includes(player))
-    .sort((a, b) => b.xPts - a.xPts);
+    .sort((a, b) => selectionValue(b, weights) - selectionValue(a, weights));
   return [...goalkeepers, ...outfield];
 }
 
@@ -44,12 +60,14 @@ function buildEleven(
   rules: Rules,
   weights: ModelWeights,
 ): StartingEleven {
-  // Vice-captain is the best remaining starter. Ceiling is used only as a tiebreak, per D4.
+  // Vice-captain is the best remaining starter by risk-adjusted value - the armband may fall to
+  // him if the captain doesn't play, so a speculative punt is the wrong choice even if its raw
+  // xPts edges out a safer starter's. Ceiling is used only as a tiebreak, per D4.
   const viceCaptain = starters
     .filter((player) => player.playerId !== captain.playerId)
     .sort(
       (a, b) =>
-        b.xPts - a.xPts ||
+        selectionValue(b, weights) - selectionValue(a, weights) ||
         (b.breakdown.goals ?? 0) * weights.captain.ceilingWeight -
           (a.breakdown.goals ?? 0) * weights.captain.ceilingWeight,
     )[0];
@@ -58,13 +76,14 @@ function buildEleven(
     throw new InfeasibleError('Cannot choose a vice-captain: fewer than two players in the XI');
   }
 
+  // Reported and graded on the true, undiscounted projection - only selection is risk-adjusted.
   const expectedPoints =
     starters.reduce((total, player) => total + player.xPts, 0) +
     captain.xPts * (rules.captain.multiplier - 1);
 
   return {
     starters: [...starters].sort((a, b) => b.xPts - a.xPts),
-    bench: orderBench(bench, rules),
+    bench: orderBench(bench, rules, weights),
     captain,
     viceCaptain,
     formation: describeFormation(starters, rules),
@@ -151,11 +170,11 @@ export async function selectBestEleven(
     objective: [
       ...selectable.map((player) => ({
         variable: IN_XI(player.playerId),
-        coefficient: player.xPts,
+        coefficient: selectionValue(player, weights),
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),
-        coefficient: player.xPts * (rules.captain.multiplier - 1),
+        coefficient: selectionValue(player, weights) * (rules.captain.multiplier - 1),
       })),
     ],
     constraints: [...elevenConstraints(selectable, rules), ...captaincyConstraints(selectable)],
@@ -289,15 +308,15 @@ export async function selectBestSquad(
       // A squad place is worth the bench weighting; a starting place makes up the rest.
       ...selectable.map((player) => ({
         variable: IN_SQUAD(player.playerId),
-        coefficient: player.xPts * benchWeightFor(player, rules, weights),
+        coefficient: selectionValue(player, weights) * benchWeightFor(player, rules, weights),
       })),
       ...selectable.map((player) => ({
         variable: IN_XI(player.playerId),
-        coefficient: player.xPts * (1 - benchWeightFor(player, rules, weights)),
+        coefficient: selectionValue(player, weights) * (1 - benchWeightFor(player, rules, weights)),
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),
-        coefficient: player.xPts * (rules.captain.multiplier - 1),
+        coefficient: selectionValue(player, weights) * (rules.captain.multiplier - 1),
       })),
     ],
     constraints: [
