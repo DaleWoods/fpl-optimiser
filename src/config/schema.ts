@@ -110,6 +110,14 @@ export const modelWeightsSchema = z.strictObject({
     priorWeightMatches: z.number().min(0),
     starterCompletesSixty: probability,
     benchAppearanceProbability: probability,
+    /**
+     * Below this ownership percentage, the crowd (every other manager's team news, injuries and
+     * press-conference reading) is stronger evidence than a couple of appearances in our own
+     * data - so the start probability is capped rather than trusted. See lowOwnershipStartCap.
+     */
+    lowOwnershipThreshold: z.number().min(0).max(100),
+    /** The start-probability ceiling applied below lowOwnershipThreshold. */
+    lowOwnershipStartCap: probability,
   }),
   teamStrength: z.strictObject({
     leagueAverageGoalsPerGame: z.number().positive(),

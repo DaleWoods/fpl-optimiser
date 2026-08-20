@@ -140,6 +140,33 @@ describe('minutes', () => {
     expect(fresh.startProbability).toBeGreaterThanOrEqual(0);
     expect(fresh.startProbability).toBeLessThanOrEqual(1);
   });
+
+  it('caps the start chance for a near-unowned player even after an emergency start', () => {
+    // One start out of one match (injury cover, say) would otherwise shrink to a coin flip -
+    // ownership this low says the rest of the FPL crowd knows they are not first-choice.
+    const uncapped = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: 40 }), weights);
+    const capped = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: 0.1 }), weights);
+
+    expect(uncapped.ownershipCapped).toBe(false);
+    expect(capped.ownershipCapped).toBe(true);
+    expect(capped.startProbability).toBe(weights.minutes.lowOwnershipStartCap);
+    expect(capped.startProbability).toBeLessThan(uncapped.startProbability);
+  });
+
+  it('never raises the start chance for high ownership - it only ever caps, never boosts', () => {
+    const noOwnership = projectMinutes(input({ starts: 10, matchesAvailable: 10, ownership: null }), weights);
+    const highOwnership = projectMinutes(
+      input({ starts: 10, matchesAvailable: 10, ownership: 80 }),
+      weights,
+    );
+    expect(highOwnership.ownershipCapped).toBe(false);
+    expect(highOwnership.startProbability).toBeCloseTo(noOwnership.startProbability, 6);
+  });
+
+  it('does not cap when ownership data is unavailable', () => {
+    const unknown = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: null }), weights);
+    expect(unknown.ownershipCapped).toBe(false);
+  });
 });
 
 describe('defensive contribution', () => {
@@ -233,8 +260,10 @@ describe('player projection', () => {
   });
 
   it('ignores the differential knob when it is switched off', () => {
+    // Ownership above lowOwnershipThreshold, so only the differential knob is on trial here -
+    // the low-ownership start-probability cap is covered separately below.
     const popular = projectPlayer(input({ ownership: 60 }), weights, rules);
-    const obscure = projectPlayer(input({ ownership: 0.5 }), weights, rules);
+    const obscure = projectPlayer(input({ ownership: 5 }), weights, rules);
     expect(weights.differential.weight).toBe(0);
     expect(obscure.xPts).toBeCloseTo(popular.xPts, 6);
   });
@@ -242,7 +271,7 @@ describe('player projection', () => {
   it('favours a differential once the knob is turned up', () => {
     const tuned = { ...weights, differential: { ...weights.differential, weight: 1 } };
     const popular = projectPlayer(input({ ownership: 60 }), tuned, rules);
-    const obscure = projectPlayer(input({ ownership: 0.5 }), tuned, rules);
+    const obscure = projectPlayer(input({ ownership: 5 }), tuned, rules);
     expect(obscure.xPts).toBeGreaterThan(popular.xPts);
   });
 
@@ -263,6 +292,37 @@ describe('player projection', () => {
       rules,
     );
     expect(rookie.confidence).toBe('low');
+  });
+
+  it('keeps a near-unowned third-choice keeper from outscoring an established, popular one', () => {
+    // The exact shape of the real bug report: one emergency start (an injured first-choice,
+    // say) reads as decent minutes evidence in isolation, but 0.1% ownership is the rest of the
+    // FPL crowd - and their team news - saying this player is not first-choice.
+    const base = { position: 'GKP' as const, xgPer90: 0, xaPer90: 0, savesPer90: 3, bonusPer90: 0.1 };
+    const thirdChoice = projectPlayer(
+      input({ ...base, starts: 1, matchesAvailable: 1, ownership: 0.1 }),
+      weights,
+      rules,
+    );
+    const establishedStarter = projectPlayer(
+      input({ ...base, starts: 10, matchesAvailable: 10, ownership: 25 }),
+      weights,
+      rules,
+    );
+
+    expect(thirdChoice.confidence).toBe('low');
+    expect(thirdChoice.xPts).toBeLessThan(establishedStarter.xPts);
+    expect(thirdChoice.reasons.join(' ')).toMatch(/0\.1% of managers own this player/);
+    expect(thirdChoice.reasons.join(' ')).toMatch(/Start chance capped at/);
+  });
+
+  it('does not cap or explain anything for a widely-owned player with the same minutes profile', () => {
+    const popular = projectPlayer(
+      input({ position: 'GKP', starts: 1, matchesAvailable: 1, ownership: 40 }),
+      weights,
+      rules,
+    );
+    expect(popular.reasons.join(' ')).not.toMatch(/Start chance capped/);
   });
 
   it('is deterministic', () => {

@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.3.0",
+  "modelVersion": "heuristic-0.4.0",
 
   "availability": {
     "$comment": [
@@ -29,7 +29,12 @@
     "$comment": [
       "Expected minutes drive appearance points and scale every other component.",
       "Recent starts are blended with the season rate, then shrunk toward a prior so a",
-      "one-match sample cannot produce a confident projection."
+      "one-match sample cannot produce a confident projection.",
+      "lowOwnershipThreshold/lowOwnershipStartCap: below that ownership percent, every other",
+      "manager's team news and press-conference reading is stronger evidence than our own start",
+      "count, so the start probability is capped there regardless of what a stray appearance -",
+      "an injury-cover start, a dead-rubber cameo - suggested. This is what stops a 0.1%-owned",
+      "third-choice goalkeeper being projected as though he were nailed on."
     ],
     "recentMatches": 6,
     "recentWeight": 0.65,
@@ -39,7 +44,9 @@
     "priorStartProbability": 0.35,
     "priorWeightMatches": 3,
     "starterCompletesSixty": 0.85,
-    "benchAppearanceProbability": 0.4
+    "benchAppearanceProbability": 0.4,
+    "lowOwnershipThreshold": 1.0,
+    "lowOwnershipStartCap": 0.15
   },
 
   "teamStrength": {

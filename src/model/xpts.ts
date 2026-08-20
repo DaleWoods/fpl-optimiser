@@ -140,6 +140,11 @@ export interface MinutesProjection {
   playProbability: number;
   sixtyPlusProbability: number;
   expectedMinutes: number;
+  /**
+   * True when very low ownership pulled the start probability down below what the Bayesian
+   * shrinkage on its own would say. See lowOwnershipThreshold/lowOwnershipStartCap.
+   */
+  ownershipCapped: boolean;
 }
 
 /**
@@ -147,6 +152,14 @@ export interface MinutesProjection {
  *
  * The start rate is shrunk toward a prior, so one appearance cannot produce a confident
  * projection. Everything else in the model scales off this.
+ *
+ * That prior alone is not enough, though: with only a handful of matches in the sample - an
+ * injury-cover start, a dead-rubber cameo - the shrunk estimate can still land at "coin flip or
+ * better" for a player who is obviously not first-choice. Ownership is the correction: every
+ * other manager's team news and press-conference reading is more current and more complete than
+ * a start count, and near-zero ownership is strong evidence the player is not nailed on. Below
+ * lowOwnershipThreshold the start probability is capped, never raised - high ownership earns no
+ * bonus here, it just fails to trigger the cap.
  */
 export function projectMinutes(
   input: PlayerModelInput,
@@ -161,7 +174,16 @@ export function projectMinutes(
     (observedStarts + minutes.priorStartProbability * minutes.priorWeightMatches) /
     (observedMatches + minutes.priorWeightMatches || 1);
 
-  const clampedStart = Math.min(1, Math.max(0, startProbability));
+  let clampedStart = Math.min(1, Math.max(0, startProbability));
+
+  const ownershipCapped =
+    input.ownership !== null &&
+    input.ownership < minutes.lowOwnershipThreshold &&
+    clampedStart > minutes.lowOwnershipStartCap;
+  if (ownershipCapped) {
+    clampedStart = minutes.lowOwnershipStartCap;
+  }
+
   const benchAppearance = (1 - clampedStart) * minutes.benchAppearanceProbability;
 
   return {
@@ -171,6 +193,7 @@ export function projectMinutes(
     expectedMinutes:
       clampedStart * minutes.expectedMinutesIfStarting +
       benchAppearance * minutes.expectedMinutesIfBenched,
+    ownershipCapped,
   };
 }
 
@@ -372,6 +395,15 @@ export function projectPlayer(
 
   const xPts = xPtsRaw * input.availability.probability;
 
+  if (minutes.ownershipCapped) {
+    reasons.unshift(
+      `Only ${input.ownership!.toFixed(1)}% of managers own this player - well below the ` +
+        `${weights.minutes.lowOwnershipThreshold}% below which the rest of the FPL crowd's team ` +
+        `news is trusted over a stray appearance. Start chance capped at ` +
+        `${Math.round(weights.minutes.lowOwnershipStartCap * 100)}% regardless of recent minutes.`,
+    );
+  }
+
   if (input.usingPreviousSeason) {
     reasons.unshift(
       `Rates are from ${input.previousSeasonName ?? 'last season'}` +
@@ -399,7 +431,7 @@ export function projectPlayer(
     xPtsRaw: round(xPtsRaw),
     expectedMinutes: round(minutes.expectedMinutes),
     breakdown,
-    confidence: assessConfidence(input, weights),
+    confidence: assessConfidence(input, weights, minutes),
     reasons,
   };
 }
@@ -407,7 +439,12 @@ export function projectPlayer(
 function assessConfidence(
   input: PlayerModelInput,
   weights: ModelWeights,
+  minutes: MinutesProjection,
 ): 'high' | 'medium' | 'low' {
+  // Ownership disagreeing with our own start-rate read is a red flag the model got the
+  // starting-XI question wrong, so it never earns high confidence even off a decent sample.
+  if (minutes.ownershipCapped) return 'low';
+
   // Last season's rates are real evidence, but a summer of transfers and new managers means
   // they can never be high confidence - and a thin sample of minutes is barely evidence at all.
   if (input.usingPreviousSeason) {
