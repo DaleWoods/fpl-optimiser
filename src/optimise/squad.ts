@@ -27,10 +27,23 @@ export interface SelectionOptions {
    * a penalty - a player simply absent from the map gets no bonus, not a deduction.
    */
   captainConsistencyBonus?: Map<number, number>;
+  /**
+   * The discounted value of the fixtures after this gameweek - player id to points. Added only
+   * to a player's IN-SQUAD selection value (selectBestSquad), never to IN-XI or captaincy within
+   * that same solve: who you OWN is a commitment that lasts until your next transfer, but who
+   * starts and who you captain reset every gameweek regardless. Not used by selectBestEleven at
+   * all - an already-owned squad's XI choice is rightly single-week, since every player in it is
+   * owned either way and re-solved fresh next gameweek.
+   */
+  futureValueBonus?: Map<number, number>;
 }
 
 function captainBonusFor(player: ProjectedPlayer, options: SelectionOptions): number {
   return options.captainConsistencyBonus?.get(player.playerId) ?? 0;
+}
+
+function futureValueBonusFor(player: ProjectedPlayer, options: SelectionOptions): number {
+  return options.futureValueBonus?.get(player.playerId) ?? 0;
 }
 
 function benchWeightFor(player: ProjectedPlayer, rules: Rules, weights: ModelWeights): number {
@@ -323,10 +336,13 @@ export async function selectBestSquad(
     name: 'best_squad',
     direction: 'maximise',
     objective: [
-      // A squad place is worth the bench weighting; a starting place makes up the rest.
+      // A squad place is worth the bench weighting, plus the future value of holding the
+      // player beyond this gameweek; a starting place makes up the rest of this week's value.
       ...selectable.map((player) => ({
         variable: IN_SQUAD(player.playerId),
-        coefficient: selectionValue(player, weights) * benchWeightFor(player, rules, weights),
+        coefficient:
+          selectionValue(player, weights) * benchWeightFor(player, rules, weights) +
+          futureValueBonusFor(player, options),
       })),
       ...selectable.map((player) => ({
         variable: IN_XI(player.playerId),

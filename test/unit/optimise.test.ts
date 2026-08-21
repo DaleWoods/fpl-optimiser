@@ -266,6 +266,37 @@ describe('best squad from the whole pool', () => {
     expect(result.squad.some((p) => p.playerId === target.playerId)).toBe(true);
   });
 
+  it('lets a future-value bonus pull in a player who is tied on this week alone', async () => {
+    // Two identical FWDs on this week's numbers; only a future-value bonus for one separates
+    // them - standing in for "this club's fixtures improve after this gameweek".
+    const basePool = playerPool({ clubs: 12, perPosition: 3 });
+    const fwds = basePool.filter((p) => p.position === 'FWD');
+    const target = { ...fwds[0]!, xPts: 6 };
+    const rival = { ...fwds[1]!, xPts: 6 };
+    const pool = basePool.map((p) =>
+      p.playerId === target.playerId ? target : p.playerId === rival.playerId ? rival : p,
+    );
+
+    const withBonus = await selectBestSquad(pool, rules, weights, solver, {
+      futureValueBonus: new Map([[rival.playerId, 5]]),
+    });
+    expect(withBonus.squad.some((p) => p.playerId === rival.playerId)).toBe(true);
+  });
+
+  it('never lets the future-value bonus change what is reported as expectedPoints', async () => {
+    const pool = playerPool({ clubs: 12, perPosition: 3 });
+    const target = pool.find((p) => p.position === 'FWD')!;
+
+    const result = await selectBestSquad(pool, rules, weights, solver, {
+      futureValueBonus: new Map([[target.playerId, 50]]),
+    });
+
+    const expected =
+      result.eleven.starters.reduce((sum, p) => sum + p.xPts, 0) +
+      result.eleven.captain.xPts * (rules.captain.multiplier - 1);
+    expect(result.eleven.expectedPoints).toBeCloseTo(Math.round(expected * 100) / 100, 2);
+  });
+
   it('reports expectedPoints using the true xPts, never the risk-adjusted selection value', async () => {
     const squad = legalSquad((index) => ({
       xPts: index === 7 ? 12 : 3,

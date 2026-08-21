@@ -757,5 +757,48 @@ describe('multi-gameweek horizon', () => {
       expect(Math.abs(swap!.gainBeforeHit)).toBeLessThan(0.5);
       expect(swap!.reason).toMatch(/run of fixtures after this gameweek adds/);
     });
+
+    it('also favours the better fixture run when building a squad from scratch', async () => {
+      // No squad loaded this time - the season-start / wildcard path. Pool has 6 identical
+      // midfielders for 5 slots; only future fixtures separate club 6's from the rest.
+      const db = openTestDatabase();
+      const { teams, players } = equalSquad();
+      await ingestBootstrap(
+        db,
+        new StubFplApi({
+          bootstrap: fakeBootstrap({
+            teams,
+            players,
+            events: [
+              fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' }),
+              fakeEvent(2, { deadline_time: '2099-08-28T17:30:00Z' }),
+              fakeEvent(3, { deadline_time: '2099-09-04T17:30:00Z' }),
+            ],
+          }),
+        }),
+        rules,
+      );
+      await ingestFixtures(
+        db,
+        new StubFplApi({
+          fixtures: [
+            fakeFixture(1, 1, 1, 2),
+            fakeFixture(2, 1, 3, 4),
+            fakeFixture(3, 1, 5, 6),
+            // Club 4 blank from gameweek 2 on; club 6 keeps a normal run.
+            fakeFixture(4, 2, 5, 6),
+            fakeFixture(5, 3, 5, 6),
+          ],
+        }),
+      );
+
+      const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+      expect(result.mode).toBe('build-squad');
+      // Club 6's midfielder (id 16) strictly dominates every other MID candidate once the
+      // future fixtures are counted - gameweek 1 alone ties them all, so this can only be the
+      // future-value bonus doing its job.
+      expect(result.squad.map((p) => p.playerId)).toContain(16);
+    });
   });
 });

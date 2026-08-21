@@ -497,6 +497,12 @@ export async function recommend(
     horizon,
     weights,
   );
+  // Building a squad from scratch is a multi-week commitment - who you end up owning should
+  // reflect the run of fixtures ahead, not just this gameweek. An existing squad's transfers
+  // already get this via findTransfers; this is the same idea applied to the initial 15.
+  const futureValueBonus = new Map(
+    projections.map((player) => [player.playerId, horizonFor(horizon, player.playerId).futureXPts]),
+  );
   const horizonWithFixtures = horizon.gameweeks.filter((gw) => gw.fixtureCount > 0).length;
   if (horizonWithFixtures < weights.horizon.length) {
     notes.push(
@@ -559,6 +565,7 @@ export async function recommend(
     const selection = await selectBestSquad(projections, rules, weights, solver, {
       budget: options.budget,
       captainConsistencyBonus,
+      futureValueBonus,
     });
 
     saveRecommendation(db, {
