@@ -45,6 +45,7 @@ export function player(overrides: PlayerOverrides = {}): ProjectedPlayer {
     expectedMinutes: 80,
     confidence: overrides.confidence ?? 'high',
     reasons: [],
+    fixtures: [{ opponentShort: 'OPP', isHome: true, difficulty: 3 }],
   };
 }
 

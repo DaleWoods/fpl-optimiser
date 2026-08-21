@@ -162,6 +162,20 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
 // Recommendation
 // ---------------------------------------------------------------------------
 
+/** vs NEW (H) with a difficulty pill, "@ LIV (A) FDR5", "+" between two for a double, or BLANK. */
+export function formatFixtures(fixtures: { opponentShort: string; isHome: boolean; difficulty: number | null }[]): string {
+  if (fixtures.length === 0) return '<span class="muted">BLANK</span>';
+  return fixtures
+    .map((fixture) => {
+      const fdr =
+        fixture.difficulty !== null
+          ? ` <span class="pill${fixture.difficulty >= 4 ? ' bad' : ''}">FDR${fixture.difficulty}</span>`
+          : '';
+      return `${fixture.isHome ? 'vs' : '@'} ${escapeHtml(fixture.opponentShort)}${fdr}`;
+    })
+    .join(' + ');
+}
+
 function playerRow(
   player: {
     position: string;
@@ -172,6 +186,7 @@ function playerRow(
     confidence: string;
     breakdown: Record<string, number>;
     reasons: string[];
+    fixtures: { opponentShort: string; isHome: boolean; difficulty: number | null }[];
   },
   marker = '',
 ): string {
@@ -190,11 +205,12 @@ function playerRow(
     <td>${escapeHtml(player.position)}</td>
     <td>${escapeHtml(player.name)} ${marker}</td>
     <td>${escapeHtml(player.clubShort)}</td>
+    <td>${formatFixtures(player.fixtures)}</td>
     <td>${formatMoney(player.price)}</td>
     <td><strong>${player.xPts.toFixed(2)}</strong></td>
     <td class="muted">${escapeHtml(player.confidence)}</td>
   </tr>
-  <tr><td></td><td colspan="5" style="padding-top:0">
+  <tr><td></td><td colspan="6" style="padding-top:0">
     <details><summary>why this player?</summary>
       <div class="parts">${parts}</div>
       ${reasons ? `<ul class="tight">${reasons}</ul>` : ''}
@@ -203,7 +219,7 @@ function playerRow(
 }
 
 export function renderRecommendation(rec: Recommendation): string {
-  const head = `<thead><tr><th>Pos</th><th>Player</th><th>Club</th><th>Price</th><th>xPts</th><th>Confidence</th></tr></thead>`;
+  const head = `<thead><tr><th>Pos</th><th>Player</th><th>Club</th><th>Fixture</th><th>Price</th><th>xPts</th><th>Confidence</th></tr></thead>`;
 
   const starters = rec.eleven.starters
     .map((player) =>
@@ -260,6 +276,13 @@ export function renderRecommendation(rec: Recommendation): string {
      vice <strong>${escapeHtml(rec.eleven.viceCaptain.name)}</strong>.</p>
 
   <h2>Starting XI</h2>
+  <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">
+    <strong>Confidence</strong> is how much real playing-time evidence backs a player's own
+    rate &mdash; not whether this is a good pick. A nailed-on starter can be high confidence and
+    still low-scoring in a tough fixture, both at once; check the <strong>Fixture</strong>
+    column and FDR for that. Confidence only turns low when the evidence itself is thin (little
+    or no minutes, or a rate carried over from last season).
+  </p>
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${starters}</tbody></table></div></div>
 
   <h2>Bench <span class="muted" style="font-weight:400">(auto-sub order)</span></h2>

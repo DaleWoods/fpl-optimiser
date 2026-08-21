@@ -19,7 +19,7 @@
     "whole lot without deleting anything."
   ],
 
-  "compiledAt": "2026-08-20",
+  "compiledAt": "2026-08-21",
   "season": "2026/27",
   "staleAfterGameweek": 4,
 
@@ -32,7 +32,9 @@
     "https://www.chaseyoursport.com/fantasy-football/highest-scoring-defenders-fpl-2025-26/12249",
     "https://www.fplpilot.com/blog/fpl-2025-26-season-review-data",
     "https://www.fantasyfootballscout.co.uk/2026/07/31/best-5-0m-goalkeepers-for-fpl-2026-27",
-    "https://feeds.bbci.co.uk/sport/football/articles/cr5r5m9p99mo"
+    "https://feeds.bbci.co.uk/sport/football/articles/cr5r5m9p99mo",
+    "https://www.tntsports.co.uk/football/premier-league/2026-2027/matthias-jaissle-new-manager-eddie-howe-st-james-park_sto23324445/story.shtml",
+    "https://www.goal.com/en/news/newcastle-united-liverpool-premier-league-preview/blt8a1b76d6d787990e"
   ],
 
   "weights": {
@@ -153,6 +155,7 @@
   "contextNotes": [
     "The 2026 World Cup final was played on 19 July 2026. Players who reached the final or the third-place playoff did not report back to club training until 9-12 August, leaving under eleven days of preparation before the 21 August deadline. Expect rotation and cameos rather than full starts for that group.",
     "Nine clubs begin the season with a new head coach or an unresolved managerial situation, so last season's roles are a weaker guide than usual.",
+    "Gameweek 1's Newcastle vs Liverpool is a specific case of that: Eddie Howe left Newcastle and was replaced by Matthias Jaissle, a first-time Premier League manager, appointed only in early August - reporting suggests Liverpool also enter under a new head coach. Squad roles, set pieces and even the back four at both clubs are a weaker guide than a normal opener; the model has no way to see a managerial change directly, only through minutes and starts once they happen.",
     "Manchester City and Arsenal are modelled as a tier of their own for the opening fixtures.",
     "Defenders dominated the 2025/26 scoring charts, which the DefCon rules continue to reward."
   ]

@@ -5,7 +5,7 @@ import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } 
 import { openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
 import { startServer, type RunningServer } from '../../src/report/server.js';
-import { renderDashboard } from '../../src/report/views.js';
+import { formatFixtures, renderDashboard } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
 import {
   defaultPlayers,
@@ -177,6 +177,40 @@ describe('formatting helpers', () => {
     expect(formatDuration(30)).toBe('<1m');
     expect(formatDuration(3600)).toBe('1h');
     expect(formatDuration(90000)).toBe('1d 1h');
+  });
+});
+
+describe('formatFixtures', () => {
+  it('shows BLANK for no fixture', () => {
+    expect(formatFixtures([])).toContain('BLANK');
+  });
+
+  it('marks home and away distinctly', () => {
+    expect(formatFixtures([{ opponentShort: 'LIV', isHome: true, difficulty: 2 }])).toContain('vs LIV');
+    expect(formatFixtures([{ opponentShort: 'LIV', isHome: false, difficulty: 2 }])).toContain('@ LIV');
+  });
+
+  it('flags a hard fixture but not an easy one', () => {
+    const hard = formatFixtures([{ opponentShort: 'LIV', isHome: false, difficulty: 5 }]);
+    const easy = formatFixtures([{ opponentShort: 'HUL', isHome: true, difficulty: 2 }]);
+    expect(hard).toContain('pill bad');
+    expect(easy).not.toContain('pill bad');
+  });
+
+  it('joins a double gameweek with a plus', () => {
+    const double = formatFixtures([
+      { opponentShort: 'LIV', isHome: false, difficulty: 5 },
+      { opponentShort: 'HUL', isHome: true, difficulty: 2 },
+    ]);
+    expect(double).toContain('@ LIV');
+    expect(double).toContain('vs HUL');
+    expect(double).toContain('+');
+  });
+
+  it('omits the FDR pill when the API gives no difficulty rating', () => {
+    const result = formatFixtures([{ opponentShort: 'LIV', isHome: true, difficulty: null }]);
+    expect(result).not.toContain('FDR');
+    expect(result).not.toContain('pill');
   });
 });
 
@@ -448,6 +482,19 @@ describe('report server', () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as { mode: string };
       expect(body.mode).toBeDefined();
+    });
+
+    it('shows each starter\'s fixture and explains what confidence does and does not mean', async () => {
+      const base = await start();
+      await importReadyData(base);
+
+      const body = await (await fetch(`${base}/optimise?generate=1`)).text();
+
+      expect(body).toContain('<th>Fixture</th>');
+      // Every starter has a club playing gameweek 1 in feasibleBootstrap, so each row shows a
+      // fixture rather than a blank.
+      expect(body).toMatch(/vs C\d|@ C\d/);
+      expect(body).toMatch(/not whether this is a good pick/);
     });
   });
 

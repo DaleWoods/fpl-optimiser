@@ -289,6 +289,11 @@ export function buildProjections(
       expectedMinutes: projection.expectedMinutes,
       confidence: projection.confidence,
       reasons: projection.reasons,
+      fixtures: input.fixtures.map((fixture) => ({
+        opponentShort: fixture.opponentShort,
+        isHome: fixture.isHome,
+        difficulty: fixture.difficulty,
+      })),
     });
   }
 

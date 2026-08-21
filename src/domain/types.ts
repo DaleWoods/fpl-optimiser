@@ -13,6 +13,14 @@ export interface PlayerCandidate {
   availability: Availability;
 }
 
+/** One fixture a player's club has this gameweek, for display - not itself a model output. */
+export interface FixtureSummary {
+  opponentShort: string;
+  isHome: boolean;
+  /** The API's own fixture difficulty rating, carried through for display only. */
+  difficulty: number | null;
+}
+
 /** A candidate with a projection attached. */
 export interface ProjectedPlayer extends PlayerCandidate {
   xPts: number;
@@ -23,6 +31,8 @@ export interface ProjectedPlayer extends PlayerCandidate {
   confidence: 'high' | 'medium' | 'low';
   /** Plain-English justification for this projection, shown alongside any recommendation. */
   reasons: string[];
+  /** This gameweek's fixture(s) for the player's club: empty for a blank, two for a double. */
+  fixtures: FixtureSummary[];
 }
 
 export interface Squad {

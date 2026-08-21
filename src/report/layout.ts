@@ -170,6 +170,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .pill { display: inline-block; background: var(--line); border-radius: 99px;
         padding: .12rem .6rem; font-size: .78rem; }
 .pill.good { background: var(--hi); color: var(--ok); font-weight: 600; }
+.pill.bad { background: var(--flag-bg); color: var(--flag-fg); font-weight: 600; }
 
 .banner { padding: .75rem 1rem; border-radius: 10px; margin: .9rem 0; font-size: .92rem; }
 .banner.warn { background: var(--warn-bg); color: var(--warn-fg); }
