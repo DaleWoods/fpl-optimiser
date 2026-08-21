@@ -299,6 +299,9 @@ export function renderRecommendation(rec: Recommendation): string {
           'starts, which the FPL platform itself enforces. Once it is, top managers\' actual picks ' +
           'will boost those players\' projections directly, not just get mentioned.'
     }</li>
+    <li>Transfers and captaincy judged over ${rec.evidence.horizonGameweeks} gameweek(s) ahead,
+      weighted most heavily toward this one &mdash; see "run of fixtures after this gameweek" on
+      a transfer for what that changed</li>
     ${rec.evidence.contextNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}
   </ul></div>
 

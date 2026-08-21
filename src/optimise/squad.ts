@@ -18,6 +18,21 @@ export interface SquadSelection {
   bankRemaining: number;
 }
 
+export interface SelectionOptions {
+  /**
+   * Extra, bounded points added to a player's captain-selection value only - player id to
+   * bonus. Used to prefer a captain who is strong across a run of gameweeks over one who is
+   * merely spiking this week, when the two are otherwise close. Never applied to what is
+   * reported (StartingEleven.expectedPoints always uses the true, undiscounted xPts), and never
+   * a penalty - a player simply absent from the map gets no bonus, not a deduction.
+   */
+  captainConsistencyBonus?: Map<number, number>;
+}
+
+function captainBonusFor(player: ProjectedPlayer, options: SelectionOptions): number {
+  return options.captainConsistencyBonus?.get(player.playerId) ?? 0;
+}
+
 function benchWeightFor(player: ProjectedPlayer, rules: Rules, weights: ModelWeights): number {
   const isGoalkeeper = (rules.startingXi.positionBounds[player.position]?.max ?? 99) === 1;
   return isGoalkeeper ? weights.optimiser.benchGoalkeeperWeight : weights.optimiser.benchWeight;
@@ -150,6 +165,7 @@ export async function selectBestEleven(
   rules: Rules,
   weights: ModelWeights,
   solver: Solver,
+  options: SelectionOptions = {},
 ): Promise<StartingEleven> {
   const selectable = squad.filter((player) => !player.availability.excluded);
 
@@ -174,7 +190,9 @@ export async function selectBestEleven(
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),
-        coefficient: selectionValue(player, weights) * (rules.captain.multiplier - 1),
+        coefficient:
+          selectionValue(player, weights) * (rules.captain.multiplier - 1) +
+          captainBonusFor(player, options),
       })),
     ],
     constraints: [...elevenConstraints(selectable, rules), ...captaincyConstraints(selectable)],
@@ -227,7 +245,7 @@ export async function selectBestSquad(
   rules: Rules,
   weights: ModelWeights,
   solver: Solver,
-  options: { budget?: number; mustInclude?: number[]; mustExclude?: number[] } = {},
+  options: { budget?: number; mustInclude?: number[]; mustExclude?: number[] } & SelectionOptions = {},
 ): Promise<SquadSelection> {
   const budget = options.budget ?? rules.squad.budget;
   const mustInclude = new Set(options.mustInclude ?? []);
@@ -316,7 +334,9 @@ export async function selectBestSquad(
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),
-        coefficient: selectionValue(player, weights) * (rules.captain.multiplier - 1),
+        coefficient:
+          selectionValue(player, weights) * (rules.captain.multiplier - 1) +
+          captainBonusFor(player, options),
       })),
     ],
     constraints: [

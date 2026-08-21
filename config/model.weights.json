@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.5.0",
+  "modelVersion": "heuristic-0.6.0",
 
   "availability": {
     "$comment": [
@@ -145,6 +145,19 @@
     "high": 1.0,
     "medium": 0.93,
     "low": 0.8
+  },
+
+  "horizon": {
+    "$comment": [
+      "How far ahead transfers and captaincy look, beyond the single gameweek being planned for.",
+      "length 5, decay 0.75: the target week counts fully, the next 0.75, then 0.56, 0.42, 0.32 -",
+      "a fixture swing three or four weeks out still matters, but far less than the week right",
+      "in front of you. captainConsistencyWeight is a small, bounded, upward-only nudge toward a",
+      "captain who is strong across the whole horizon rather than spiking in just this one week."
+    ],
+    "length": 5,
+    "decay": 0.75,
+    "captainConsistencyWeight": 0.15
   },
 
   "captain": {

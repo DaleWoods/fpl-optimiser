@@ -553,3 +553,209 @@ describe('recommendation with a squad loaded', () => {
     expect(result.notes.join(' ')).toMatch(/selling prices are not published/i);
   });
 });
+
+describe('multi-gameweek horizon', () => {
+  /** Same deterministic pick as the "squad loaded" describe above: clubs 1-5 only. */
+  function pickLegalFifteen(target: Database): number[] {
+    const rows = target
+      .prepare(
+        `SELECT p.id, pos.short_name AS position, p.team_id AS club
+         FROM player p JOIN position pos ON pos.id = p.position_id ORDER BY p.id`,
+      )
+      .all() as { id: number; position: string; club: number }[];
+
+    const need: Record<string, number> = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
+    const perClub = new Map<number, number>();
+    const chosen: number[] = [];
+    for (const row of rows) {
+      if ((need[row.position] ?? 0) <= 0) continue;
+      if ((perClub.get(row.club) ?? 0) >= 3) continue;
+      chosen.push(row.id);
+      need[row.position]! -= 1;
+      perClub.set(row.club, (perClub.get(row.club) ?? 0) + 1);
+    }
+    return chosen;
+  }
+
+  async function loadSquad(target: Database, playerIds: number[], bank: number): Promise<void> {
+    await ingestEntry(
+      target,
+      new StubFplApi({
+        entry: { [teamId]: fakeEntry(teamId, { current_event: 1, last_deadline_bank: bank }) },
+        history: { [teamId]: { current: [], chips: [] } },
+        picks: {
+          [`${teamId}:1`]: fakePicks(playerIds, {
+            entry_history: { event: 1, bank, value: 1000, event_transfers: 0, event_transfers_cost: 0 },
+          }),
+        },
+      }),
+      teamId,
+      rules,
+    );
+  }
+
+  /**
+   * Extends the seeded league to three gameweeks, with a deliberate fixture swing: club 4 (one
+   * of the squad's clubs) gets no fixture at all in gameweeks 2 and 3 - a true blank, which
+   * depresses its future value to zero without inventing an oddly strong opponent that would
+   * muddy the comparison. Club 6 (unowned, a source of transfer candidates) keeps playing
+   * normally. Gameweek 1 is untouched, so this only ever shows up as a horizon effect, never as
+   * a change to this week's own numbers.
+   */
+  async function addFutureFixtureSwing(target: Database): Promise<void> {
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      target,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players,
+          events: [
+            fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { deadline_time: '2099-08-28T17:30:00Z' }),
+            fakeEvent(3, { deadline_time: '2099-09-04T17:30:00Z' }),
+          ],
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      target,
+      new StubFplApi({
+        // Club 4 has no fixture in either gameweek - a true blank. Club 6 plays a normal
+        // fixture against club 7 in both.
+        fixtures: [fakeFixture(103, 2, 6, 7), fakeFixture(104, 3, 6, 7)],
+      }),
+    );
+  }
+
+  it('reports how many gameweeks transfers and captaincy were actually judged over', async () => {
+    const db = openTestDatabase();
+    await seedLeague(db);
+    await loadSquad(db, pickLegalFifteen(db), 100);
+
+    const single = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(single.evidence.horizonGameweeks).toBe(1);
+    expect(single.notes.join(' ')).toMatch(/gameweek\(s\) ahead have fixtures imported/);
+
+    await addFutureFixtureSwing(db);
+    const multi = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(multi.evidence.horizonGameweeks).toBe(3);
+  });
+
+  describe('an isolated swap decided purely by future fixtures', () => {
+    /**
+     * Six equal-strength clubs, so nothing about quality or price separates the squad's weakest
+     * midfielder from the one unowned alternative - only the fixtures each of their clubs gets
+     * after gameweek 1 can tell them apart. bigLeague's 20 clubs vary too much in underlying
+     * strength for that isolation: a stronger club elsewhere in the pool would always be a
+     * better transfer target regardless of fixtures, drowning out the horizon effect.
+     */
+    function equalSquad(): { teams: ReturnType<typeof defaultTeams>; players: FakePlayerSpec[] } {
+      const teams = Array.from({ length: 6 }, (_, index) => ({
+        id: index + 1,
+        name: `Club ${index + 1}`,
+        short_name: `C${index + 1}`,
+        attack: 1100,
+        defence: 1100,
+      }));
+      const stats = {
+        now_cost: 60,
+        minutes: 900,
+        starts: 10,
+        goals_scored: 5,
+        assists: 4,
+        expected_goals: 4,
+        expected_assists: 3,
+        defensive_contribution: 40,
+        bonus: 5,
+        selected_by_percent: 15,
+      };
+      const players: FakePlayerSpec[] = [
+        { id: 1, web_name: 'GK1', team: 1, element_type: 1, ...stats },
+        { id: 2, web_name: 'D1', team: 1, element_type: 2, ...stats },
+        { id: 3, web_name: 'D2', team: 1, element_type: 2, ...stats },
+        { id: 4, web_name: 'GK2', team: 2, element_type: 1, ...stats },
+        { id: 5, web_name: 'D3', team: 2, element_type: 2, ...stats },
+        { id: 6, web_name: 'D4', team: 2, element_type: 2, ...stats },
+        { id: 7, web_name: 'D5', team: 3, element_type: 2, ...stats },
+        { id: 8, web_name: 'M1', team: 3, element_type: 3, ...stats },
+        { id: 9, web_name: 'M2', team: 3, element_type: 3, ...stats },
+        { id: 10, web_name: 'M3', team: 4, element_type: 3, ...stats },
+        { id: 11, web_name: 'M4', team: 4, element_type: 3, ...stats },
+        { id: 12, web_name: 'M5', team: 4, element_type: 3, ...stats }, // the "out" candidate
+        { id: 13, web_name: 'F1', team: 5, element_type: 4, ...stats },
+        { id: 14, web_name: 'F2', team: 5, element_type: 4, ...stats },
+        { id: 15, web_name: 'F3', team: 5, element_type: 4, ...stats },
+        { id: 16, web_name: 'M6', team: 6, element_type: 3, ...stats }, // unowned, the "in" candidate
+      ];
+      return { teams, players };
+    }
+
+    const squadIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+    async function seed(target: Database, withFutureSwing: boolean): Promise<void> {
+      const { teams, players } = equalSquad();
+      const events = withFutureSwing
+        ? [
+            fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { deadline_time: '2099-08-28T17:30:00Z' }),
+            fakeEvent(3, { deadline_time: '2099-09-04T17:30:00Z' }),
+          ]
+        : [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })];
+      await ingestBootstrap(
+        target,
+        new StubFplApi({ bootstrap: fakeBootstrap({ teams, players, events }) }),
+        rules,
+      );
+
+      const fixtures = [fakeFixture(1, 1, 1, 2), fakeFixture(2, 1, 3, 4), fakeFixture(3, 1, 5, 6)];
+      if (withFutureSwing) {
+        // Club 4 (home of the "out" midfielder) has no fixture at all in gameweeks 2 or 3 - a
+        // true blank. Club 6 (home of the "in" candidate) keeps a normal run against club 5.
+        fixtures.push(fakeFixture(4, 2, 5, 6), fakeFixture(5, 3, 5, 6));
+      }
+      await ingestFixtures(target, new StubFplApi({ fixtures }));
+
+      await ingestEntry(
+        target,
+        new StubFplApi({
+          entry: { [teamId]: fakeEntry(teamId, { current_event: 1, last_deadline_bank: 100 }) },
+          history: { [teamId]: { current: [], chips: [] } },
+          picks: {
+            [`${teamId}:1`]: fakePicks(squadIds, {
+              entry_history: {
+                event: 1, bank: 100, value: 1000, event_transfers: 0, event_transfers_cost: 0,
+              },
+            }),
+          },
+        }),
+        teamId,
+        rules,
+      );
+    }
+
+    it('does not suggest the swap on gameweek 1 alone, when both players are identical', async () => {
+      const db = openTestDatabase();
+      await seed(db, false);
+      const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+      // Nothing separates them this week, so there is nothing to gain from swapping - and
+      // certainly nothing that would survive a free-transfer-only comparison.
+      expect(result.transfers.find((t) => t.out.playerId === 12 && t.in.playerId === 16)).toBeUndefined();
+    });
+
+    it('suggests it once the future fixtures make the difference clear', async () => {
+      const db = openTestDatabase();
+      await seed(db, true);
+      const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+      const swap = result.transfers.find((t) => t.out.playerId === 12 && t.in.playerId === 16);
+      expect(swap).toBeDefined();
+      expect(swap!.horizonGain).toBeGreaterThan(0);
+      // This week's own swing is ~zero - the identical players guarantee that - so the horizon
+      // is doing essentially all of the work.
+      expect(Math.abs(swap!.gainBeforeHit)).toBeLessThan(0.5);
+      expect(swap!.reason).toMatch(/run of fixtures after this gameweek adds/);
+    });
+  });
+});

@@ -176,6 +176,21 @@ export const modelWeightsSchema = z.strictObject({
     medium: probability,
     low: probability,
   }),
+  /**
+   * How far ahead transfers and captaincy look, beyond the single gameweek being planned for.
+   * A transfer keeps paying off for as long as the player is held, and a captaincy pick is more
+   * trustworthy when it is not a one-off spike, so both are judged against a run of fixtures -
+   * weighted most heavily toward the near term, since further-out projections are less certain.
+   */
+  horizon: z.strictObject({
+    /** Gameweeks considered, including the target one. */
+    length: positiveInt,
+    /** Weight multiplier per gameweek further out: 1.0 for the target week, decay^1 the next, etc. */
+    decay: probability,
+    /** Bounded bonus (points) nudging captaincy toward a consistently strong performer over a
+     *  one-off spike, when the two are otherwise close. Never a penalty, only ever a nudge. */
+    captainConsistencyWeight: z.number().min(0),
+  }),
   captain: z.strictObject({
     ceilingWeight: z.number().min(0),
   }),

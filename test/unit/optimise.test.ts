@@ -158,6 +158,33 @@ describe('best starting XI', () => {
     expect(eleven.captain.playerId).toBe(8);
   });
 
+  it('lets a captain-consistency bonus break a near-tie toward the horizon-backed player', async () => {
+    // Players 7 and 8 project almost identically this week; only a bonus for player 8 (standing
+    // in for "strong across the whole horizon, not just this week") should decide it.
+    const squad = legalSquad((index) => ({ xPts: index === 6 ? 10 : index === 7 ? 10.05 : 3 }));
+    const withoutBonus = await selectBestEleven(squad, rules, weights, solver);
+    expect(withoutBonus.captain.playerId).toBe(8);
+
+    const bonus = new Map([[7, 5]]);
+    const withBonus = await selectBestEleven(squad, rules, weights, solver, {
+      captainConsistencyBonus: bonus,
+    });
+    expect(withBonus.captain.playerId).toBe(7);
+  });
+
+  it('never lets the captain-consistency bonus change what is reported as expectedPoints', async () => {
+    const squad = legalSquad((index) => ({ xPts: index === 6 ? 10 : index === 7 ? 10.05 : 3 }));
+    const bonus = new Map([[7, 5]]);
+    const withBonus = await selectBestEleven(squad, rules, weights, solver, {
+      captainConsistencyBonus: bonus,
+    });
+
+    const expected =
+      withBonus.starters.reduce((sum, p) => sum + p.xPts, 0) +
+      withBonus.captain.xPts * (rules.captain.multiplier - 1);
+    expect(withBonus.expectedPoints).toBeCloseTo(Math.round(expected * 100) / 100, 2);
+  });
+
   it('picks a valid formation and reports it', async () => {
     const squad = legalSquad((index) => ({ xPts: 3 + (index % 4) }));
     const eleven = await selectBestEleven(squad, rules, weights, solver);

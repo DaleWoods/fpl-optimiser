@@ -3,6 +3,7 @@ import type { ModelWeights, Rules } from '../config/schema.js';
 import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
 import { latestEliteOwnership } from '../ingest/elite.js';
 import { buildProjections, saveProjections } from '../model/build.js';
+import { computeHorizon, horizonFor, type Horizon } from '../model/horizon.js';
 import { applyIntel, loadIntel, type Intel } from '../model/intel.js';
 import { saveRecommendation } from '../model/accuracy.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
@@ -12,11 +13,40 @@ import { selectBestEleven, selectBestSquad } from '../optimise/squad.js';
 export interface TransferOption {
   out: ProjectedPlayer;
   in: ProjectedPlayer;
-  /** Change in expected points for the gameweek, after any hit. */
+  /** Change in expected points, after any hit - this gameweek's swing plus the horizon below. */
   netGain: number;
+  /** This gameweek's own swing from re-solving the XI, before the hit and before the horizon. */
   gainBeforeHit: number;
+  /** The discounted value of the run of fixtures after this gameweek, in's minus out's. Can be
+   *  negative - a player who is great this week and mediocre after is worth less than the raw
+   *  weekly swing alone suggests. */
+  horizonGain: number;
   hitCost: number;
   reason: string;
+}
+
+/**
+ * A bounded, upward-only nudge toward captaining someone whose horizon backs up this week's
+ * number, rather than a player who is merely spiking. Never applied to a player missing from
+ * the horizon or with nothing projected this week - there is nothing to be consistent about.
+ */
+function captainConsistencyBonusFor(
+  playerIds: Iterable<number>,
+  horizon: Horizon,
+  weights: ModelWeights,
+): Map<number, number> {
+  const bonus = new Map<number, number>();
+  if (horizon.gameweeks.length <= 1) return bonus;
+
+  for (const playerId of playerIds) {
+    const h = horizonFor(horizon, playerId);
+    if (h.currentXPts <= 0) continue;
+    const average = h.horizonXPts / horizon.totalWeight;
+    const consistency = Math.min(1, average / h.currentXPts);
+    const value = round(weights.horizon.captainConsistencyWeight * consistency);
+    if (value > 0) bonus.set(playerId, value);
+  }
+  return bonus;
 }
 
 export interface Recommendation {
@@ -47,6 +77,8 @@ export interface Recommendation {
     contextNotes: string[];
     eliteSampleSize: number;
     usingPreviousSeason: number;
+    /** How many gameweeks transfers and captaincy were actually judged over. */
+    horizonGameweeks: number;
   };
 }
 
@@ -268,10 +300,18 @@ async function findTransfers(
   rules: Rules,
   weights: ModelWeights,
   solver: Solver,
-  options: { bank: number; freeTransfers: number; candidatesPerPosition: number },
+  options: {
+    bank: number;
+    freeTransfers: number;
+    candidatesPerPosition: number;
+    horizon: Horizon;
+    captainConsistencyBonus: Map<number, number>;
+  },
 ): Promise<TransferOption[]> {
-  const baseline = await selectBestEleven(squad, rules, weights, solver);
+  const selectionOptions = { captainConsistencyBonus: options.captainConsistencyBonus };
+  const baseline = await selectBestEleven(squad, rules, weights, solver, selectionOptions);
   const ownedIds = new Set(squad.map((player) => player.playerId));
+  const future = (playerId: number) => horizonFor(options.horizon, playerId).futureXPts;
 
   // Club counts, so a swap cannot break the three-per-club rule.
   const clubCounts = new Map<number, number>();
@@ -285,9 +325,14 @@ async function findTransfers(
     byPosition.set(player.position, list);
   }
   for (const [position, list] of byPosition) {
+    // Ranked on this week's projection plus the discounted run of fixtures after it, so a
+    // candidate having an average week ahead of three good ones is not pruned before it is
+    // even considered.
     byPosition.set(
       position,
-      list.sort((a, b) => b.xPts - a.xPts).slice(0, options.candidatesPerPosition),
+      list
+        .sort((a, b) => b.xPts + future(b.playerId) - (a.xPts + future(a.playerId)))
+        .slice(0, options.candidatesPerPosition),
     );
   }
 
@@ -312,28 +357,40 @@ async function findTransfers(
 
       let eleven: StartingEleven;
       try {
-        eleven = await selectBestEleven(candidateSquad, rules, weights, solver);
+        eleven = await selectBestEleven(candidateSquad, rules, weights, solver, selectionOptions);
       } catch {
         continue; // The swap leaves no legal XI.
       }
 
+      // This week's precise swing from re-solving the whole XI, plus the discounted value of
+      // the run of fixtures after it - a one-time hit only pays for itself once, but a good
+      // transfer keeps paying off for as long as the player is held.
       const gainBeforeHit = eleven.expectedPoints - baseline.expectedPoints;
-      const netGain = gainBeforeHit - hitCost;
+      const horizonGain = future(incoming.playerId) - future(out.playerId);
+      const netGain = gainBeforeHit + horizonGain - hitCost;
 
       if (netGain <= 0) continue;
+
+      const horizonNote =
+        Math.abs(horizonGain) >= 0.1
+          ? horizonGain > 0
+            ? ` The run of fixtures after this gameweek adds a further +${horizonGain.toFixed(2)}.`
+            : ` The run of fixtures after this gameweek trims ${Math.abs(horizonGain).toFixed(2)} off that, but it still holds up.`
+          : '';
 
       results.push({
         out,
         in: incoming,
         netGain: Math.round(netGain * 100) / 100,
         gainBeforeHit: Math.round(gainBeforeHit * 100) / 100,
+        horizonGain: Math.round(horizonGain * 100) / 100,
         hitCost,
         reason:
           `${incoming.name} (${incoming.clubShort}, £${(incoming.price / 10).toFixed(1)}m) projects ` +
-          `${incoming.xPts.toFixed(2)} against ${out.name}'s ${out.xPts.toFixed(2)}` +
+          `${incoming.xPts.toFixed(2)} against ${out.name}'s ${out.xPts.toFixed(2)} this gameweek` +
           (hitCost > 0 ? `, and is worth it even after a -${hitCost} hit` : '') +
           `. ${out.availability.excluded ? `${out.name} cannot play: ${out.availability.reason}. ` : ''}` +
-          `Net gain ${netGain >= 0 ? '+' : ''}${netGain.toFixed(2)} points this gameweek.`,
+          `Net gain ${netGain >= 0 ? '+' : ''}${netGain.toFixed(2)} points.${horizonNote}`,
       });
     }
   }
@@ -431,6 +488,25 @@ export async function recommend(
 
   saveProjections(db, projections, event.id, weights.modelVersion);
 
+  // A run of upcoming gameweeks, not just this one: a transfer keeps paying off for as long as
+  // it is held, and a captain is more trustworthy when this week is not a one-off spike. Both
+  // get a bounded lens across the horizon on top of the primary, single-gameweek projection.
+  const horizon = computeHorizon(db, rules, weights, event.id, weights.horizon.length);
+  const captainConsistencyBonus = captainConsistencyBonusFor(
+    projections.map((player) => player.playerId),
+    horizon,
+    weights,
+  );
+  const horizonWithFixtures = horizon.gameweeks.filter((gw) => gw.fixtureCount > 0).length;
+  if (horizonWithFixtures < weights.horizon.length) {
+    notes.push(
+      `Only ${horizonWithFixtures} gameweek(s) ahead have fixtures imported, so transfers and ` +
+        `captaincy are judged over that instead of the usual ${weights.horizon.length}. The ` +
+        "FPL fixtures file normally carries the whole season, so re-importing it - it's a " +
+        'single request - usually fills this in.',
+    );
+  }
+
   const withFixtures = projections.filter((player) => player.xPts > 0);
   if (withFixtures.length === 0) {
     notes.push(
@@ -459,6 +535,7 @@ export async function recommend(
     usingPreviousSeason: projections.filter((p) =>
       p.reasons.some((r) => r.includes('Rates are from')),
     ).length,
+    horizonGameweeks: horizon.gameweeks.length,
   };
 
   if (elite.size === 0) {
@@ -481,6 +558,7 @@ export async function recommend(
 
     const selection = await selectBestSquad(projections, rules, weights, solver, {
       budget: options.budget,
+      captainConsistencyBonus,
     });
 
     saveRecommendation(db, {
@@ -521,7 +599,9 @@ export async function recommend(
     };
   }
 
-  const eleven = await selectBestEleven(owned.squad, rules, weights, solver);
+  const eleven = await selectBestEleven(owned.squad, rules, weights, solver, {
+    captainConsistencyBonus,
+  });
 
   const bank = owned.bank ?? 0;
   if (owned.bank === null) {
@@ -543,6 +623,8 @@ export async function recommend(
     bank,
     freeTransfers,
     candidatesPerPosition: options.transferCandidates ?? 12,
+    horizon,
+    captainConsistencyBonus,
   });
 
   if (transfers.length === 0) {
