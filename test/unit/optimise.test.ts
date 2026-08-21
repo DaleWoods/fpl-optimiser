@@ -3,7 +3,13 @@ import { loadModelWeights, loadRules } from '../../src/config/load.js';
 import type { ProjectedPlayer } from '../../src/domain/types.js';
 import { GlpkSolver } from '../../src/optimise/glpkSolver.js';
 import { InfeasibleError } from '../../src/optimise/solver.js';
-import { orderBench, selectBestEleven, selectBestSquad, selectionValue } from '../../src/optimise/squad.js';
+import {
+  orderBench,
+  selectBestEleven,
+  selectBestSquad,
+  selectionValue,
+  type SquadSelection,
+} from '../../src/optimise/squad.js';
 import { validateSquad, validateStartingEleven } from '../../src/rules/validate.js';
 import { legalSquad, player, playerPool } from '../support/players.js';
 
@@ -289,6 +295,32 @@ describe('best squad from the whole pool', () => {
 
     const result = await selectBestSquad(pool, rules, weights, solver, {
       futureValueBonus: new Map([[target.playerId, 50]]),
+    });
+
+    const expected =
+      result.eleven.starters.reduce((sum, p) => sum + p.xPts, 0) +
+      result.eleven.captain.xPts * (rules.captain.multiplier - 1);
+    expect(result.eleven.expectedPoints).toBeCloseTo(Math.round(expected * 100) / 100, 2);
+  });
+
+  it('spends more on bench quality when a bench-boost pull is applied', async () => {
+    // Tight enough that bench-vs-starter spend is a genuine tradeoff, not free either way.
+    const pool = playerPool({ clubs: 12, perPosition: 3 });
+    const budget = 700;
+
+    const without = await selectBestSquad(pool, rules, weights, solver, { budget });
+    const withPull = await selectBestSquad(pool, rules, weights, solver, { budget, benchBoostPull: 1 });
+
+    const benchXPts = (result: SquadSelection) =>
+      result.eleven.bench.reduce((sum, p) => sum + p.xPts, 0);
+    expect(benchXPts(withPull)).toBeGreaterThan(benchXPts(without));
+  });
+
+  it('never lets the bench-boost pull change what is reported as expectedPoints', async () => {
+    const pool = playerPool({ clubs: 12, perPosition: 3 });
+    const result = await selectBestSquad(pool, rules, weights, solver, {
+      budget: 700,
+      benchBoostPull: 1,
     });
 
     const expected =

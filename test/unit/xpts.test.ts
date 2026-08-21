@@ -262,10 +262,19 @@ describe('player projection', () => {
   it('ignores the differential knob when it is switched off', () => {
     // Ownership above lowOwnershipThreshold, so only the differential knob is on trial here -
     // the low-ownership start-probability cap is covered separately below.
+    const off = { ...weights, differential: { ...weights.differential, weight: 0 } };
+    const popular = projectPlayer(input({ ownership: 60 }), off, rules);
+    const obscure = projectPlayer(input({ ownership: 5 }), off, rules);
+    expect(obscure.xPts).toBeCloseTo(popular.xPts, 6);
+  });
+
+  it('keeps the shipped differential nudge small enough to be a tiebreak, not a strategy', () => {
+    // The shipped config turns the knob on, but only as a small nudge (D4, "leaning safe").
     const popular = projectPlayer(input({ ownership: 60 }), weights, rules);
     const obscure = projectPlayer(input({ ownership: 5 }), weights, rules);
-    expect(weights.differential.weight).toBe(0);
-    expect(obscure.xPts).toBeCloseTo(popular.xPts, 6);
+    expect(weights.differential.weight).toBeGreaterThan(0);
+    expect(obscure.xPts).toBeGreaterThan(popular.xPts);
+    expect(obscure.xPts - popular.xPts).toBeLessThan(1);
   });
 
   it('favours a differential once the knob is turned up', () => {

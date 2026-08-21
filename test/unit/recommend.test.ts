@@ -643,6 +643,39 @@ describe('multi-gameweek horizon', () => {
     expect(multi.evidence.horizonGameweeks).toBe(3);
   });
 
+  it('flags a double gameweek within the horizon as a Bench Boost candidate', async () => {
+    const db = openTestDatabase();
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players,
+          events: [
+            fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2),
+          // Gameweek 2: club 1 plays twice.
+          fakeFixture(2, 2, 1, 3),
+          fakeFixture(3, 2, 1, 4),
+        ],
+      }),
+    );
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(result.notes.join(' ')).toMatch(/Bench Boost candidate/);
+  });
+
   describe('an isolated swap decided purely by future fixtures', () => {
     /**
      * Six equal-strength clubs, so nothing about quality or price separates the squad's weakest

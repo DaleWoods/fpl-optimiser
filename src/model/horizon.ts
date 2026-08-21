@@ -27,6 +27,8 @@ export interface HorizonGameweek {
   /** Fixtures imported for this gameweek. Zero reads as a blank, same as everywhere else - but
    *  it may just mean the fixture list has not been imported that far ahead yet. */
   fixtureCount: number;
+  /** Clubs playing twice (or more) this gameweek - what makes a Bench Boost gameweek strong. */
+  doubleClubCount: number;
 }
 
 export interface HorizonPlayer {
@@ -66,7 +68,24 @@ export function computeHorizon(
         n: number;
       }
     ).n;
-    return { eventId: event.id, name: event.name, weight: decay ** index, fixtureCount };
+    const clubAppearances = db
+      .prepare(
+        `SELECT team_h AS club FROM fixture WHERE event_id = ?
+         UNION ALL
+         SELECT team_a AS club FROM fixture WHERE event_id = ?`,
+      )
+      .all(event.id, event.id) as { club: number }[];
+    const counts = new Map<number, number>();
+    for (const row of clubAppearances) counts.set(row.club, (counts.get(row.club) ?? 0) + 1);
+    const doubleClubCount = [...counts.values()].filter((count) => count >= 2).length;
+
+    return {
+      eventId: event.id,
+      name: event.name,
+      weight: decay ** index,
+      fixtureCount,
+      doubleClubCount,
+    };
   });
   const totalWeight = gameweeks.reduce((sum, gw) => sum + gw.weight, 0) || 1;
 
@@ -99,6 +118,31 @@ export function horizonFor(horizon: Horizon, playerId: number): HorizonPlayer {
   return (
     horizon.players.get(playerId) ?? { playerId, currentXPts: 0, horizonXPts: 0, futureXPts: 0 }
   );
+}
+
+/** The double gameweek within the horizon that would give the strongest bench-boost pull. */
+export function bestBenchBoostGameweek(horizon: Horizon): HorizonGameweek | null {
+  let best: HorizonGameweek | null = null;
+  for (const gw of horizon.gameweeks) {
+    if (gw.doubleClubCount === 0) continue;
+    if (!best || gw.weight > best.weight) best = gw;
+  }
+  return best;
+}
+
+/**
+ * How much to trust the bench when building a squad, on top of the ordinary bench discount.
+ *
+ * A bench place is normally worth little because it only scores through auto-subs - but a
+ * squad built (or rebuilt on a wildcard) without any regard for an approaching double gameweek
+ * would happily neglect its bench right up until the week it would have been worth boosting.
+ * This is a small, bounded relief toward the best double gameweek in the horizon, weighted by
+ * how far out it is - never enough to make the bench as valuable as starters, only enough that
+ * a squad naturally keeps a usable bench heading into one.
+ */
+export function benchBoostPull(horizon: Horizon, weights: ModelWeights): number {
+  const gw = bestBenchBoostGameweek(horizon);
+  return gw ? weights.horizon.benchBoostRelief * gw.weight : 0;
 }
 
 function round(value: number): number {

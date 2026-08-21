@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.6.1",
+  "modelVersion": "heuristic-0.7.0",
 
   "availability": {
     "$comment": [
@@ -110,11 +110,14 @@
 
   "differential": {
     "$comment": [
-      "Open decision D4. weight 0 = pure expected-points maximisation (the default).",
-      "Above 0, players owned by less than ownershipPivot percent of managers get a small xPts",
-      "bonus, scaled by weight - use it to chase rank in a mini-league. Never a hard constraint."
+      "Open decision D4, resolved: mostly maximise points, with a mild tiebreak toward rank.",
+      "Players owned by less than ownershipPivot percent of managers get a small xPts bonus,",
+      "scaled by weight. At weight 0.15 the largest possible bonus (a 0%-owned player) is 0.15",
+      "xPts - small enough to only ever decide a genuinely close call, never to justify picking a",
+      "meaningfully worse player just for being different. Set to 0 to go back to pure",
+      "expected-points maximisation; raise it to chase mini-league rank more aggressively."
     ],
-    "weight": 0.0,
+    "weight": 0.15,
     "ownershipPivot": 15.0,
     "maxAdjustment": 1.0
   },
@@ -149,15 +152,19 @@
 
   "horizon": {
     "$comment": [
-      "How far ahead transfers and captaincy look, beyond the single gameweek being planned for.",
-      "length 5, decay 0.75: the target week counts fully, the next 0.75, then 0.56, 0.42, 0.32 -",
-      "a fixture swing three or four weeks out still matters, but far less than the week right",
-      "in front of you. captainConsistencyWeight is a small, bounded, upward-only nudge toward a",
-      "captain who is strong across the whole horizon rather than spiking in just this one week."
+      "How far ahead transfers, captaincy and squad-building look, beyond the single gameweek",
+      "being planned for. length 5, decay 0.75: the target week counts fully, the next 0.75, then",
+      "0.56, 0.42, 0.32 - a fixture swing three or four weeks out still matters, but far less than",
+      "the week right in front of you. captainConsistencyWeight is a small, bounded, upward-only",
+      "nudge toward a captain who is strong across the whole horizon rather than spiking in just",
+      "this one week. benchBoostRelief relaxes how harshly a squad discounts its bench when a",
+      "double gameweek sits within the horizon, so bench depth is not neglected right up until",
+      "the week it would be worth boosting - bounded well short of treating bench like starters."
     ],
     "length": 5,
     "decay": 0.75,
-    "captainConsistencyWeight": 0.15
+    "captainConsistencyWeight": 0.15,
+    "benchBoostRelief": 0.4
   },
 
   "captain": {

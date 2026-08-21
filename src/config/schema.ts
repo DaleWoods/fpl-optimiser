@@ -190,6 +190,9 @@ export const modelWeightsSchema = z.strictObject({
     /** Bounded bonus (points) nudging captaincy toward a consistently strong performer over a
      *  one-off spike, when the two are otherwise close. Never a penalty, only ever a nudge. */
     captainConsistencyWeight: z.number().min(0),
+    /** How far, at most, to relax the bench discount when a double gameweek sits within the
+     *  horizon - 0 leaves the bench discount untouched, 1 would treat bench like starters. */
+    benchBoostRelief: probability,
   }),
   captain: z.strictObject({
     ceilingWeight: z.number().min(0),

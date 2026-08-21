@@ -71,8 +71,12 @@ describe('the shipped config files', () => {
     expect(weights.availability.statusProbability.i).toBe(0);
   });
 
-  it('defaults the differential knob to pure expected-points maximisation (D4)', () => {
-    expect(loadModelWeights().differential.weight).toBe(0);
+  it('keeps the differential knob (D4) small enough to only ever decide a close call', () => {
+    const differential = loadModelWeights().differential;
+    // The biggest possible bonus, for a 0%-owned player, must stay a tiebreak - nowhere near
+    // enough to justify picking a meaningfully worse player just for being different.
+    expect(differential.weight).toBeGreaterThan(0);
+    expect(differential.weight).toBeLessThan(1);
   });
 
   it('loads app config with the configured team ID', () => {

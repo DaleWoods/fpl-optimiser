@@ -3,7 +3,13 @@ import type { ModelWeights, Rules } from '../config/schema.js';
 import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
 import { latestEliteOwnership } from '../ingest/elite.js';
 import { buildProjections, saveProjections } from '../model/build.js';
-import { computeHorizon, horizonFor, type Horizon } from '../model/horizon.js';
+import {
+  benchBoostPull,
+  bestBenchBoostGameweek,
+  computeHorizon,
+  horizonFor,
+  type Horizon,
+} from '../model/horizon.js';
 import { applyIntel, loadIntel, type Intel } from '../model/intel.js';
 import { saveRecommendation } from '../model/accuracy.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
@@ -503,6 +509,19 @@ export async function recommend(
   const futureValueBonus = new Map(
     projections.map((player) => [player.playerId, horizonFor(horizon, player.playerId).futureXPts]),
   );
+  // A squad with no regard for an approaching double gameweek would neglect its bench right up
+  // until the week it would be worth boosting - so a fresh squad build relaxes the bench
+  // discount slightly when one sits within the horizon.
+  const benchBoostRelief = benchBoostPull(horizon, weights);
+  const benchBoostGameweek = bestBenchBoostGameweek(horizon);
+  if (benchBoostGameweek) {
+    notes.push(
+      `${benchBoostGameweek.name ?? `Gameweek ${benchBoostGameweek.eventId}`} has ` +
+        `${benchBoostGameweek.doubleClubCount} club(s) playing twice - a Bench Boost candidate. ` +
+        "A from-scratch squad build keeps a slightly stronger bench with that in mind; it doesn't " +
+        'change transfer or captaincy suggestions for an existing squad.',
+    );
+  }
   const horizonWithFixtures = horizon.gameweeks.filter((gw) => gw.fixtureCount > 0).length;
   if (horizonWithFixtures < weights.horizon.length) {
     notes.push(
@@ -566,6 +585,7 @@ export async function recommend(
       budget: options.budget,
       captainConsistencyBonus,
       futureValueBonus,
+      benchBoostPull: benchBoostRelief,
     });
 
     saveRecommendation(db, {

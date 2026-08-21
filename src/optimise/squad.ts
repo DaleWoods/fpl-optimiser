@@ -36,6 +36,14 @@ export interface SelectionOptions {
    * owned either way and re-solved fresh next gameweek.
    */
   futureValueBonus?: Map<number, number>;
+  /**
+   * How far, at most, to relax the bench discount below - 0 leaves it untouched, 1 would treat
+   * bench like starters. Used only by selectBestSquad: a squad built (or rebuilt on a
+   * wildcard) with no regard for an approaching double gameweek would happily neglect its bench
+   * right up until the week it would be worth boosting. Bounded, and only ever raises the bench
+   * discount toward starter value, never past it.
+   */
+  benchBoostPull?: number;
 }
 
 function captainBonusFor(player: ProjectedPlayer, options: SelectionOptions): number {
@@ -46,9 +54,16 @@ function futureValueBonusFor(player: ProjectedPlayer, options: SelectionOptions)
   return options.futureValueBonus?.get(player.playerId) ?? 0;
 }
 
-function benchWeightFor(player: ProjectedPlayer, rules: Rules, weights: ModelWeights): number {
+function benchWeightFor(
+  player: ProjectedPlayer,
+  rules: Rules,
+  weights: ModelWeights,
+  options: SelectionOptions = {},
+): number {
   const isGoalkeeper = (rules.startingXi.positionBounds[player.position]?.max ?? 99) === 1;
-  return isGoalkeeper ? weights.optimiser.benchGoalkeeperWeight : weights.optimiser.benchWeight;
+  const base = isGoalkeeper ? weights.optimiser.benchGoalkeeperWeight : weights.optimiser.benchWeight;
+  const pull = Math.min(1, Math.max(0, options.benchBoostPull ?? 0));
+  return base + (1 - base) * pull;
 }
 
 /**
@@ -341,12 +356,13 @@ export async function selectBestSquad(
       ...selectable.map((player) => ({
         variable: IN_SQUAD(player.playerId),
         coefficient:
-          selectionValue(player, weights) * benchWeightFor(player, rules, weights) +
+          selectionValue(player, weights) * benchWeightFor(player, rules, weights, options) +
           futureValueBonusFor(player, options),
       })),
       ...selectable.map((player) => ({
         variable: IN_XI(player.playerId),
-        coefficient: selectionValue(player, weights) * (1 - benchWeightFor(player, rules, weights)),
+        coefficient:
+          selectionValue(player, weights) * (1 - benchWeightFor(player, rules, weights, options)),
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),
