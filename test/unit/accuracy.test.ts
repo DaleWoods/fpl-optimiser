@@ -14,7 +14,7 @@ import {
   recordGameweekResult,
   saveRecommendation,
 } from '../../src/model/accuracy.js';
-import { fakeBootstrap, defaultPlayers } from '../support/fakeApi.js';
+import { fakeBootstrap, fakeEvent, defaultPlayers } from '../support/fakeApi.js';
 
 const rules = loadRules();
 const weights = loadModelWeights();
@@ -327,6 +327,36 @@ describe('grading the model', () => {
     expect(result.recommendedXiPredicted).toBeCloseTo(11 * 4 + 4, 1);
   });
 
+  it('surfaces the league average and highest score straight from bootstrap-static, once the gameweek finishes', async () => {
+    project(1, 1, 5);
+    actual(1, 1, 5);
+
+    // Before the gameweek finishes, the API reports highest_score as null (average_entry_score
+    // sits at 0 rather than null, which is how the FPL API itself behaves pre-gameweek).
+    expect(evaluateGameweek(db, 1, rules).leagueAverage).toBe(0);
+    expect(evaluateGameweek(db, 1, rules).leagueHighest).toBeNull();
+
+    // A later bootstrap-static import - the same weekly one already imported for player data -
+    // updates the event row once the gameweek finishes. There is nothing separate to upload.
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, average_entry_score: 47, highest_score: 95 }),
+            fakeEvent(2),
+            fakeEvent(3),
+          ],
+        }),
+      }),
+      rules,
+    );
+
+    const result = evaluateGameweek(db, 1, rules);
+    expect(result.leagueAverage).toBe(47);
+    expect(result.leagueHighest).toBe(95);
+  });
+
   it('explains what is missing rather than reporting a meaningless zero', () => {
     const empty = evaluateGameweek(db, 7, rules);
     expect(empty.playersScored).toBe(0);
@@ -346,6 +376,28 @@ describe('grading the model', () => {
     expect(season.gameweeks[0]?.yourActual).toBe(62);
     expect(season.overall?.gameweeks).toBe(2);
     expect(season.overall?.meanAbsoluteError).toBeCloseTo(0.5, 5);
+  });
+
+  it('carries the league average and highest through into the season summary', async () => {
+    project(1, 1, 5);
+    actual(1, 1, 4);
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, average_entry_score: 47, highest_score: 95 }),
+            fakeEvent(2),
+            fakeEvent(3),
+          ],
+        }),
+      }),
+      rules,
+    );
+
+    const season = evaluateSeason(db, rules);
+    expect(season.gameweeks[0]?.leagueAverage).toBe(47);
+    expect(season.gameweeks[0]?.leagueHighest).toBe(95);
   });
 
   it('says plainly when there is nothing to grade yet', () => {

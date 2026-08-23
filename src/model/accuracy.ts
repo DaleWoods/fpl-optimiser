@@ -47,6 +47,13 @@ export interface GameweekAccuracy {
   recommendedXiPredicted: number | null;
   /** The best legal XI in hindsight, from the squad that was recommended. */
   bestPossibleFromSquad: number | null;
+  /**
+   * The whole game's gameweek score, from the FPL API's own event data - not something this
+   * app derives. Populated automatically the next time bootstrap-static is imported after the
+   * gameweek finishes; there is nothing separate to upload for it.
+   */
+  leagueAverage: number | null;
+  leagueHighest: number | null;
   notes: string[];
 }
 
@@ -59,6 +66,8 @@ export interface SeasonAccuracy {
     recommendedXiActual: number | null;
     bestPossibleFromSquad: number | null;
     yourActual: number | null;
+    leagueAverage: number | null;
+    leagueHighest: number | null;
   }[];
   overall: {
     playersScored: number;
@@ -190,6 +199,21 @@ function summarise(rows: { predicted: number; actual: number }[]): {
 }
 
 /**
+ * The whole game's average and highest score for a gameweek, straight from the FPL API's own
+ * event data (bootstrap-static). Both are null until the gameweek finishes and a fresh
+ * bootstrap-static is imported - there is no separate upload for this, it rides along.
+ */
+function leagueScores(
+  db: Database,
+  eventId: number,
+): { leagueAverage: number | null; leagueHighest: number | null } {
+  const row = db
+    .prepare('SELECT average_score AS leagueAverage, highest_score AS leagueHighest FROM event WHERE id = ?')
+    .get(eventId) as { leagueAverage: number | null; leagueHighest: number | null } | undefined;
+  return row ?? { leagueAverage: null, leagueHighest: null };
+}
+
+/**
  * Grade one gameweek.
  *
  * Only players who were actually projected AND have a recorded result are scored: counting a
@@ -258,6 +282,7 @@ export function evaluateGameweek(
       recommendedXiActual: null,
       recommendedXiPredicted: null,
       bestPossibleFromSquad: null,
+      ...leagueScores(db, eventId),
       notes,
     };
   }
@@ -378,6 +403,7 @@ export function evaluateGameweek(
     recommendedXiActual,
     recommendedXiPredicted,
     bestPossibleFromSquad,
+    ...leagueScores(db, eventId),
     notes,
   };
 }
@@ -470,6 +496,8 @@ export function evaluateSeason(db: Database, rules: Rules): SeasonAccuracy {
       recommendedXiActual: accuracy.recommendedXiActual,
       bestPossibleFromSquad: accuracy.bestPossibleFromSquad,
       yourActual: yourResults.get(eventId) ?? null,
+      leagueAverage: accuracy.leagueAverage,
+      leagueHighest: accuracy.leagueHighest,
     };
   });
 

@@ -187,6 +187,11 @@ directions, and compares three numbers per gameweek: what the recommended XI was
 score, what it actually scored, and what the **best XI available from that squad** would have
 scored in hindsight. That last gap is what better projections were worth, in real points.
 
+Alongside your own score, it also shows the whole game's **average** and **highest** score for
+each gameweek — the same numbers the official app shows on its home screen. There is nothing to
+import for these: they ride along in `bootstrap-static`, which you're already uploading weekly,
+and appear automatically once a gameweek finishes and that week's upload lands.
+
 To use it: run an optimise before the deadline, then after the gameweek import a stats file
 covering it. Only players with **both** a projection and a result are scored — counting a
 player who was never projected would flatter the model, and counting one with no result would

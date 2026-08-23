@@ -683,6 +683,8 @@ export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy 
         <td>${gw.recommendedXiActual ?? '<span class="muted">&mdash;</span>'}</td>
         <td>${gw.bestPossibleFromSquad ?? '<span class="muted">&mdash;</span>'}</td>
         <td>${gw.yourActual ?? '<span class="muted">&mdash;</span>'}</td>
+        <td>${gw.leagueAverage ?? '<span class="muted">&mdash;</span>'}</td>
+        <td>${gw.leagueHighest ?? '<span class="muted">&mdash;</span>'}</td>
       </tr>`,
     )
     .join('');
@@ -716,7 +718,8 @@ export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy 
       ? `<h2>By gameweek</h2>
          <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
            <thead><tr><th>GW</th><th>Players</th><th>Mean error</th><th>Bias</th>
-             <th>Our XI scored</th><th>Best possible</th><th>You scored</th></tr></thead>
+             <th>Our XI scored</th><th>Best possible</th><th>You scored</th>
+             <th>League average</th><th>League highest</th></tr></thead>
            <tbody>${seasonRows}</tbody></table></div></div>
          <p class="muted" style="font-size:.9rem">Mean error is how far a typical projection was
          out, in points. Bias is the direction: positive means the model was too optimistic,
@@ -745,6 +748,14 @@ export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy 
                          ${latest.bestPossibleFromSquad - latest.recommendedXiActual} points.`
                       : ''
                   }</p>`
+               : ''
+           }
+           ${
+             latest.leagueAverage !== null || latest.leagueHighest !== null
+               ? `<p style="margin:.2rem 0">Across the whole game, the average score was
+                  ${latest.leagueAverage !== null ? `<strong>${latest.leagueAverage}</strong>` : '<span class="muted">&mdash;</span>'}
+                  and the highest was
+                  ${latest.leagueHighest !== null ? `<strong>${latest.leagueHighest}</strong>` : '<span class="muted">&mdash;</span>'}.</p>`
                : ''
            }
          </div>
