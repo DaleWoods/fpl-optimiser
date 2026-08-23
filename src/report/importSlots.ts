@@ -65,21 +65,22 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
   },
   {
     id: 'last-season',
-    title: "Last season's stats & this season's results",
-    cadence: 'Once, then weekly once matches start',
-    cadenceTone: 'occasional',
+    title: "Last season's stats",
+    cadence: 'Once',
+    cadenceTone: 'once',
     what:
       "Points, minutes and underlying stats, one row per player per gameweek (or season " +
       "totals) - or the FPL API's own element-summary files. Before a ball is kicked, a " +
       "completed season's file is the only real evidence there is, and stops opening-gameweek " +
-      'projections ranking on noise; that part is a one-off. The exact same slot also takes a ' +
-      'file covering gameweek(s) that have just finished for the CURRENT season - the app tells ' +
-      "the two apart automatically by the season each file names, matched against this app's " +
-      "configured season. A current-season file both records actual points, which the " +
-      'Accuracy tab grades past recommendations against, and rolls straight into next ' +
-      "season's opening-gameweek evidence, exactly like last season's did for this one. " +
-      'Players are matched by name and club, never by the id in the file, because FPL ' +
-      'reassigns ids between seasons.',
+      "projections ranking on noise. Genuinely a one-off: once a season is in, it never needs " +
+      "re-importing. Current-season results do NOT need uploading here any more - the app now " +
+      "fetches its own element-summary for every player automatically once each gameweek " +
+      "finishes, on the same background refresh that already keeps prices and injuries current. " +
+      "This slot still accepts a current-season file too, purely as a shortcut if you want a " +
+      "result recorded sooner than the next scheduled refresh, or you are running locally " +
+      "without the background scheduler on - the app tells the two apart automatically by the " +
+      "season each file names. Players are matched by name and club, never by the id in the " +
+      "file, because FPL reassigns ids between seasons.",
     source: `${FPL}/element-summary/1/`,
     sourceLabel: 'element-summary (one per player)',
     accepts: ['season-csv', 'element-summary'],

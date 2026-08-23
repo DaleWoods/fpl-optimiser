@@ -155,7 +155,7 @@ Re-uploading the same file updates rather than duplicates.
 | Data | How often | Why |
 |---|---|---|
 | Last season's stats (`element-summary`, or a CSV) | **Once** | It never changes. Stored permanently. |
-| This season's results (a per-gameweek CSV) | **Weekly, after full-time** | Same slot and file shape as last season's stats — the app tells them apart automatically by the season named in the file (or, if none is named, assumes the file is about now). This is what feeds the Accuracy tab and rolls into next season's opening-gameweek evidence. |
+| This season's results | **Nothing to do — automatic** | The server fetches every player's own `element-summary` itself, once a gameweek finishes, on the same background refresh that already handles prices. This is what feeds the Accuracy tab and rolls into next season's opening-gameweek evidence. The same slot still takes a CSV too, only useful if you want a result recorded sooner than the next scheduled refresh, or you're running locally without the background scheduler on (see "Running locally instead" below). |
 | `bootstrap-static` | **Every week, before the deadline** | Prices, form, injuries and news all move. Each upload also stores a snapshot, so price and form *trends* accumulate — the more often you upload, the better change detection gets. |
 | `fixtures` | **Whenever games are rearranged** | European progress and cup ties move Premier League games, which is what creates the double and blank gameweeks that decide chip timing. |
 | Your `picks` | **Each week once the gameweek has started** | Loads your actual 15, which turns on transfer advice and points-based chip valuation. |
@@ -166,13 +166,20 @@ Re-uploading the same file updates rather than duplicates.
 happened. Every recommendation is stored with its model version when it is made, so once
 results arrive the two can be joined.
 
-Results arrive the same way last season's history did: a per-gameweek CSV (one row per player
-per gameweek — a community site's export, or your own spreadsheet) through the same slot on the
-**Import Data** tab. There is nothing to flag or toggle — the app compares the season named in
-the file (or, if the file doesn't say, assumes it means now) against the season this app is
-configured for (`rules.season` in `config/rules.json`), and only records actual scores when they
-match. A file for a season that doesn't match is still stored as history, just not graded
-against.
+Results arrive on their own: on the server's regular background refresh (every 3 hours by
+default), if the most recently finished gameweek has no per-player history recorded for it yet,
+the app fetches every player's own `element-summary` — the FPL API's exact per-gameweek
+breakdown, straight from the source it also uses for last season's history. That one heavier
+pull happens once per gameweek, not on every refresh, so it doesn't hammer the API for no
+reason. Nothing needs importing for this any more.
+
+If you'd rather not wait for the next scheduled refresh, or you're running locally without the
+background scheduler on, the same **Import Data** slot as last season's history also still takes
+a per-gameweek CSV (one row per player per gameweek — a community site's export, or your own
+spreadsheet). The app compares the season named in the file (or, if the file doesn't say,
+assumes it means now) against the season this app is configured for (`rules.season` in
+`config/rules.json`), and only records actual scores when they match. A file for a season that
+doesn't match is still stored as history, just not graded against.
 
 Two numbers matter, and they answer different questions:
 
@@ -192,10 +199,10 @@ each gameweek — the same numbers the official app shows on its home screen. Th
 import for these: they ride along in `bootstrap-static`, which you're already uploading weekly,
 and appear automatically once a gameweek finishes and that week's upload lands.
 
-To use it: run an optimise before the deadline, then after the gameweek import a stats file
-covering it. Only players with **both** a projection and a result are scored — counting a
-player who was never projected would flatter the model, and counting one with no result would
-slander it.
+To use it: run an optimise before the deadline, then just wait — results land on their own after
+the gameweek finishes. Only players with **both** a projection and a result are scored —
+counting a player who was never projected would flatter the model, and counting one with no
+result would slander it.
 
 ## Chip strategy
 
@@ -326,11 +333,19 @@ guessed.
 Every projection says which evidence produced it, and the recommendation page lists it under
 "Evidence behind these projections". There are four sources, in order of preference:
 
-1. **This season's stats** (FPL API). Preferred as soon as a player has minutes on the board.
-2. **Last season's stats** (`element-summary` → `history_past`). Before a ball is kicked this
-   is the only real evidence there is, so it drives opening-gameweek projections. It is never
-   rated *high* confidence — a summer of transfers and new managers makes last season's roles
-   a weaker guide than the numbers suggest.
+1. **This season's stats** (FPL API). Preferred as soon as a player has minutes on the board -
+   and also preferred over last season the moment his own club has played a match and he still
+   has *zero* minutes. That zero is not silence, it is evidence: a club that has played without
+   him is a real signal he is currently out of the team, and it must not be overridden by last
+   season's rate just because last season looked good. (This is what a summer signing stuck
+   behind an established starter, or a permanent second-choice keeper, looks like in the data -
+   and getting it wrong here was a real bug: a non-playing player kept getting projected off a
+   start rate from a different season, at a different club, that no longer applied.)
+2. **Last season's stats** (`element-summary` → `history_past`). Before a ball is kicked - i.e.
+   before this player's club has played at all this season - this is the only real evidence
+   there is, so it drives opening-gameweek projections. It is never rated *high* confidence — a
+   summer of transfers and new managers makes last season's roles a weaker guide than the
+   numbers suggest.
 3. **What top-ranked managers own** (`leagues-classic/314` → their squads). Overall ownership
    counts a casual pick the same as a top-1k manager's; sampling the top of the overall league
    is a much better signal. Only available once a gameweek has been played — squads are private

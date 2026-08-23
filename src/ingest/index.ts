@@ -61,15 +61,38 @@ export async function ingestAll(
   report(`  ${fixtures.rowsWritten} fixtures${fixtures.skipped ? `, ${fixtures.skipped} skipped` : ''}`);
 
   let summaries: SummariesIngestResult | null = null;
-  if (options.includePlayerSummaries) {
-    report('Ingesting per-player match history (one request per player, throttled)...');
+  // Element-summary is the slowest ingestion by far (one request per player), so it is not run
+  // on every refresh - but it is also the only source of the exact per-gameweek actual points
+  // this app grades projections against, so it must not sit waiting for someone to ask for it
+  // either. The fix: run it automatically, but only the first time the most recently finished
+  // gameweek shows up with no fixture-history for it yet - once per gameweek, self-throttling.
+  const latestFinished = db
+    .prepare('SELECT id FROM event WHERE finished = 1 ORDER BY id DESC LIMIT 1')
+    .get() as { id: number } | undefined;
+  const notYetCaptured =
+    latestFinished !== undefined &&
+    (
+      db
+        .prepare('SELECT COUNT(*) AS n FROM player_fixture_history WHERE event_id = ?')
+        .get(latestFinished.id) as { n: number }
+    ).n === 0;
+
+  if (options.includePlayerSummaries || notYetCaptured) {
+    report(
+      notYetCaptured && !options.includePlayerSummaries
+        ? `Gameweek ${latestFinished!.id} just finished - fetching each player's actual result...`
+        : 'Ingesting per-player match history (one request per player, throttled)...',
+    );
     summaries = await ingestPlayerSummaries(db, api, {
       playerIds: options.playerIds,
       onProgress: (done, total) => {
         if (done % 50 === 0 || done === total) report(`  ${done}/${total} players`);
       },
     });
-    report(`  ${summaries.rowsWritten} match rows from ${summaries.playersIngested} players`);
+    report(
+      `  ${summaries.rowsWritten} match rows from ${summaries.playersIngested} players, ` +
+        `${summaries.actualPointsRecorded} actual score(s) recorded`,
+    );
   }
 
   let entry: EntryIngestResult | null = null;

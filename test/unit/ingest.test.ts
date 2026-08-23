@@ -311,6 +311,35 @@ describe('player summary ingestion', () => {
       .get() as { n: number };
     expect(count.n).toBe(1);
   });
+
+  it('records actual points for a finished gameweek automatically, straight from element-summary', async () => {
+    await ingestBootstrap(
+      db,
+      new StubFplApi({ bootstrap: fakeBootstrap({ events: [fakeEvent(1, { finished: true })] }) }),
+      rules,
+    );
+    const api = new StubFplApi({
+      elementSummary: { 1: fakeElementSummary(1, [{ minutes: 90, total_points: 9 }]) },
+    });
+    const result = await ingestPlayerSummaries(db, api, { playerIds: [1] });
+
+    expect(result.actualPointsRecorded).toBe(1);
+    const row = db
+      .prepare('SELECT points, minutes, source FROM actual_points WHERE player_id = 1 AND event_id = 1')
+      .get() as { points: number; minutes: number; source: string };
+    expect(row).toEqual({ points: 9, minutes: 90, source: 'element-summary' });
+  });
+
+  it('does not record actual points for a gameweek that has not finished yet', async () => {
+    // event 1's default is unfinished - a live or upcoming gameweek's points are provisional.
+    const api = new StubFplApi({
+      elementSummary: { 1: fakeElementSummary(1, [{ minutes: 90, total_points: 9 }]) },
+    });
+    await ingestPlayerSummaries(db, api, { playerIds: [1] });
+
+    const count = db.prepare('SELECT COUNT(*) AS n FROM actual_points').get() as { n: number };
+    expect(count.n).toBe(0);
+  });
 });
 
 describe('entry ingestion', () => {
@@ -578,5 +607,37 @@ describe('full ingestion', () => {
     const result = await ingestAll(db, api, rules, {});
     expect(result.summaries).toBeNull();
     expect(result.entry).toBeNull();
+  });
+
+  it('fetches per-player history on its own once a gameweek finishes, without being asked', async () => {
+    // This is what makes "record this week's results" automatic: nobody has to remember to
+    // tick includePlayerSummaries or upload a file - a finished gameweek with nothing captured
+    // for it yet is reason enough on its own.
+    const db = openTestDatabase();
+    const api = new StubFplApi({
+      bootstrap: fakeBootstrap({ events: [fakeEvent(1, { finished: true })] }),
+      fixtures: [],
+      elementSummary: { 1: fakeElementSummary(1, [{ minutes: 90, total_points: 7 }]) },
+    });
+    const result = await ingestAll(db, api, rules, {});
+
+    expect(result.summaries?.rowsWritten).toBeGreaterThan(0);
+    const actual = db
+      .prepare('SELECT points FROM actual_points WHERE player_id = 1 AND event_id = 1')
+      .get() as { points: number } | undefined;
+    expect(actual?.points).toBe(7);
+  });
+
+  it('does not re-fetch per-player history once the finished gameweek is already captured', async () => {
+    const db = openTestDatabase();
+    const api = new StubFplApi({
+      bootstrap: fakeBootstrap({ events: [fakeEvent(1, { finished: true })] }),
+      fixtures: [],
+      elementSummary: { 1: fakeElementSummary(1, [{ minutes: 90 }]) },
+    });
+    await ingestAll(db, api, rules, {});
+    const second = await ingestAll(db, api, rules, {});
+
+    expect(second.summaries).toBeNull();
   });
 });

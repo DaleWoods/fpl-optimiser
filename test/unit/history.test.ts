@@ -203,6 +203,36 @@ describe('previous-season history', () => {
     const projection = buildProjections(db, 1, rules, weights).find((p) => p.playerId === 11)!;
     expect(projection.reasons.join(' ')).not.toMatch(/Rates are from/);
   });
+
+  it('stops trusting a strong last season once his club has played and he still has zero minutes', async () => {
+    // A player with a big 2025/26 behind him (33 starts, 240 points) but zero minutes so far
+    // this season - exactly the shape of a nailed-on bench player, or a summer signing who lost
+    // the shirt. Before a ball is kicked, last season is the only real evidence there is. Once
+    // his own club has played and he still has nothing, that zero is itself the evidence, and
+    // must not keep getting overridden by a prior that no longer applies.
+    const api = new StubFplApi({
+      elementSummary: {
+        11: { ...fakeElementSummary(11, []), history_past: [pastSeason({ total_points: 240 })] },
+      },
+    });
+    await ingestPlayerSummaries(db, api, { playerIds: [11] });
+    const beforeKickoff = buildProjections(db, 1, rules, weights).find((p) => p.playerId === 11)!;
+
+    // Team 1's fixture is now finished. Player 11's own minutes are still 0 - he did not feature.
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [fakeFixture(1, 1, 1, 2, { finished: true }), fakeFixture(2, 1, 3, 4)],
+      }),
+    );
+    const afterAnUnusedMatch = buildProjections(db, 1, rules, weights).find(
+      (p) => p.playerId === 11,
+    )!;
+
+    expect(beforeKickoff.reasons.join(' ')).toMatch(/Rates are from/);
+    expect(afterAnUnusedMatch.reasons.join(' ')).not.toMatch(/Rates are from/);
+    expect(afterAnUnusedMatch.xPts).toBeLessThan(beforeKickoff.xPts);
+  });
 });
 
 describe('elite manager ownership', () => {

@@ -228,10 +228,17 @@ export function buildProjections(
       weights,
     );
 
-    // This season's minutes decide which evidence to use. With none, last season's rates are
-    // the best real signal available - far better than the API's blanket expected-points
-    // figure, and far better than pretending a zero is a measurement.
-    const previous = (row.minutes ?? 0) > 0 ? undefined : lastSeason.get(row.playerId);
+    // This season's minutes decide which evidence to use. With none *and* the season not yet
+    // underway, last season's rates are the best real signal there is. But once this player's
+    // club has actually played and he still has zero minutes, that zero is not an absence of
+    // evidence any more - it is evidence, and usually strong evidence he is not first-choice.
+    // Falling back to last season's rate here was the bug behind a nailed-on-bench player (or a
+    // summer signing behind an established starter) getting picked on the strength of a start
+    // rate that no longer applies: it kept re-consulting a stale prior instead of ever letting
+    // this season's zero starts speak for themselves.
+    const seasonUnderway = (playedByTeam.get(row.teamId) ?? 0) > 0;
+    const previous =
+      (row.minutes ?? 0) > 0 || seasonUnderway ? undefined : lastSeason.get(row.playerId);
     const usingPrevious = previous !== undefined && (previous.minutes ?? 0) > 0;
 
     const source = usingPrevious ? previous : row;

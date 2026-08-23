@@ -11,6 +11,8 @@ export interface SummariesIngestResult {
   playersIngested: number;
   playersFailed: number;
   failures: { playerId: number; reason: string }[];
+  /** actual_points rows written or refreshed from this season's finished gameweeks. */
+  actualPointsRecorded: number;
 }
 
 export interface SummaryIngestOptions {
@@ -61,6 +63,8 @@ export async function ingestPlayerSummaries(
       options.onProgress?.(index + 1, playerIds.length, playerId);
     }
 
+    const actualPointsRecorded = syncActualPointsFromFixtureHistory(db);
+
     return {
       rowsWritten,
       fromCache: anyFromCache,
@@ -68,8 +72,36 @@ export async function ingestPlayerSummaries(
       playersIngested,
       playersFailed: failures.length,
       failures,
+      actualPointsRecorded,
     };
   });
+}
+
+/**
+ * Fold this season's per-gameweek history - just written to player_fixture_history, straight
+ * from the FPL API's own element-summary - into actual_points for every finished gameweek.
+ *
+ * This is what lets "record what I actually scored" happen automatically: element-summary is
+ * already the ground truth per-gameweek breakdown, so once a gameweek is finished there is
+ * nothing left to upload for it - no CSV, no separate step. A manual CSV import can still record
+ * actuals sooner (element-summary tends to be a little behind full-time), but this catches up
+ * and then keeps agreeing with the API from here on.
+ */
+export function syncActualPointsFromFixtureHistory(db: Database): number {
+  const result = db
+    .prepare(
+      `INSERT INTO actual_points (player_id, event_id, points, minutes, source, recorded_at)
+       SELECT h.player_id, h.event_id, COALESCE(h.total_points, 0), h.minutes, 'element-summary',
+              @recordedAt
+       FROM player_fixture_history h
+       JOIN event e ON e.id = h.event_id
+       WHERE e.finished = 1 AND h.event_id IS NOT NULL
+       ON CONFLICT (player_id, event_id) DO UPDATE SET
+         points = excluded.points, minutes = excluded.minutes, source = excluded.source,
+         recorded_at = excluded.recorded_at`,
+    )
+    .run({ recordedAt: nowSeconds() });
+  return result.changes;
 }
 
 /** Upsert one player's match history. Returns the number of rows written. */

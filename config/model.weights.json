@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.7.0",
+  "modelVersion": "heuristic-0.8.0",
 
   "availability": {
     "$comment": [
