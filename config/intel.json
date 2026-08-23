@@ -34,7 +34,11 @@
     "https://www.fantasyfootballscout.co.uk/2026/07/31/best-5-0m-goalkeepers-for-fpl-2026-27",
     "https://feeds.bbci.co.uk/sport/football/articles/cr5r5m9p99mo",
     "https://www.tntsports.co.uk/football/premier-league/2026-2027/matthias-jaissle-new-manager-eddie-howe-st-james-park_sto23324445/story.shtml",
-    "https://www.goal.com/en/news/newcastle-united-liverpool-premier-league-preview/blt8a1b76d6d787990e"
+    "https://www.goal.com/en/news/newcastle-united-liverpool-premier-league-preview/blt8a1b76d6d787990e",
+    "https://lastwordonsports.com/football/2026/08/18/kinsky-vicario-tottenham/",
+    "https://www.beinsports.com/en-us/soccer/premier-league/articles/newcastle-bring-in-goalkeeper-hornicek-from-braga-2026-08-03",
+    "https://www.fantasyfootballscout.co.uk/2026/08/03/hornicek-jaouen-or-pope-who-will-be-newcastles-number-1",
+    "https://www.footballinsider247.com/newcastle-united/sources-nick-pope-makes-newcastle-transfer-decision-after-50m-deals-agreed"
   ],
 
   "weights": {
@@ -149,7 +153,21 @@
       "note": "Played in the World Cup final on 19 July; Aston Villa may give him longer to recover than gameweek 1 allows."
     },
     { "webName": "Enzo", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Late return from the World Cup; involvement in the opener uncertain." },
-    { "webName": "Reece James", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Flagged as one to monitor through pre-season." }
+    { "webName": "Reece James", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Flagged as one to monitor through pre-season." },
+    {
+      "webName": "Dúbravka",
+      "club": "TOT",
+      "state": "unavailable",
+      "probability": 0.03,
+      "note": "Signed as a free agent in June 2026 purely as experienced backup; Antonín Kinský is Spurs' clear undisputed no.1 for 2026/27 (Vicario left on loan to Juventus). Kinský started gameweek 1, Dúbravka an unused substitute."
+    },
+    {
+      "webName": "Pope",
+      "club": "NEW",
+      "state": "unavailable",
+      "probability": 0.03,
+      "note": "Not injured - pushed down the pecking order. Newcastle signed two goalkeepers this summer under new manager Matthias Jaissle: Lukáš Horníček (£26m, from Braga) and Ewen Jaouen (£18m). Horníček started and played all 90 minutes of gameweek 1 (2-2 v Liverpool); Pope was an unused substitute."
+    }
   ],
 
   "contextNotes": [
