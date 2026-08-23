@@ -316,7 +316,11 @@ export async function importPayload(
       // season. They need completely different handling, and the gameweek column says which.
       const table = toTable(text);
       return isGameweekTable(table)
-        ? importGameweekCsv(db, text, { label, currentSeason: options.currentSeasonCsv ?? false })
+        ? importGameweekCsv(db, text, {
+            label,
+            currentSeason: options.currentSeasonCsv,
+            currentSeasonName: rules.season,
+          })
         : importSeasonCsv(db, text, label);
     }
 

@@ -65,16 +65,21 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
   },
   {
     id: 'last-season',
-    title: "Last season's stats",
-    cadence: 'One time only',
-    cadenceTone: 'once',
+    title: "Last season's stats & this season's results",
+    cadence: 'Once, then weekly once matches start',
+    cadenceTone: 'occasional',
     what:
-      'Points, minutes and underlying stats from a completed season. It never changes, so this ' +
-      'is a one-off. Before a ball is kicked it is the only real evidence there is, and it is ' +
-      'what stops opening-gameweek projections ranking on noise. Accepts a CSV - either one row ' +
-      "per player per gameweek (richer, preferred) or season totals - or the FPL API's own " +
-      'element-summary files. Players are matched by name and club, never by the id in the ' +
-      'file, because FPL reassigns ids between seasons.',
+      "Points, minutes and underlying stats, one row per player per gameweek (or season " +
+      "totals) - or the FPL API's own element-summary files. Before a ball is kicked, a " +
+      "completed season's file is the only real evidence there is, and stops opening-gameweek " +
+      'projections ranking on noise; that part is a one-off. The exact same slot also takes a ' +
+      'file covering gameweek(s) that have just finished for the CURRENT season - the app tells ' +
+      "the two apart automatically by the season each file names, matched against this app's " +
+      "configured season. A current-season file both records actual points, which the " +
+      'Accuracy tab grades past recommendations against, and rolls straight into next ' +
+      "season's opening-gameweek evidence, exactly like last season's did for this one. " +
+      'Players are matched by name and club, never by the id in the file, because FPL ' +
+      'reassigns ids between seasons.',
     source: `${FPL}/element-summary/1/`,
     sourceLabel: 'element-summary (one per player)',
     accepts: ['season-csv', 'element-summary'],

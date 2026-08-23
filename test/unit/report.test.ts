@@ -296,7 +296,7 @@ describe('report server', () => {
     expect(body).toContain("Last season's stats");
     expect(body).toContain('Your squad');
     // Cadence is the point of splitting them up.
-    expect(body).toContain('One time only');
+    expect(body).toContain('Once, then weekly once matches start');
     expect(body).toContain('Every week');
   });
 

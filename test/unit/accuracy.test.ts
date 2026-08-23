@@ -20,16 +20,21 @@ const rules = loadRules();
 const weights = loadModelWeights();
 
 /** A per-gameweek CSV in the same shape as a real stats export. */
-function gameweekCsv(rows: { name: string; team: string; gw: number; points: number; minutes?: number }[]): string {
+function gameweekCsv(
+  rows: { name: string; team: string; gw: number; points: number; minutes?: number }[],
+  options: { season?: string } = {},
+): string {
+  const seasonColumn = options.season !== undefined ? ',season' : '';
   const header =
     'id,element_type,web_name,team_name,opponent_team_name,was_home,now_cost,selected_by_percent,' +
     'gameweek,minutes,expected_goals,goals,expected_assists,assists,expected_goals_conceded,' +
-    'goals_conceded,clean_sheet,defensive_contribution,expected_points,total_points';
+    `goals_conceded,clean_sheet,defensive_contribution,expected_points,total_points${seasonColumn}`;
   const body = rows
     .map(
       (r, i) =>
         `${i + 1},3,${r.name},${r.team},Other,True,6.2,10.0,${r.gw},${r.minutes ?? 90},` +
-        `0.3,0,0.2,0,1.1,1,0,4,3.5,${r.points}`,
+        `0.3,0,0.2,0,1.1,1,0,4,3.5,${r.points}` +
+        (options.season !== undefined ? `,${options.season}` : ''),
     )
     .join('\n');
   return `${header}\n${body}`;
@@ -127,6 +132,62 @@ describe('importing a per-gameweek CSV', () => {
     await importGameweekCsv(db, csv, { currentSeason: true });
     const actual = db.prepare('SELECT points FROM actual_points').get() as { points: number };
     expect(actual.points).toBe(7);
+  });
+
+  describe('auto-detecting the current season (via importPayload, no explicit flag)', () => {
+    it('treats a file naming this app\'s configured season as current, and records actuals', async () => {
+      const csv = gameweekCsv([{ name: 'ALP-MD1', team: 'Alpha FC', gw: 1, points: 8 }], {
+        season: rules.season,
+      });
+      const summary = await importPayload(db, rules, csv);
+
+      const actual = db.prepare('SELECT points FROM actual_points').get() as
+        | { points: number }
+        | undefined;
+      expect(actual?.points).toBe(8);
+      expect(summary.detail).toMatch(/actual score\(s\) were recorded/);
+    });
+
+    it('treats a file with no season column at all as current, since there is nothing to say otherwise', async () => {
+      // This is the common case: a plain weekly results CSV, exactly what "how do I add this
+      // week's results" means in practice - nobody bothers naming the season on a file that is
+      // obviously about right now.
+      const csv = gameweekCsv([{ name: 'ALP-MD1', team: 'Alpha FC', gw: 1, points: 9 }]);
+      await importPayload(db, rules, csv);
+
+      const actual = db.prepare('SELECT points FROM actual_points').get() as
+        | { points: number }
+        | undefined;
+      expect(actual?.points).toBe(9);
+    });
+
+    it('treats a named season that does not match as history, and does not record actuals', async () => {
+      const csv = gameweekCsv([{ name: 'ALP-MD1', team: 'Alpha FC', gw: 1, points: 5 }], {
+        season: '2024/25',
+      });
+      const summary = await importPayload(db, rules, csv);
+
+      expect((db.prepare('SELECT COUNT(*) AS n FROM actual_points').get() as { n: number }).n).toBe(0);
+      // The row itself is still stored as history, just not graded against.
+      const stat = db.prepare('SELECT total_points FROM player_gameweek_stat').get() as {
+        total_points: number;
+      };
+      expect(stat.total_points).toBe(5);
+      expect(summary.detail).toMatch(/Read as history, not this season/);
+    });
+
+    it('matches the season regardless of how it is punctuated', async () => {
+      // rules.season is "2026/27"; a real export might spell it "2026-27" or "26/27".
+      const csv = gameweekCsv([{ name: 'ALP-MD1', team: 'Alpha FC', gw: 1, points: 6 }], {
+        season: rules.season.replace('/', '-'),
+      });
+      await importPayload(db, rules, csv);
+
+      const actual = db.prepare('SELECT points FROM actual_points').get() as
+        | { points: number }
+        | undefined;
+      expect(actual?.points).toBe(6);
+    });
   });
 
   it('is idempotent across re-imports', async () => {

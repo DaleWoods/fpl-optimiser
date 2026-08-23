@@ -155,6 +155,7 @@ Re-uploading the same file updates rather than duplicates.
 | Data | How often | Why |
 |---|---|---|
 | Last season's stats (`element-summary`, or a CSV) | **Once** | It never changes. Stored permanently. |
+| This season's results (a per-gameweek CSV) | **Weekly, after full-time** | Same slot and file shape as last season's stats — the app tells them apart automatically by the season named in the file (or, if none is named, assumes the file is about now). This is what feeds the Accuracy tab and rolls into next season's opening-gameweek evidence. |
 | `bootstrap-static` | **Every week, before the deadline** | Prices, form, injuries and news all move. Each upload also stores a snapshot, so price and form *trends* accumulate — the more often you upload, the better change detection gets. |
 | `fixtures` | **Whenever games are rearranged** | European progress and cup ties move Premier League games, which is what creates the double and blank gameweeks that decide chip timing. |
 | Your `picks` | **Each week once the gameweek has started** | Loads your actual 15, which turns on transfer advice and points-based chip valuation. |
@@ -164,6 +165,14 @@ Re-uploading the same file updates rather than duplicates.
 `fpl accuracy` (or the **Accuracy** tab) grades past projections against what actually
 happened. Every recommendation is stored with its model version when it is made, so once
 results arrive the two can be joined.
+
+Results arrive the same way last season's history did: a per-gameweek CSV (one row per player
+per gameweek — a community site's export, or your own spreadsheet) through the same slot on the
+**Import Data** tab. There is nothing to flag or toggle — the app compares the season named in
+the file (or, if the file doesn't say, assumes it means now) against the season this app is
+configured for (`rules.season` in `config/rules.json`), and only records actual scores when they
+match. A file for a season that doesn't match is still stored as history, just not graded
+against.
 
 Two numbers matter, and they answer different questions:
 

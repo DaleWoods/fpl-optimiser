@@ -51,12 +51,19 @@ export interface GameweekCsvOptions {
   /** Defaults to the season named in the file, or a sensible fallback. */
   seasonName?: string;
   /**
-   * When true the rows describe the CURRENT season, so actual points are also recorded for
-   * scoring projections against. Defaults to false: a file of last season is history, not a
-   * result to grade this season's model on.
+   * When set, overrides auto-detection of whether these rows describe the CURRENT season - true
+   * also records actual points, to grade projections against. Leave unset to auto-detect: this
+   * season's rows are whichever match currentSeasonName, everything else is history.
    */
   currentSeason?: boolean;
+  /** The season configured as "now" (rules.season), for auto-detecting currentSeason. */
+  currentSeasonName?: string;
   label?: string;
+}
+
+/** "2026/27", "2026-27" and "26/27" all describe the same season. */
+function normaliseSeason(season: string): string {
+  return season.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 export function importGameweekCsv(
@@ -94,7 +101,20 @@ export function importGameweekCsv(
       }
     }
 
-    const seasonName = options.seasonName ?? pick(table.rows[0]!, 'season', 'season_name') ?? '2025/26';
+    const seasonName =
+      options.seasonName ??
+      pick(table.rows[0]!, 'season', 'season_name') ??
+      options.currentSeasonName ??
+      '2025/26';
+
+    // Auto-detect the current season by comparing to what the app is configured to treat as
+    // "now" (rules.season), unless the caller has explicitly said one way or the other. This is
+    // what turns a plain stats upload into a result the model gets graded against, without
+    // needing a separate control anywhere in the app for "this one is current".
+    const currentSeason =
+      options.currentSeason ??
+      (options.currentSeasonName !== undefined &&
+        normaliseSeason(seasonName) === normaliseSeason(options.currentSeasonName));
 
     const upsert = db.prepare(`
       INSERT INTO player_gameweek_stat (
@@ -242,7 +262,7 @@ export function importGameweekCsv(
         });
         written += 1;
 
-        if (options.currentSeason && points !== null) {
+        if (currentSeason && points !== null) {
           insertActual.run(match.id, gameweek, points, minutes, at);
           actuals += 1;
         }
@@ -280,7 +300,14 @@ export function importGameweekCsv(
         `${written} gameweek row(s) for ${matchedPlayers.size} players across ` +
         `${gameweeks.size} gameweek(s) of ${seasonName}` +
         (aggregated > 0 ? `, rolled up into ${aggregated} season totals` : '') +
-        (actuals > 0 ? `, ${actuals} actual scores recorded` : ''),
+        (currentSeason
+          ? `. Matched this season (${options.currentSeasonName}), so ${actuals} actual score(s) ` +
+            'were recorded for the Accuracy tab to grade past projections against.'
+          : options.currentSeasonName
+            ? `. Read as history, not this season (${options.currentSeasonName}) - no actual ` +
+              'scores were recorded. If this is meant to grade recent projections, check the ' +
+              "file's season column matches."
+            : ''),
       warnings,
     };
   });
