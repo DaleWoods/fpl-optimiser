@@ -4,7 +4,7 @@ import { StubFplApi } from '../../src/api/replayClient.js';
 import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } from '../../src/config/load.js';
 import { openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
-import { startServer, type RunningServer } from '../../src/report/server.js';
+import { shouldPrimeOnBoot, startServer, type RunningServer } from '../../src/report/server.js';
 import { formatFixtures, renderDashboard } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
 import {
@@ -18,6 +18,35 @@ import {
 
 const rules = loadRules();
 const teamId = 2651633;
+
+describe('boot-time ingest priming', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = openTestDatabase();
+  });
+
+  it('primes when there is no data yet', () => {
+    expect(shouldPrimeOnBoot(db, 180)).toBe(true);
+  });
+
+  it('does not prime again when a deploy restarts the process shortly after a real refresh', async () => {
+    // A deploy is not evidence the data is stale - only the clock is. Without this, "last
+    // imported" would drift to "just now" on every code push, regardless of how fresh the
+    // underlying FPL data actually was.
+    await ingestBootstrap(db, new StubFplApi({ bootstrap: fakeBootstrap() }), rules);
+    expect(shouldPrimeOnBoot(db, 180)).toBe(false);
+  });
+
+  it('primes again once the last refresh is older than the configured interval', async () => {
+    await ingestBootstrap(db, new StubFplApi({ bootstrap: fakeBootstrap() }), rules);
+    db.prepare(
+      `UPDATE ingest_run SET started_at = started_at - ? WHERE source = 'bootstrap-static'`,
+    ).run(200 * 60);
+
+    expect(shouldPrimeOnBoot(db, 180)).toBe(true);
+  });
+});
 
 describe('environment overrides', () => {
   const base = loadAppConfig();

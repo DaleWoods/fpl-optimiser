@@ -2,8 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { Database } from 'better-sqlite3';
 import { HttpFplApi } from '../api/httpClient.js';
 import type { Config } from '../config/schema.js';
-import { openDatabase } from '../db/index.js';
+import { nowSeconds, openDatabase } from '../db/index.js';
 import { ingestAll, importPayload } from '../ingest/index.js';
+import { lastSuccessfulRun } from '../ingest/run.js';
 import { planReset, resetData, RESET_PLANS, type ResetScope } from '../ingest/reset.js';
 import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
@@ -74,6 +75,24 @@ export interface RunningServer {
   /** The port actually bound. Differs from the requested port when 0 was passed. */
   port: number;
   close: () => Promise<void>;
+}
+
+/**
+ * Whether the boot-time ingest should run immediately, rather than waiting for the first
+ * scheduled interval.
+ *
+ * Render restarts this process on every deploy, not just on a genuinely fresh disk - so this
+ * has to tell "the data is actually stale" apart from "the process just happens to have
+ * restarted", or "last imported" drifts to "just now" on every code push regardless of how
+ * fresh the underlying FPL data really is.
+ *
+ * Exported separately from startServer so this decision is testable on its own: it only needs
+ * what is already on disk, not a running server or a real FPL API call.
+ */
+export function shouldPrimeOnBoot(db: Database, ingestIntervalMinutes: number): boolean {
+  const last = lastSuccessfulRun(db, 'bootstrap-static');
+  if (last === null) return true;
+  return nowSeconds() - last.startedAt >= ingestIntervalMinutes * 60;
 }
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
@@ -340,8 +359,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     timer = setInterval(() => void runIngest(), intervalMs);
     // Do not hold the process open on the timer alone.
     timer.unref();
-    // Prime on boot, so a fresh deployment has data without waiting for the first interval.
-    void runIngest();
+
+    // Prime on boot, so a fresh deployment has data without waiting for the first interval -
+    // but only when the data actually needs it. Render restarts this process on every deploy,
+    // not just on a genuinely fresh disk, so priming unconditionally made "last imported" drift
+    // to "just now" on every code push, which has nothing to do with how fresh the underlying
+    // FPL data actually is and is actively misleading on a day with several deploys.
+    if (shouldPrimeOnBoot(db, options.ingestIntervalMinutes)) void runIngest();
   }
 
   return new Promise((resolve) => {

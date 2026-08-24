@@ -100,7 +100,10 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
     what:
       'Your 15 for a gameweek, plus your chip and transfer history. Loading this turns on ' +
       'transfer advice and points-based chip valuation. Only public once a gameweek has ' +
-      'started - before the first deadline there is nothing to download.',
+      'started - before the first deadline there is nothing to download. The file itself ' +
+      "only lists player IDs, never names - that's the FPL API, not a bug in this file; the " +
+      'app resolves each ID against the player data already imported from bootstrap-static ' +
+      'once you upload it here.',
     source: `${FPL}/entry/2651633/event/1/picks/`,
     sourceLabel: 'your picks for a gameweek',
     accepts: ['picks', 'entry', 'entry-history'],
