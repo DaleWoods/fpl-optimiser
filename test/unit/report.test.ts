@@ -525,6 +525,14 @@ describe('report server', () => {
       expect(body).toMatch(/vs C\d|@ C\d/);
       expect(body).toMatch(/not whether this is a good pick/);
     });
+
+    it('shows no "changed since" card the first time there is nothing to compare against', async () => {
+      const base = await start();
+      await importReadyData(base);
+
+      const body = await (await fetch(`${base}/optimise?generate=1`)).text();
+      expect(body).not.toMatch(/Changed since/);
+    });
   });
 
   it('escapes third-party text before putting it in the page', () => {
@@ -569,5 +577,31 @@ describe('report server', () => {
 
     expect(page).not.toContain('<script>alert');
     expect(page).toContain('&lt;script&gt;');
+  });
+
+  it('offers "end gameweek" once a squad is loaded, not before there is one to end', () => {
+    const base = {
+      generatedAt: 1_760_000_000,
+      teamId: 2651633,
+      freshness: [],
+      anyStale: false,
+      playerCount: 1,
+      snapshotCount: 1,
+      nextDeadline: null,
+      squadNote: null,
+      bank: 5,
+      teamValue: 1000,
+      freeTransfers: 1,
+      freeTransfersSource: 'derived',
+      chipsAvailable: [],
+      squad: [],
+      flaggedInSquad: [],
+      recentChanges: [],
+    };
+
+    expect(renderDashboard({ ...base, squadLoaded: false })).not.toMatch(/End gameweek/);
+    const withSquad = renderDashboard({ ...base, squadLoaded: true });
+    expect(withSquad).toMatch(/End gameweek/);
+    expect(withSquad).toContain('/optimise?generate=1&refresh=1');
   });
 });

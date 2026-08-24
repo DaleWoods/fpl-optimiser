@@ -103,8 +103,22 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
     <a class="btn accent" href="/optimise">Generate my best team for ${escapeHtml(
       state.nextDeadline?.name ?? 'the next gameweek',
     )}</a>
+    ${
+      state.squadLoaded
+        ? `<a class="btn ghost" href="/optimise?generate=1&refresh=1" style="margin-left:.4rem">
+             End gameweek &amp; plan next</a>`
+        : ''
+    }
     <a class="btn ghost" href="/chips" style="margin-left:.4rem">Chip strategy</a>
   </p>
+  ${
+    state.squadLoaded
+      ? `<p class="muted" style="font-size:.85rem;margin:.3rem 0 0">"End gameweek" refreshes
+         live data first (results, prices, your picks), then generates a team for the next
+         deadline and shows exactly what changed &mdash; captain, vice-captain, subs and
+         transfers &mdash; from what you had.</p>`
+      : ''
+  }
 
   <h2>Your squad</h2>
   ${
@@ -274,6 +288,44 @@ export function renderRecommendation(rec: Recommendation): string {
 
   <p style="margin-top:1rem">Captain <strong>${escapeHtml(rec.eleven.captain.name)}</strong>,
      vice <strong>${escapeHtml(rec.eleven.viceCaptain.name)}</strong>.</p>
+
+  ${
+    rec.previousComparison
+      ? `<h2>Changed since ${escapeHtml(
+          rec.previousComparison.previousEventName ?? `gameweek ${rec.previousComparison.previousEventId}`,
+        )}</h2>
+         <div class="card"><ul class="tight">
+           ${
+             rec.previousComparison.anyChange
+               ? [
+                   rec.previousComparison.captain
+                     ? `<li>Captain: ${escapeHtml(rec.previousComparison.captain.from.name)}
+                        &rarr; <strong>${escapeHtml(rec.previousComparison.captain.to.name)}</strong></li>`
+                     : '',
+                   rec.previousComparison.viceCaptain
+                     ? `<li>Vice-captain: ${escapeHtml(rec.previousComparison.viceCaptain.from.name)}
+                        &rarr; <strong>${escapeHtml(rec.previousComparison.viceCaptain.to.name)}</strong></li>`
+                     : '',
+                   ...rec.previousComparison.movedIntoXi.map(
+                     (p) => `<li><strong>${escapeHtml(p.name)}</strong> moves into the starting XI (was on the bench, not a transfer).</li>`,
+                   ),
+                   ...rec.previousComparison.movedToBench.map(
+                     (p) => `<li><strong>${escapeHtml(p.name)}</strong> drops to the bench (still in your squad, not a transfer).</li>`,
+                   ),
+                   rec.previousComparison.benchOrderChanged
+                     ? `<li>Bench order changed &mdash; check the auto-sub priority below.</li>`
+                     : '',
+                   rec.transfers.length > 0
+                     ? `<li>${rec.transfers.length} transfer(s) suggested below.</li>`
+                     : '',
+                 ]
+                   .filter(Boolean)
+                   .join('')
+               : `<li class="muted">Nothing changed &mdash; same XI, bench order, captain and vice-captain.</li>`
+           }
+         </ul></div>`
+      : ''
+  }
 
   <h2>Starting XI</h2>
   <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">

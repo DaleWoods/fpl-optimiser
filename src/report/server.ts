@@ -256,6 +256,15 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (url.pathname === '/optimise' || url.pathname === '/optimise.json') {
       const gwParam = url.searchParams.get('gw');
       const wantsGenerate = url.searchParams.get('generate') === '1';
+      const wantsRefresh = url.searchParams.get('refresh') === '1';
+
+      // "End gameweek" is a generate with a live refresh first, so a squad going into the new
+      // gameweek and the results that just finished are both as current as possible before
+      // regenerating - rather than waiting for the next scheduled background ingest. runIngest
+      // never throws (it catches and records lastIngestError itself), so a refresh failure falls
+      // through to generating from whatever data is already on disk rather than blocking it.
+      if (wantsGenerate && wantsRefresh) await runIngest();
+
       const readiness = checkReadiness(db);
       const event = resolveTargetEvent(db);
       const squadLoaded =
@@ -289,6 +298,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           teamId: config.app.teamId,
           eventId: gwParam ? Number(gwParam) : undefined,
           fromScratch: url.searchParams.get('scratch') === '1',
+          extraNotes:
+            wantsRefresh && lastIngestError
+              ? [`The pre-generate refresh failed (${lastIngestError}) - this used whatever data was already on disk.`]
+              : undefined,
         });
 
         if (url.pathname === '/optimise.json') {

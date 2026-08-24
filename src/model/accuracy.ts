@@ -107,6 +107,60 @@ export function saveRecommendation(
   );
 }
 
+export interface StoredRecommendationDetail {
+  eventId: number;
+  eventName: string | null;
+  starters: { playerId: number; name: string; xPts: number }[];
+  bench: { playerId: number; name: string; xPts: number }[];
+  captainId: number | null;
+  viceCaptainId: number | null;
+}
+
+/**
+ * The most recent recommendation stored for a gameweek before the given one, if any - what
+ * "since last week" is measured against.
+ *
+ * Every recommend() call already saves its starters, bench, captain and vice-captain (it has to,
+ * for grading later), so there is nothing new to record here: this just reads that same history
+ * back for the gameweek before the one being generated now.
+ */
+export function previousRecommendationDetail(
+  db: Database,
+  beforeEventId: number,
+): StoredRecommendationDetail | null {
+  const stored = db
+    .prepare(
+      `SELECT r.event_id AS eventId, e.name AS eventName, r.detail_json AS detail
+       FROM recommendation r
+       LEFT JOIN event e ON e.id = r.event_id
+       WHERE r.event_id < ? AND r.kind IN ('xi', 'squad')
+       ORDER BY r.event_id DESC, r.created_at DESC, r.id DESC LIMIT 1`,
+    )
+    .get(beforeEventId) as { eventId: number; eventName: string | null; detail: string } | undefined;
+  if (!stored) return null;
+
+  try {
+    const detail = JSON.parse(stored.detail) as {
+      starters?: { playerId: number; name: string; xPts: number }[];
+      bench?: { playerId: number; name: string; xPts: number }[];
+      captainId?: number;
+      viceCaptainId?: number;
+    };
+    if (!detail.starters || detail.starters.length === 0) return null;
+
+    return {
+      eventId: stored.eventId,
+      eventName: stored.eventName,
+      starters: detail.starters,
+      bench: detail.bench ?? [],
+      captainId: detail.captainId ?? null,
+      viceCaptainId: detail.viceCaptainId ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Copy actual points from imported per-gameweek stats into the results table.
  *

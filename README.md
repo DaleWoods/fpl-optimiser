@@ -225,6 +225,27 @@ Free Hit and Wildcard need a full squad rebuild per gameweek to value, so they a
 evaluated with `--deep` (or `?deep=1`). Without a squad loaded, chip advice falls back to
 fixture shape alone and says so rather than inventing a points figure.
 
+## Moving to the next gameweek
+
+There is deliberately no "current gameweek" flag stored anywhere: which gameweek is being
+planned for is always derived from the FPL API's own deadlines (the next one whose deadline
+hasn't passed yet), so it can never drift out of sync with reality the way a manually-tracked
+flag could.
+
+What *is* manual is telling the app "I'm ready to move on" - the **End gameweek & plan next**
+button on the Dashboard (shown once a squad is loaded). It does three things in one step: pulls
+fresh data live (results, prices, your actual picks) rather than waiting for the next scheduled
+background refresh, generates a recommendation for the next deadline, and shows a **Changed
+since Gameweek N** summary - captain and vice-captain changes, any squad member who swapped
+bench and starting XI without being transferred, a bench-order change, and the suggested
+transfers, all in one place. It's optional: the ordinary background refresh and a plain
+**Regenerate** get you to the same recommendation on their own, just without forcing an
+immediate refresh or naming what changed.
+
+The comparison is read from the recommendation history the app already keeps for grading (see
+"Measuring the model" above) - there is nothing extra to store for it, and a from-scratch squad
+build never gets a comparison, since there is no existing squad for it to have evolved from.
+
 ## Starting again
 
 `fpl reset` (or `/reset`) deletes stored data in scopes, because wiping everything is rarely

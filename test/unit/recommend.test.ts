@@ -7,7 +7,8 @@ import { ingestBootstrap, ingestEntry, ingestFixtures } from '../../src/ingest/i
 import { ingestEliteOwnership } from '../../src/ingest/elite.js';
 import { importPayload } from '../../src/ingest/import.js';
 import { buildProjections } from '../../src/model/build.js';
-import { checkReadiness, recommend, resolveTargetEvent } from '../../src/report/recommend.js';
+import { checkReadiness, diffAgainstPrevious, recommend, resolveTargetEvent } from '../../src/report/recommend.js';
+import type { StoredRecommendationDetail } from '../../src/model/accuracy.js';
 import { validateSquad, validateStartingEleven } from '../../src/rules/validate.js';
 import {
   defaultTeams,
@@ -552,6 +553,44 @@ describe('recommendation with a squad loaded', () => {
     const result = await recommend(db, rules, weights, { eventId: 1, teamId });
     expect(result.notes.join(' ')).toMatch(/selling prices are not published/i);
   });
+
+  it('has no previous comparison the first time, and one the next gameweek', async () => {
+    await loadSquad(pickLegalFifteen(db));
+    const first = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(first.previousComparison).toBeNull();
+
+    // A second gameweek to plan for next, so there is something to compare against.
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players,
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+        }),
+      }),
+      rules,
+    );
+    const gw2Fixtures = [];
+    for (let index = 0; index < teams.length; index += 2) {
+      gw2Fixtures.push(fakeFixture(100 + index / 2, 2, teams[index]!.id, teams[index + 1]!.id));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures: gw2Fixtures }));
+
+    const second = await recommend(db, rules, weights, { eventId: 2, teamId });
+    expect(second.previousComparison).not.toBeNull();
+    expect(second.previousComparison?.previousEventId).toBe(1);
+  });
+
+  it('never compares a from-scratch build against an earlier gameweek', async () => {
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId, fromScratch: true });
+    expect(result.mode).toBe('build-squad');
+    expect(result.previousComparison).toBeNull();
+  });
 });
 
 describe('multi-gameweek horizon', () => {
@@ -833,5 +872,111 @@ describe('multi-gameweek horizon', () => {
       // future-value bonus doing its job.
       expect(result.squad.map((p) => p.playerId)).toContain(16);
     });
+  });
+});
+
+describe('diffAgainstPrevious', () => {
+  const named = (ids: number[]) => ids.map((playerId) => ({ playerId, name: `P${playerId}` }));
+
+  /** The shape diffAgainstPrevious wants for "now": no xPts, ids always resolved. */
+  function current(overrides: {
+    starters?: number[];
+    bench?: number[];
+    captainId?: number;
+    viceCaptainId?: number;
+  } = {}) {
+    return {
+      starters: named(overrides.starters ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+      bench: named(overrides.bench ?? [12, 13, 14, 15]),
+      captainId: overrides.captainId ?? 1,
+      viceCaptainId: overrides.viceCaptainId ?? 2,
+    };
+  }
+
+  /** The shape read back from storage for "last week": has xPts, ids can be null. */
+  function stored(overrides: Partial<StoredRecommendationDetail> = {}): StoredRecommendationDetail {
+    return {
+      eventId: 1,
+      eventName: 'Gameweek 1',
+      starters: current().starters.map((p) => ({ ...p, xPts: 4 })),
+      bench: current().bench.map((p) => ({ ...p, xPts: 2 })),
+      captainId: 1,
+      viceCaptainId: 2,
+      ...overrides,
+    };
+  }
+
+  const noTransfers = new Set<number>();
+
+  it('is null with no previous recommendation to compare against', () => {
+    expect(diffAgainstPrevious(current(), noTransfers, noTransfers, null)).toBeNull();
+  });
+
+  it('reports nothing when the XI, bench, captain and vice are all unchanged', () => {
+    const diff = diffAgainstPrevious(current(), noTransfers, noTransfers, stored());
+    expect(diff?.anyChange).toBe(false);
+    expect(diff?.captain).toBeNull();
+    expect(diff?.viceCaptain).toBeNull();
+    expect(diff?.movedIntoXi).toEqual([]);
+    expect(diff?.movedToBench).toEqual([]);
+    expect(diff?.benchOrderChanged).toBe(false);
+  });
+
+  // "from" the previous week comes back with whatever stored() carried (it also has xPts, since
+  // that is what was actually stored) - only playerId/name are part of the contract here.
+  const namedLike = (playerId: number, name: string) => expect.objectContaining({ playerId, name });
+
+  it('flags a captain change', () => {
+    const diff = diffAgainstPrevious(current({ captainId: 3 }), noTransfers, noTransfers, stored());
+    expect(diff?.captain).toEqual({ from: namedLike(1, 'P1'), to: { playerId: 3, name: 'P3' } });
+    expect(diff?.anyChange).toBe(true);
+  });
+
+  it('flags a vice-captain change', () => {
+    const diff = diffAgainstPrevious(current({ viceCaptainId: 4 }), noTransfers, noTransfers, stored());
+    expect(diff?.viceCaptain).toEqual({ from: namedLike(2, 'P2'), to: { playerId: 4, name: 'P4' } });
+  });
+
+  it('flags a squad member promoted from the bench, when it is not a transfer', () => {
+    // 11 stays out, 12 comes in - same 15, just a different XI/bench split.
+    const diff = diffAgainstPrevious(
+      current({ starters: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], bench: [11, 13, 14, 15] }),
+      noTransfers,
+      noTransfers,
+      stored(),
+    );
+    expect(diff?.movedIntoXi).toEqual([{ playerId: 12, name: 'P12' }]);
+    expect(diff?.movedToBench).toEqual([namedLike(11, 'P11')]);
+  });
+
+  it('does not report a transferred-out player as merely benched, or a transferred-in player as merely promoted', () => {
+    // Player 11 was sold entirely (not just benched) and replaced by a brand new player 99.
+    const diff = diffAgainstPrevious(
+      current({ starters: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 99] }),
+      new Set([11]),
+      new Set([99]),
+      stored(),
+    );
+    expect(diff?.movedIntoXi).toEqual([]);
+    expect(diff?.movedToBench).toEqual([]);
+    // A transfer alone is still a real change worth flagging.
+    expect(diff?.anyChange).toBe(true);
+  });
+
+  it('flags the bench order changing even when its membership is identical', () => {
+    const diff = diffAgainstPrevious(current({ bench: [13, 12, 14, 15] }), noTransfers, noTransfers, stored());
+    expect(diff?.benchOrderChanged).toBe(true);
+    expect(diff?.anyChange).toBe(true);
+  });
+
+  it('carries the previous event id and name through, for the page heading', () => {
+    const diff = diffAgainstPrevious(
+      current(),
+      noTransfers,
+      noTransfers,
+      stored({ eventId: 3, eventName: 'Gameweek 3' }),
+    );
+    expect(diff?.previousEventId).toBe(3);
+    expect(diff?.previousEventName).toBe('Gameweek 3');
   });
 });

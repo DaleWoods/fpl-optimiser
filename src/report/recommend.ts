@@ -11,7 +11,11 @@ import {
   type Horizon,
 } from '../model/horizon.js';
 import { applyIntel, loadIntel, type Intel } from '../model/intel.js';
-import { saveRecommendation } from '../model/accuracy.js';
+import {
+  previousRecommendationDetail,
+  saveRecommendation,
+  type StoredRecommendationDetail,
+} from '../model/accuracy.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
 import { selectBestEleven, selectBestSquad } from '../optimise/squad.js';
@@ -55,6 +59,97 @@ function captainConsistencyBonusFor(
   return bonus;
 }
 
+interface NamedPlayer {
+  playerId: number;
+  name: string;
+}
+
+export interface RecommendationDiff {
+  previousEventId: number;
+  previousEventName: string | null;
+  captain: { from: NamedPlayer; to: NamedPlayer } | null;
+  viceCaptain: { from: NamedPlayer; to: NamedPlayer } | null;
+  /** Squad members who moved bench -> XI or XI -> bench, with no transfer involved. */
+  movedIntoXi: NamedPlayer[];
+  movedToBench: NamedPlayer[];
+  /** Same bench membership, different order - changes the auto-sub priority. */
+  benchOrderChanged: boolean;
+  /** True if anything at all differs (including transfers, tracked separately on the result). */
+  anyChange: boolean;
+}
+
+/**
+ * What changed since the last recommendation, one gameweek back - captain, vice-captain, and
+ * any squad member who swapped bench <-> XI without being transferred.
+ *
+ * Transfers (a squad member replaced entirely) are already reported separately by
+ * findTransfers()/selectBestSquad() and are folded in here only to decide anyChange and to keep
+ * a transferred-out player from also being reported as merely "benched", and a transferred-in
+ * player from being reported as merely "promoted".
+ */
+export function diffAgainstPrevious(
+  current: {
+    starters: NamedPlayer[];
+    bench: NamedPlayer[];
+    captainId: number;
+    viceCaptainId: number;
+  },
+  transferredOutIds: ReadonlySet<number>,
+  transferredInIds: ReadonlySet<number>,
+  previous: StoredRecommendationDetail | null,
+): RecommendationDiff | null {
+  if (!previous) return null;
+
+  const findName = (pool: NamedPlayer[], playerId: number | null): NamedPlayer | null =>
+    playerId === null ? null : (pool.find((p) => p.playerId === playerId) ?? null);
+
+  const prevPool = [...previous.starters, ...previous.bench];
+  const currPool = [...current.starters, ...current.bench];
+  const prevStarterIds = new Set(previous.starters.map((p) => p.playerId));
+  const currStarterIds = new Set(current.starters.map((p) => p.playerId));
+
+  const movedToBench = previous.starters.filter(
+    (p) => !currStarterIds.has(p.playerId) && !transferredOutIds.has(p.playerId),
+  );
+  const movedIntoXi = current.starters.filter(
+    (p) => !prevStarterIds.has(p.playerId) && !transferredInIds.has(p.playerId),
+  );
+
+  const prevCaptain = findName(prevPool, previous.captainId);
+  const currCaptain = findName(currPool, current.captainId);
+  const captain =
+    previous.captainId !== current.captainId && prevCaptain && currCaptain
+      ? { from: prevCaptain, to: currCaptain }
+      : null;
+
+  const prevVice = findName(prevPool, previous.viceCaptainId);
+  const currVice = findName(currPool, current.viceCaptainId);
+  const viceCaptain =
+    previous.viceCaptainId !== current.viceCaptainId && prevVice && currVice
+      ? { from: prevVice, to: currVice }
+      : null;
+
+  const benchOrderChanged =
+    previous.bench.map((p) => p.playerId).join(',') !== current.bench.map((p) => p.playerId).join(',');
+
+  return {
+    previousEventId: previous.eventId,
+    previousEventName: previous.eventName,
+    captain,
+    viceCaptain,
+    movedIntoXi,
+    movedToBench,
+    benchOrderChanged,
+    anyChange:
+      captain !== null ||
+      viceCaptain !== null ||
+      movedIntoXi.length > 0 ||
+      movedToBench.length > 0 ||
+      benchOrderChanged ||
+      transferredOutIds.size > 0,
+  };
+}
+
 export interface Recommendation {
   mode: 'build-squad' | 'existing-squad';
   eventId: number;
@@ -69,6 +164,8 @@ export interface Recommendation {
   bankRemaining: number;
 
   transfers: TransferOption[];
+  /** What changed since the last recommendation, one gameweek back - null the first time. */
+  previousComparison: RecommendationDiff | null;
   notes: string[];
   playersConsidered: number;
   lowConfidence: boolean;
@@ -99,6 +196,8 @@ export interface RecommendOptions {
   transferCandidates?: number;
   /** Curated intel. Pass null to ignore it entirely. Defaults to config/intel.json. */
   intel?: Intel | null;
+  /** Surfaced verbatim in the returned notes, ahead of anything recommend() derives itself. */
+  extraNotes?: string[];
 }
 
 interface EventRow {
@@ -418,7 +517,7 @@ export async function recommend(
   options: RecommendOptions = {},
 ): Promise<Recommendation> {
   const solver = options.solver ?? new GlpkSolver();
-  const notes: string[] = [];
+  const notes: string[] = [...(options.extraNotes ?? [])];
 
   const event = resolveTargetEvent(db, options.eventId);
   if (!event) {
@@ -619,6 +718,9 @@ export async function recommend(
       totalCost: selection.totalCost,
       bankRemaining: selection.bankRemaining,
       transfers: [],
+      // A from-scratch build has no existing squad to have evolved from, so there is nothing
+      // meaningful to diff against even if a recommendation exists for an earlier gameweek.
+      previousComparison: null,
       notes,
       playersConsidered: projections.length,
       lowConfidence,
@@ -660,6 +762,18 @@ export async function recommend(
 
   const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);
 
+  const previousComparison = diffAgainstPrevious(
+    {
+      starters: eleven.starters.map((p) => ({ playerId: p.playerId, name: p.name })),
+      bench: eleven.bench.map((p) => ({ playerId: p.playerId, name: p.name })),
+      captainId: eleven.captain.playerId,
+      viceCaptainId: eleven.viceCaptain.playerId,
+    },
+    new Set(transfers.map((t) => t.out.playerId)),
+    new Set(transfers.map((t) => t.in.playerId)),
+    previousRecommendationDetail(db, event.id),
+  );
+
   saveRecommendation(db, {
     eventId: event.id,
     entryId: options.teamId ?? null,
@@ -693,6 +807,7 @@ export async function recommend(
     totalCost,
     bankRemaining: bank,
     transfers,
+    previousComparison,
     notes,
     playersConsidered: projections.length,
     lowConfidence,

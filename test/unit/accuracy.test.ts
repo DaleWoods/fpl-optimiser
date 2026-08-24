@@ -11,6 +11,7 @@ import {
   bestElevenByActual,
   evaluateGameweek,
   evaluateSeason,
+  previousRecommendationDetail,
   recordGameweekResult,
   saveRecommendation,
 } from '../../src/model/accuracy.js';
@@ -325,6 +326,69 @@ describe('grading the model', () => {
     // Eleven players on 3 points, with the captain doubled.
     expect(result.recommendedXiActual).toBe(11 * 3 + 3);
     expect(result.recommendedXiPredicted).toBeCloseTo(11 * 4 + 4, 1);
+  });
+
+  describe('previousRecommendationDetail', () => {
+    const starters = (ids: number[]) => ids.map((playerId) => ({ playerId, name: `P${playerId}`, xPts: 4 }));
+
+    it('is null when nothing was recommended for an earlier gameweek', () => {
+      expect(previousRecommendationDetail(db, 1)).toBeNull();
+    });
+
+    it('finds the most recent recommendation for a gameweek before the one asked about', () => {
+      saveRecommendation(db, {
+        eventId: 1,
+        entryId: 2651633,
+        kind: 'xi',
+        modelVersion: weights.modelVersion,
+        summary: 'gw1',
+        detail: { starters: starters([1, 2, 3]), bench: starters([4]), captainId: 1, viceCaptainId: 2 },
+        dataTakenAt: null,
+      });
+
+      const detail = previousRecommendationDetail(db, 2);
+      expect(detail?.eventId).toBe(1);
+      expect(detail?.captainId).toBe(1);
+      expect(detail?.starters.map((p) => p.playerId)).toEqual([1, 2, 3]);
+    });
+
+    it('ignores a later re-generation for the SAME gameweek as the one asked about', () => {
+      saveRecommendation(db, {
+        eventId: 2,
+        entryId: 2651633,
+        kind: 'xi',
+        modelVersion: weights.modelVersion,
+        summary: 'regenerated for gw2 itself',
+        detail: { starters: starters([9]), bench: [], captainId: 9, viceCaptainId: 9 },
+        dataTakenAt: null,
+      });
+
+      // Asking "what came before gameweek 2" must not return gameweek 2's own recommendation.
+      expect(previousRecommendationDetail(db, 2)).toBeNull();
+    });
+
+    it('prefers the latest recommendation when a gameweek was regenerated more than once', () => {
+      saveRecommendation(db, {
+        eventId: 1,
+        entryId: 2651633,
+        kind: 'xi',
+        modelVersion: weights.modelVersion,
+        summary: 'first pass',
+        detail: { starters: starters([1]), bench: [], captainId: 1, viceCaptainId: 1 },
+        dataTakenAt: null,
+      });
+      saveRecommendation(db, {
+        eventId: 1,
+        entryId: 2651633,
+        kind: 'xi',
+        modelVersion: weights.modelVersion,
+        summary: 'regenerated after a late team-news update',
+        detail: { starters: starters([2]), bench: [], captainId: 2, viceCaptainId: 2 },
+        dataTakenAt: null,
+      });
+
+      expect(previousRecommendationDetail(db, 2)?.captainId).toBe(2);
+    });
   });
 
   it('surfaces the league average and highest score straight from bootstrap-static, once the gameweek finishes', async () => {
