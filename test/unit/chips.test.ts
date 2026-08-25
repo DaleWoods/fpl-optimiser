@@ -162,6 +162,12 @@ describe('chip recommendations', () => {
     await seed(db);
   });
 
+  it('looks 16 gameweeks ahead by default, so a chip is not judged against too short a window', async () => {
+    const squad = squadFrom(db);
+    const advice = await adviseChips(db, rules, weights, 1, { squad, solver });
+    expect(advice.horizon).toHaveLength(16);
+  });
+
   it('sends Bench Boost to the double gameweek', async () => {
     const squad = squadFrom(db);
     const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });

@@ -154,7 +154,12 @@ export async function adviseChips(
   fromEvent: number,
   options: ChipAdviceOptions,
 ): Promise<ChipAdvice> {
-  const horizonLength = options.horizon ?? 8;
+  // Chips are one-per-half-season, so a chip advisor that only looks a couple of months ahead
+  // risks recommending a merely-decent window while a genuinely big one - once its fixtures are
+  // published - sits just out of view. 16 gameweeks (roughly a third of a season) costs nothing
+  // when nothing that far out is unusual yet; it only ever changes the advice when there is
+  // something real to see.
+  const horizonLength = options.horizon ?? 16;
   const notes: string[] = [];
   const horizon = readHorizon(db, fromEvent, horizonLength, options.squad);
 

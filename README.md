@@ -237,6 +237,13 @@ Free Hit and Wildcard need a full squad rebuild per gameweek to value, so they a
 evaluated with `--deep` (or `?deep=1`). Without a squad loaded, chip advice falls back to
 fixture shape alone and says so rather than inventing a points figure.
 
+Since a chip is only usable once per half-season, the advisor looks **16 gameweeks ahead by
+default** (`--horizon N` / `?horizon=N` to change it) rather than judging a decent-looking week
+against nothing further out — a chip played on the best of the next handful of gameweeks can
+still be a mistake if a genuinely bigger window, already visible on the fixture list, is a
+couple of months away. The `/chips` page also links to a full-season look (`?horizon=30`) as a
+one-click check that nothing bigger is already on the list.
+
 ## Moving to the next gameweek
 
 There is deliberately no "current gameweek" flag stored anywhere: which gameweek is being

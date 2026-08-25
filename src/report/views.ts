@@ -579,6 +579,11 @@ export function renderChips(advice: ChipAdvice, fromEvent: number): string {
     .join('');
 
   const body = `
+  <p class="muted" style="font-size:.88rem;margin:0 0 .8rem">Chips are one-per-half-season, so
+  holding out for the biggest window is usually worth more than playing the first decent one -
+  <a href="/chips?horizon=30">look ahead across the whole rest of the season</a> to check nothing
+  bigger is already on the fixture list.</p>
+
   <h2>Recommendations</h2>
   ${recs || '<div class="card"><p class="muted" style="margin:0">No chips left to advise on.</p></div>'}
 

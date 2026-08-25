@@ -47,7 +47,7 @@ four undo one import each:
   --yes                    Actually do it (without this you only see the plan)
 
 Chip options:
-  --horizon N              Gameweeks to look ahead (default 8)
+  --horizon N              Gameweeks to look ahead (default 16)
   --deep                   Also value Free Hit and Wildcard, which needs a full
                            squad rebuild per gameweek and is slower
 
