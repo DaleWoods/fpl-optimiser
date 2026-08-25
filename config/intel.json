@@ -19,7 +19,7 @@
     "whole lot without deleting anything."
   ],
 
-  "compiledAt": "2026-08-21",
+  "compiledAt": "2026-08-25",
   "season": "2026/27",
   "staleAfterGameweek": 4,
 
@@ -38,7 +38,18 @@
     "https://lastwordonsports.com/football/2026/08/18/kinsky-vicario-tottenham/",
     "https://www.beinsports.com/en-us/soccer/premier-league/articles/newcastle-bring-in-goalkeeper-hornicek-from-braga-2026-08-03",
     "https://www.fantasyfootballscout.co.uk/2026/08/03/hornicek-jaouen-or-pope-who-will-be-newcastles-number-1",
-    "https://www.footballinsider247.com/newcastle-united/sources-nick-pope-makes-newcastle-transfer-decision-after-50m-deals-agreed"
+    "https://www.footballinsider247.com/newcastle-united/sources-nick-pope-makes-newcastle-transfer-decision-after-50m-deals-agreed",
+    "https://www.fantasyfootballscout.co.uk/2026/08/21/manzambi-madjo-watkins-aston-villa-injury-latest-for-fpl-gameweek-1",
+    "https://www.fantasyfootballscout.co.uk/2026/08/18/fpl-gameweek-1-early-predicted-line-ups",
+    "https://www.thescore.com/news/3583881/crystal-palaces-ismaila-sarr-left-out-of-opener-with-injury",
+    "https://onefootball.com/en/news/why-ismaila-sarr-is-absent-from-crystal-palace-squad-amid-galatasaray-interest-43319886",
+    "https://www.thisisanfield.com/2026/08/newcastle-2-2-liverpool-match-report-premier-league-2026-iraola/",
+    "https://www.skysports.com/football/news/11661/13567632/newcastle-2-2-liverpool-dominik-szoboszlai-snatches-last-minute-leveller-from-penalty-spot-to-rescue-andoni-iraola",
+    "https://www.football365.com/news/andoni-iraola-arne-slot-liverpool-replacement-manager",
+    "https://sports.yahoo.com/articles/manchester-united-forward-amad-diallo-163500000.html",
+    "https://www.si.com/soccer/why-amad-diallo-not-playing-man-utd-vs-hull-8-22-26",
+    "https://www.liverpoolfc.com/news/szoboszlai-scores-late-penalty-rescue-point-liverpool-season-opener-newcastle",
+    "https://www.rousingthekop.com/2026/08/23/andoni-iraola-asked-to-explain-why-dominik-szoboszlai-took-liverpools-penalty-vs-newcastle-not-alexander-isak/"
   ],
 
   "weights": {
@@ -137,10 +148,6 @@
       "probability": 0,
       "note": "Reported as the biggest defensive absence going into the season."
     },
-    { "webName": "Ekitiké", "club": "LIV", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
-    { "webName": "Gomez", "club": "LIV", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
-    { "webName": "Bradley", "club": "LIV", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
-    { "webName": "Ugarte", "club": "MUN", "state": "doubtful", "probability": 0.4, "note": "Named among the clearest players to avoid for the opening gameweek." },
     { "webName": "Kulusevski", "club": "TOT", "state": "doubtful", "probability": 0.25, "note": "Return date unknown." },
     { "webName": "Odobert", "club": "TOT", "state": "doubtful", "probability": 0.25, "note": "Return date unknown." },
     { "webName": "Livramento", "club": "NEW", "state": "doubtful", "probability": 0.75, "note": "Reported at 75% availability." },
@@ -167,14 +174,36 @@
       "state": "unavailable",
       "probability": 0.03,
       "note": "Not injured - pushed down the pecking order. Newcastle signed two goalkeepers this summer under new manager Matthias Jaissle: Lukáš Horníček (£26m, from Braga) and Ewen Jaouen (£18m). Horníček started and played all 90 minutes of gameweek 1 (2-2 v Liverpool); Pope was an unused substitute."
+    },
+    {
+      "webName": "Watkins",
+      "club": "AVL",
+      "state": "doubtful",
+      "probability": 0.3,
+      "note": "Left out of Aston Villa's gameweek 1 squad entirely (not injured) - zero pre-season minutes after a late World Cup return, and Al-Hilal have had four bids rejected this summer with the pursuit still live. Genuinely uncertain rather than simply rusty: could return to the squad, or be sold before a deadline passes."
+    },
+    {
+      "webName": "Sarr",
+      "club": "CRY",
+      "state": "doubtful",
+      "probability": 0.35,
+      "note": "Missed gameweek 1 with a groin injury the club called minor, hadn't trained for two days beforehand; a return around the gameweek 2 deadline has been reported. Simultaneously the subject of a reported ~£30m Galatasaray bid he is said to be pushing for before Turkey's window closes - fitness and a possible exit are both live at once."
+    },
+    {
+      "webName": "Diallo",
+      "club": "MUN",
+      "state": "doubtful",
+      "probability": 0.15,
+      "note": "Ankle injury in training, ruled out of gameweek 1 - return estimates range from gameweek 3 (30 August, v Ipswich) to roughly six weeks, so treat as unavailable until the club confirms a date. Bryan Mbeumo started on the right in his absence and remains United's clear starter there regardless of when Diallo returns."
     }
   ],
 
   "contextNotes": [
     "The 2026 World Cup final was played on 19 July 2026. Players who reached the final or the third-place playoff did not report back to club training until 9-12 August, leaving under eleven days of preparation before the 21 August deadline. Expect rotation and cameos rather than full starts for that group.",
     "Nine clubs begin the season with a new head coach or an unresolved managerial situation, so last season's roles are a weaker guide than usual.",
-    "Gameweek 1's Newcastle vs Liverpool is a specific case of that: Eddie Howe left Newcastle and was replaced by Matthias Jaissle, a first-time Premier League manager, appointed only in early August - reporting suggests Liverpool also enter under a new head coach. Squad roles, set pieces and even the back four at both clubs are a weaker guide than a normal opener; the model has no way to see a managerial change directly, only through minutes and starts once they happen.",
+    "Gameweek 1's Newcastle vs Liverpool (2-2) was a specific case of that on both sides: Eddie Howe left Newcastle for Matthias Jaissle, and Arne Slot was sacked as Liverpool manager on 30 May 2026, replaced by Andoni Iraola (ex-Bournemouth). Squad roles, set pieces and even the back four at both clubs are a weaker guide than a normal opener; the model has no way to see a managerial change directly, only through minutes and starts once they happen.",
     "Manchester City and Arsenal are modelled as a tier of their own for the opening fixtures.",
-    "Defenders dominated the 2025/26 scoring charts, which the DefCon rules continue to reward."
+    "Defenders dominated the 2025/26 scoring charts, which the DefCon rules continue to reward.",
+    "Szoboszlai took Liverpool's 99th-minute equalising penalty in gameweek 1 with Isak on the pitch, but manager Iraola stopped short of naming him sole taker afterward, citing \"some specialists\" - treat as a real signal, not a confirmed nailed-on penalty taker."
   ]
 }
