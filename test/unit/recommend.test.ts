@@ -523,6 +523,68 @@ describe('recommendation with a squad loaded', () => {
     expect(result.transfers).toEqual([]);
   });
 
+  it('guarantees a fix for a dead squad slot, marked as priority, and explains the list is alternatives not a bundle', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 100);
+
+    // Player 1 is always picked by pickLegalFifteen (lowest id). Flag them unavailable - a
+    // completely dead squad slot, projected at zero.
+    const deadSlot = 1;
+    expect(fifteen).toContain(deadSlot);
+    const { teams, players } = bigLeague();
+    const flagged = players.map((player) =>
+      player.id === deadSlot ? { ...player, status: 'i', chance_of_playing_next_round: 0 } : player,
+    );
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players: flagged,
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+        }),
+      }),
+      rules,
+    );
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    const fix = result.transfers.find((t) => t.out.playerId === deadSlot);
+    expect(fix).toBeDefined();
+    expect(fix?.priority).toBe(true);
+    expect(result.notes.join(' ')).toMatch(/not a bundle to do all at once/);
+  });
+
+  it('explains when a dead squad slot cannot be fixed by any single transfer within budget', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 0); // no bank at all
+
+    // Player 1 is team 1's GKP with quality 0 - the cheapest goalkeeper in the whole pool (see
+    // bigLeague()). With zero bank, nothing else at the position can possibly be afforded.
+    const deadSlot = 1;
+    expect(fifteen).toContain(deadSlot);
+    const { teams, players } = bigLeague();
+    const flagged = players.map((player) =>
+      player.id === deadSlot ? { ...player, status: 'i', chance_of_playing_next_round: 0 } : player,
+    );
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players: flagged,
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+        }),
+      }),
+      rules,
+    );
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    expect(result.transfers.find((t) => t.out.playerId === deadSlot)).toBeUndefined();
+    expect(result.notes.join(' ')).toMatch(/no single transfer within your budget/);
+  });
+
   it('never suggests a transfer that would break the three-per-club limit', async () => {
     const fifteen = pickLegalFifteen(db);
     await loadSquad(fifteen, 100);

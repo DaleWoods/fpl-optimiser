@@ -201,6 +201,16 @@ export const modelWeightsSchema = z.strictObject({
     benchWeight: probability,
     benchGoalkeeperWeight: probability,
   }),
+  /**
+   * A squad member projected below this many points this gameweek is effectively a dead
+   * squad slot (hurt, dropped down the pecking order, lost to a summer signing - the model has
+   * already worked that out). Below it, that player's best available replacement is guaranteed
+   * to be shown even if fixing them ranks below a flashier upgrade elsewhere by raw point swing
+   * - a squad slot scoring nothing is worse than any single point total suggests.
+   */
+  transfers: z.strictObject({
+    priorityFixXPtsThreshold: z.number().min(0),
+  }),
 });
 
 export const appConfigSchema = z.strictObject({

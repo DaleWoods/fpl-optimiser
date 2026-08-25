@@ -69,9 +69,14 @@ export interface StateOfPlay {
  * had uploaded.
  */
 const SOURCES = [
-  { label: 'players & prices', runs: ['bootstrap-static', 'import:bootstrap-static'] },
-  { label: 'fixtures', runs: ['fixtures', 'import:fixtures'] },
+  { label: 'players & prices', runs: ['bootstrap-static', 'import:bootstrap-static'], oneOff: false },
+  { label: 'fixtures', runs: ['fixtures', 'import:fixtures'], oneOff: false },
   {
+    // A genuine one-off: last season's history never changes once it is in, and it can go
+    // weeks between the automatic element-summary refresh (only after a gameweek finishes).
+    // Judging it by the same few-hours-old threshold as the weekly sources meant it was
+    // permanently reported "stale" - present, correct, and untouched is not the same thing as
+    // out of date, so age does not apply here: only whether it has ever been imported at all.
     label: 'last season',
     runs: [
       'element-summary',
@@ -79,8 +84,13 @@ const SOURCES = [
       'import:season-csv',
       'import:gameweek-csv',
     ],
+    oneOff: true,
   },
-  { label: 'your squad', runs: ['entry', 'import:entry', 'import:picks', 'import:entry-history'] },
+  {
+    label: 'your squad',
+    runs: ['entry', 'import:entry', 'import:picks', 'import:entry-history'],
+    oneOff: false,
+  },
 ] as const;
 
 /**
@@ -106,7 +116,7 @@ export function getStateOfPlay(
       source: source.label,
       lastSuccessAt,
       ageSeconds,
-      stale: ageSeconds === null || ageSeconds > options.staleAfterSeconds,
+      stale: source.oneOff ? lastSuccessAt === null : ageSeconds === null || ageSeconds > options.staleAfterSeconds,
     };
   });
 

@@ -407,6 +407,31 @@ Before the season's first deadline there is no squad to load at all — the pick
 nothing to return. That is handled as an expected state, not an error: manager state is still
 recorded and a note explains why the squad is empty.
 
+### Free transfers: gameweek 2 is always exactly 1, never 2
+
+Per the [official rules](https://fantasy.premierleague.com/en/help/rules) ("After your first
+deadline you will receive 1 free transfer each Gameweek"), free transfers do not exist as a
+resource during gameweek 1 — it's unlimited, free-form squad building, with nothing to bank.
+`deriveFreeTransfers()` (`src/domain/freeTransfers.ts`) skips gameweek 1's own history record
+for exactly this reason: it neither consumes nor rolls over an allowance. Gameweek 3 is the
+earliest a manager can ever hold 2.
+
+### "Suggested transfers" is a ranked list of alternatives, not a plan
+
+Each card is costed as if it were the *only* transfer made this gameweek — a standalone
+alternative for one transfer slot, not a shopping list to act on all at once. Several may even
+target the same replacement, which is exactly why they can't all be done together. Make at most
+as many as your free transfer count; anything beyond that costs a hit.
+
+A squad member projected below `weights.transfers.priorityFixXPtsThreshold` (`config/model.weights.json`)
+is a **dead slot** — hurt, or dropped down the pecking order by a summer signing the model has
+already worked out from the evidence, but who still needs a human to notice the squad has an
+empty seat in it. That player's best available replacement is always shown, marked **Priority
+fix**, regardless of how it ranks by raw points — burying it under flashier-but-optional
+upgrades elsewhere would be actively misleading. If no single transfer can fix it within budget
+(a player already at the position's price floor has nowhere cheaper to go), that's reported as
+an explicit note instead of a silent gap.
+
 ### Positions are never hardcoded
 
 `config/rules.json` declares the *rules* for a position (how many in a squad, how many can

@@ -181,5 +181,16 @@
     ],
     "benchWeight": 0.12,
     "benchGoalkeeperWeight": 0.03
+  },
+
+  "transfers": {
+    "$comment": [
+      "priorityFixXPtsThreshold: below this many points for the gameweek, a squad member is",
+      "treated as a dead slot regardless of how the raw numbers rank - see findTransfers() in",
+      "src/report/recommend.ts. 1.0 sits well below a normal fringe player's projection (bench",
+      "players with a genuine game to come typically project 1.5-2+) and comfortably above a",
+      "backup goalkeeper or an unused-substitute's near-zero projection."
+    ],
+    "priorityFixXPtsThreshold": 1.0
   }
 }

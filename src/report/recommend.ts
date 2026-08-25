@@ -33,6 +33,9 @@ export interface TransferOption {
   horizonGain: number;
   hitCost: number;
   reason: string;
+  /** True when `out` is a dead squad slot (see weights.transfers.priorityFixXPtsThreshold) -
+   *  surfaced regardless of how it ranks by raw point swing against flashier options. */
+  priority: boolean;
 }
 
 /**
@@ -395,9 +398,20 @@ export function loadSquadForChips(
 /**
  * Find the best single transfers.
  *
+ * These are ranked ALTERNATIVES for a single transfer slot, not a bundle to make all at once -
+ * each one is costed as if it were the only transfer made this gameweek. Making several of them
+ * together would need that many free transfers (or hits on top), and several may even target
+ * the same replacement, which is exactly why they cannot all be done together. The caller is
+ * responsible for making that unambiguous to whoever reads the list.
+ *
  * Each candidate swap is evaluated by re-solving the starting XI for the resulting squad, so
  * the gain reflects what would actually be fielded rather than a naive comparison of the two
  * players' projections - bringing in a good player who would sit on the bench is worth nothing.
+ *
+ * A dead squad slot (see weights.transfers.priorityFixXPtsThreshold) is guaranteed its best fix
+ * in the result even when the raw point swing of fixing it ranks below a flashier upgrade
+ * elsewhere - a squad member contributing nothing is worse than any single point total says, and
+ * burying that fix under five better-ranked but non-urgent options would be actively misleading.
  */
 async function findTransfers(
   squad: readonly ProjectedPlayer[],
@@ -412,7 +426,7 @@ async function findTransfers(
     horizon: Horizon;
     captainConsistencyBonus: Map<number, number>;
   },
-): Promise<TransferOption[]> {
+): Promise<{ options: TransferOption[]; unresolvedPriority: ProjectedPlayer[] }> {
   const selectionOptions = { captainConsistencyBonus: options.captainConsistencyBonus };
   const baseline = await selectBestEleven(squad, rules, weights, solver, selectionOptions);
   const ownedIds = new Set(squad.map((player) => player.playerId));
@@ -483,6 +497,8 @@ async function findTransfers(
             : ` The run of fixtures after this gameweek trims ${Math.abs(horizonGain).toFixed(2)} off that, but it still holds up.`
           : '';
 
+      const priority = out.xPts < weights.transfers.priorityFixXPtsThreshold;
+
       results.push({
         out,
         in: incoming,
@@ -490,7 +506,9 @@ async function findTransfers(
         gainBeforeHit: Math.round(gainBeforeHit * 100) / 100,
         horizonGain: Math.round(horizonGain * 100) / 100,
         hitCost,
+        priority,
         reason:
+          (priority ? `${out.name} is barely projected to feature at all - ` : '') +
           `${incoming.name} (${incoming.clubShort}, £${(incoming.price / 10).toFixed(1)}m) projects ` +
           `${incoming.xPts.toFixed(2)} against ${out.name}'s ${out.xPts.toFixed(2)} this gameweek` +
           (hitCost > 0 ? `, and is worth it even after a -${hitCost} hit` : '') +
@@ -500,7 +518,30 @@ async function findTransfers(
     }
   }
 
-  return results.sort((a, b) => b.netGain - a.netGain).slice(0, 5);
+  const sorted = results.sort((a, b) => b.netGain - a.netGain);
+
+  // Every dead squad slot's single best fix, one per player, regardless of rank.
+  const priorityOptions = new Map<number, TransferOption>();
+  for (const option of sorted) {
+    if (option.priority && !priorityOptions.has(option.out.playerId)) {
+      priorityOptions.set(option.out.playerId, option);
+    }
+  }
+
+  const rest = sorted.filter((option) => !priorityOptions.has(option.out.playerId));
+  const shown = [...priorityOptions.values(), ...rest]
+    .slice(0, Math.max(5, priorityOptions.size))
+    .sort((a, b) => Number(b.priority) - Number(a.priority) || b.netGain - a.netGain);
+
+  // A dead slot with no affordable single-transfer fix at all - budget alone can rule every
+  // candidate out (a keeper already at the price floor has nowhere cheaper to go). Reported so
+  // the gap is an explicit, explained note rather than a silent omission.
+  const unresolvedPriority = squad.filter(
+    (player) =>
+      player.xPts < weights.transfers.priorityFixXPtsThreshold && !priorityOptions.has(player.playerId),
+  );
+
+  return { options: shown, unresolvedPriority };
 }
 
 /**
@@ -748,16 +789,40 @@ export async function recommend(
       )
       .get(options.teamId!) as { ft: number | null } | undefined)?.ft ?? 1;
 
-  const transfers = await findTransfers(owned.squad, projections, rules, weights, solver, {
-    bank,
-    freeTransfers,
-    candidatesPerPosition: options.transferCandidates ?? 12,
-    horizon,
-    captainConsistencyBonus,
-  });
+  const { options: transfers, unresolvedPriority } = await findTransfers(
+    owned.squad,
+    projections,
+    rules,
+    weights,
+    solver,
+    {
+      bank,
+      freeTransfers,
+      candidatesPerPosition: options.transferCandidates ?? 12,
+      horizon,
+      captainConsistencyBonus,
+    },
+  );
 
   if (transfers.length === 0) {
     notes.push('No single transfer improves the projected score enough to be worth making.');
+  }
+  if (transfers.some((t) => t.priority)) {
+    notes.push(
+      `Below is a ranked list of alternative transfers, costed as if each were the only one ` +
+        `made - not a bundle to do all at once. Make at most ${freeTransfers} for free` +
+        (freeTransfers < 5 ? `; anything beyond that costs ${rules.transfers.hitCost} points each` : '') +
+        `. Options marked as fixing a squad member barely projected to feature are shown ` +
+        `regardless of rank, because leaving that slot empty is worse than any point total says.`,
+    );
+  }
+  for (const player of unresolvedPriority) {
+    notes.push(
+      `${player.name} is projected at only ${player.xPts.toFixed(2)} points this gameweek, but no ` +
+        `single transfer within your budget (£${(bank / 10).toFixed(1)}m spare) fixes it - the ` +
+        'replacements that would are all priced above what selling just this one player affords. ' +
+        'Freeing up funds by downgrading elsewhere first, or accepting a hit, may be the only way.',
+    );
   }
 
   const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);

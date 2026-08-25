@@ -60,11 +60,24 @@ export function deriveFreeTransfers(
 
   const ordered = [...history].sort((a, b) => a.event - b.event);
 
-  // The first gameweek of the season grants the first free transfer for the gameweek after it;
-  // transfers made before the very first deadline are unlimited and do not consume anything.
+  // Free transfers as a resource do not exist until after the first deadline - gameweek 1 is
+  // unlimited, free-form squad building, not "1 free transfer, unused, banked". Seeding banked
+  // at the weekly allowance already represents that: gameweek 2 always starts at exactly 1,
+  // never 2, no matter what gameweek 1's own record says. Confirmed against the FPL rules page
+  // ("After your first deadline you will receive 1 free transfer each Gameweek") - treating
+  // gameweek 1 as a normal roll-over-eligible gameweek was a real bug, double-counting it on
+  // top of this seed and reporting 2 free transfers for gameweek 2 rather than 1.
   let banked = freePerGameweek;
 
   for (const record of ordered) {
+    if (record.event === 1) {
+      workings.push(
+        `GW1: unlimited transfers before the first deadline - free transfers start from GW2, ` +
+          `${banked} available.`,
+      );
+      continue;
+    }
+
     const chip = record.chip ?? options.chipUsage?.get(record.event) ?? null;
     const isWildcard = chip === 'wildcard';
     const isFreeHit = chip === 'freehit';

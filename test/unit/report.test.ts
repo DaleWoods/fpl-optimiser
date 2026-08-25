@@ -2,7 +2,7 @@ import type { Database } from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { StubFplApi } from '../../src/api/replayClient.js';
 import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } from '../../src/config/load.js';
-import { openTestDatabase } from '../../src/db/index.js';
+import { nowSeconds, openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
 import { shouldPrimeOnBoot, startServer, type RunningServer } from '../../src/report/server.js';
 import { formatFixtures, renderDashboard } from '../../src/report/views.js';
@@ -114,6 +114,27 @@ describe('state of play', () => {
     const bootstrap = state.freshness.find((entry) => entry.source === 'players & prices');
     expect(bootstrap?.stale).toBe(false);
     expect(state.playerCount).toBe(60);
+  });
+
+  it('never reports "last season" as stale by age - it is a genuine one-off, not a weekly source', () => {
+    // A week-old import here is not out of date, it's just untouched since it never needs to
+    // be. Judging it by the same few-hours-old threshold as bootstrap-static meant it was
+    // permanently flagged stale for anyone who had already done the one-off import correctly.
+    const longAgo = nowSeconds() - 7 * 24 * 3600;
+    db.prepare(
+      `INSERT INTO ingest_run (source, started_at, finished_at, ok, from_cache, rows_written, note)
+       VALUES ('element-summary', ?, ?, 1, 0, 1, NULL)`,
+    ).run(longAgo, longAgo);
+
+    const state = getStateOfPlay(db, { teamId, staleAfterSeconds: 3600 });
+    const lastSeason = state.freshness.find((entry) => entry.source === 'last season');
+    expect(lastSeason?.stale).toBe(false);
+  });
+
+  it('still reports "last season" as stale when it has never been imported at all', () => {
+    const state = getStateOfPlay(db, { teamId, staleAfterSeconds: 3600 });
+    const lastSeason = state.freshness.find((entry) => entry.source === 'last season');
+    expect(lastSeason?.stale).toBe(true);
   });
 
   it('finds the next upcoming deadline and never a past one', async () => {

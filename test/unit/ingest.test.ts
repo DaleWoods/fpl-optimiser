@@ -487,9 +487,23 @@ describe('free transfer derivation', () => {
     expect(result.caveats.join(' ')).toMatch(/unlimited/i);
   });
 
-  it('rolls an unused transfer over', () => {
+  it('gives exactly one free transfer for gameweek 2, regardless of what gameweek 1 says', () => {
+    // Gameweek 1 is unlimited, free-form squad selection - it neither consumes nor banks a
+    // free transfer. Per the FPL rules page, free transfers only start "after your first
+    // deadline", so gameweek 2 must always be exactly 1, never 2.
     const result = deriveFreeTransfers(
       [{ event: 1, transfersMade: 0, transfersCost: 0 }],
+      rules,
+    );
+    expect(result.freeTransfers).toBe(1);
+  });
+
+  it('rolls an unused transfer over from gameweek 2 into gameweek 3', () => {
+    const result = deriveFreeTransfers(
+      [
+        { event: 1, transfersMade: 0, transfersCost: 0 },
+        { event: 2, transfersMade: 0, transfersCost: 0 },
+      ],
       rules,
     );
     expect(result.freeTransfers).toBe(2);
@@ -517,7 +531,10 @@ describe('free transfer derivation', () => {
 
   it('never drops below zero when a hit is taken', () => {
     const result = deriveFreeTransfers(
-      [{ event: 1, transfersMade: 4, transfersCost: 12 }],
+      [
+        { event: 1, transfersMade: 0, transfersCost: 0 },
+        { event: 2, transfersMade: 4, transfersCost: 12 },
+      ],
       rules,
     );
     expect(result.freeTransfers).toBe(1);
@@ -532,7 +549,9 @@ describe('free transfer derivation', () => {
       ],
       rules,
     );
-    expect(result.freeTransfers).toBe(4);
+    // GW2 banks 1 unused (2 available for GW3), then the wildcard itself keeps that 2 and
+    // adds GW4's allowance on top.
+    expect(result.freeTransfers).toBe(3);
   });
 
   it('keeps banked transfers through a free hit', () => {
@@ -543,7 +562,7 @@ describe('free transfer derivation', () => {
       ],
       rules,
     );
-    expect(result.freeTransfers).toBe(3);
+    expect(result.freeTransfers).toBe(2);
   });
 
   it('shows its workings, so derived advice can be audited', () => {
@@ -556,13 +575,16 @@ describe('free transfer derivation', () => {
     );
     expect(result.workings).toHaveLength(2);
     expect(result.workings[0]).toMatch(/GW1/);
-    expect(result.freeTransfers).toBe(2);
+    expect(result.freeTransfers).toBe(1);
   });
 
   it('flags a mismatch against the hit the API actually charged', () => {
     // We think one transfer was free; the API says it cost 4 points. Our count has drifted.
     const result = deriveFreeTransfers(
-      [{ event: 1, transfersMade: 1, transfersCost: 4 }],
+      [
+        { event: 1, transfersMade: 0, transfersCost: 0 },
+        { event: 2, transfersMade: 1, transfersCost: 4 },
+      ],
       rules,
     );
     expect(result.confident).toBe(false);

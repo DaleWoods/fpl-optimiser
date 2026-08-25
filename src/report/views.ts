@@ -34,10 +34,12 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
       </tr>`,
     )
     .join('');
-  const staleBanner = state.anyStale
-    ? `<div class="banner warn"><strong>Some data is stale.</strong> Import a fresh
-       bootstrap-static before trusting a recommendation.</div>`
-    : '';
+  const staleSources = state.freshness.filter((entry) => entry.stale).map((entry) => entry.source);
+  const staleBanner =
+    staleSources.length > 0
+      ? `<div class="banner warn"><strong>Some data is stale: ${escapeHtml(staleSources.join(', '))}.</strong>
+         Refresh it before trusting a recommendation &mdash; see Data freshness below.</div>`
+      : '';
 
   const deadline = state.nextDeadline
     ? `${escapeHtml(state.nextDeadline.name ?? `GW${state.nextDeadline.eventId}`)}
@@ -256,8 +258,8 @@ export function renderRecommendation(rec: Recommendation): string {
     rec.transfers.length > 0
       ? rec.transfers
           .map(
-            (transfer) => `<div class="card">
-              <h3>${escapeHtml(transfer.out.name)} &rarr; ${escapeHtml(transfer.in.name)}
+            (transfer) => `<div class="card"${transfer.priority ? ' style="border-color:var(--warn-fg)"' : ''}>
+              <h3>${transfer.priority ? '<span class="pill" style="background:var(--warn-fg);color:#000">Priority fix</span> ' : ''}${escapeHtml(transfer.out.name)} &rarr; ${escapeHtml(transfer.in.name)}
                 <span class="pill good">${transfer.netGain >= 0 ? '+' : ''}${transfer.netGain.toFixed(2)} pts</span></h3>
               <p class="muted" style="margin:0">${escapeHtml(transfer.reason)}</p>
             </div>`,
@@ -340,7 +342,18 @@ export function renderRecommendation(rec: Recommendation): string {
   <h2>Bench <span class="muted" style="font-weight:400">(auto-sub order)</span></h2>
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div></div>
 
-  ${rec.transfers.length > 0 ? `<h2>Suggested transfers</h2>${transfers}` : ''}
+  ${
+    rec.transfers.length > 0
+      ? `<h2>Suggested transfers</h2>
+         <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">Each card below is a
+         standalone alternative for <strong>one</strong> transfer slot, costed as if it were the
+         only change made this gameweek &mdash; not a shopping list to act on all at once. Pick
+         the one you want (a <span class="pill" style="background:var(--warn-fg);color:#000">Priority
+         fix</span> badge means that squad member is barely projected to feature at all, and is
+         shown regardless of how it ranks by points).</p>
+         ${transfers}`
+      : ''
+  }
 
   <h2>Evidence behind these projections</h2>
   <div class="card"><ul class="tight">
