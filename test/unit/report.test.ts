@@ -346,8 +346,16 @@ describe('report server', () => {
     expect(body).toContain("Last season's stats");
     expect(body).toContain('Your squad');
     // Cadence is the point of splitting them up.
-    expect(body).toContain('Once');
+    expect(body).toContain('Nothing to do - automatic');
     expect(body).toContain('Every week');
+  });
+
+  it('offers a manual fetch button, so nothing ever strictly requires an upload', async () => {
+    const base = await start();
+    const body = await (await fetch(`${base}/import`)).text();
+
+    expect(body).toContain('id="fetch-now"');
+    expect(body).toMatch(/fetch\('\/ingest'/);
   });
 
   it('keeps the old /upload link working', async () => {

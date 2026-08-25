@@ -623,9 +623,20 @@ describe('full ingestion', () => {
     }
   });
 
-  it('skips per-player history when not asked for it', async () => {
+  it('skips per-player history when not asked for it, once last season is already captured', async () => {
     const db = openTestDatabase();
     const api = new StubFplApi({ bootstrap: fakeBootstrap(), fixtures: [] });
+
+    // A genuinely fresh database has no last-season history yet, which is itself reason enough
+    // to fetch it automatically (see below) - so this needs last season already seeded to
+    // isolate "not asked for it" from that separate trigger. ingestBootstrap first, so player 1
+    // exists for the foreign key.
+    await ingestBootstrap(db, api, rules);
+    db.prepare(
+      `INSERT INTO player_season_history (player_id, season_name, total_points, updated_at, raw_json)
+       VALUES (1, '2025/26', 100, 0, '{}')`,
+    ).run();
+
     const result = await ingestAll(db, api, rules, {});
     expect(result.summaries).toBeNull();
     expect(result.entry).toBeNull();
@@ -655,7 +666,55 @@ describe('full ingestion', () => {
     const api = new StubFplApi({
       bootstrap: fakeBootstrap({ events: [fakeEvent(1, { finished: true })] }),
       fixtures: [],
-      elementSummary: { 1: fakeElementSummary(1, [{ minutes: 90 }]) },
+      elementSummary: {
+        1: {
+          ...fakeElementSummary(1, [{ minutes: 90 }]),
+          history_past: [{ season_name: '2025/26', total_points: 120, minutes: 2000 }],
+        },
+      },
+    });
+    await ingestAll(db, api, rules, {});
+    const second = await ingestAll(db, api, rules, {});
+
+    expect(second.summaries).toBeNull();
+  });
+
+  it('fetches per-player history automatically the first time, to seed last season - not just after a gameweek finishes', async () => {
+    // Before a ball is kicked there is no finished gameweek to hang the auto-fetch off, but
+    // last season's history still needs to arrive from somewhere without anyone uploading a
+    // file for it.
+    const db = openTestDatabase();
+    const api = new StubFplApi({
+      bootstrap: fakeBootstrap(),
+      fixtures: [],
+      elementSummary: {
+        1: {
+          ...fakeElementSummary(1, []),
+          history_past: [{ season_name: '2025/26', total_points: 180, minutes: 3000 }],
+        },
+      },
+    });
+
+    const result = await ingestAll(db, api, rules, {});
+
+    expect(result.summaries?.playersIngested).toBeGreaterThan(0);
+    const row = db
+      .prepare('SELECT total_points AS pts FROM player_season_history WHERE player_id = 1')
+      .get() as { pts: number } | undefined;
+    expect(row?.pts).toBe(180);
+  });
+
+  it('does not keep re-fetching once last season is seeded, even without a finished gameweek', async () => {
+    const db = openTestDatabase();
+    const api = new StubFplApi({
+      bootstrap: fakeBootstrap(),
+      fixtures: [],
+      elementSummary: {
+        1: {
+          ...fakeElementSummary(1, []),
+          history_past: [{ season_name: '2025/26', total_points: 180, minutes: 3000 }],
+        },
+      },
     });
     await ingestAll(db, api, rules, {});
     const second = await ingestAll(db, api, rules, {});

@@ -66,21 +66,22 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
   {
     id: 'last-season',
     title: "Last season's stats",
-    cadence: 'Once',
+    cadence: 'Nothing to do - automatic',
     cadenceTone: 'once',
     what:
       "Points, minutes and underlying stats, one row per player per gameweek (or season " +
       "totals) - or the FPL API's own element-summary files. Before a ball is kicked, a " +
       "completed season's file is the only real evidence there is, and stops opening-gameweek " +
-      "projections ranking on noise. Genuinely a one-off: once a season is in, it never needs " +
-      "re-importing. Current-season results do NOT need uploading here any more - the app now " +
-      "fetches its own element-summary for every player automatically once each gameweek " +
-      "finishes, on the same background refresh that already keeps prices and injuries current. " +
-      "This slot still accepts a current-season file too, purely as a shortcut if you want a " +
-      "result recorded sooner than the next scheduled refresh, or you are running locally " +
-      "without the background scheduler on - the app tells the two apart automatically by the " +
-      "season each file names. Players are matched by name and club, never by the id in the " +
-      "file, because FPL reassigns ids between seasons.",
+      "projections ranking on noise. Nothing to upload for this any more, in either direction: " +
+      "the app fetches its own element-summary for every player automatically - once, the " +
+      "first time the background refresh runs and finds no last-season history at all (no " +
+      "gameweek needs to have finished first), and again for CURRENT-season results once each " +
+      "gameweek finishes - on the same refresh that already keeps prices and injuries current. " +
+      "This slot still accepts a file too, purely as a shortcut if you want something recorded " +
+      "sooner than the next scheduled refresh, or you are running locally without the " +
+      "background scheduler on - the app tells last season and this season's files apart " +
+      "automatically by the season each one names. Players are matched by name and club, " +
+      "never by the id in the file, because FPL reassigns ids between seasons.",
     source: `${FPL}/element-summary/1/`,
     sourceLabel: 'element-summary (one per player)',
     accepts: ['season-csv', 'element-summary'],
@@ -95,15 +96,18 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
   {
     id: 'my-squad',
     title: 'Your squad',
-    cadence: 'Every week',
+    cadence: 'Nothing to do - automatic',
     cadenceTone: 'weekly',
     what:
-      'Your 15 for a gameweek, plus your chip and transfer history. Loading this turns on ' +
-      'transfer advice and points-based chip valuation. Only public once a gameweek has ' +
-      'started - before the first deadline there is nothing to download. The file itself ' +
-      "only lists player IDs, never names - that's the FPL API, not a bug in this file; the " +
-      'app resolves each ID against the player data already imported from bootstrap-static ' +
-      'once you upload it here.',
+      'Your 15, bank, chip and transfer history. This is what turns on transfer advice and ' +
+      'points-based chip valuation, but there is nothing to upload for it: whenever a team ID ' +
+      'is configured, the server loads it itself on every background refresh, the same as ' +
+      "prices and fixtures. Only public once a gameweek has started - before the first " +
+      'deadline the FPL API has nothing to return yet, automatically or otherwise. This slot ' +
+      'still takes a manual upload too, purely as a shortcut if you want it sooner than the ' +
+      "next scheduled refresh. The file itself only lists player IDs, never names - that's " +
+      'the FPL API, not a bug in this file; the app resolves each ID against the player data ' +
+      'already imported from bootstrap-static.',
     source: `${FPL}/entry/2651633/event/1/picks/`,
     sourceLabel: 'your picks for a gameweek',
     accepts: ['picks', 'entry', 'entry-history'],

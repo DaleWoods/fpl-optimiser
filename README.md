@@ -152,13 +152,25 @@ Re-uploading the same file updates rather than duplicates.
 
 ## What to upload, and how often
 
-| Data | How often | Why |
+Short answer: nothing, ever, on the deployed server. Every one of these already arrives on its
+own, on the same background refresh (every few hours by default, `--ingest-interval`), plus once
+immediately on a cold start — see `shouldPrimeOnBoot` in `src/report/server.ts` for exactly when
+that immediate fetch does and doesn't fire. The **Import Data** tab still has a manual "Fetch
+latest data now" button and file-upload slots, but they exist for two narrower reasons: forcing
+a refresh sooner than the schedule, and supplying detail (a community stats export's underlying
+numbers) the FPL API itself doesn't carry.
+
+| Data | Arrives automatically when | Manual upload still useful for |
 |---|---|---|
-| Last season's stats (`element-summary`, or a CSV) | **Once** | It never changes. Stored permanently. |
-| This season's results | **Nothing to do — automatic** | The server fetches every player's own `element-summary` itself, once a gameweek finishes, on the same background refresh that already handles prices. This is what feeds the Accuracy tab and rolls into next season's opening-gameweek evidence. The same slot still takes a CSV too, only useful if you want a result recorded sooner than the next scheduled refresh, or you're running locally without the background scheduler on (see "Running locally instead" below). |
-| `bootstrap-static` | **Every week, before the deadline** | Prices, form, injuries and news all move. Each upload also stores a snapshot, so price and form *trends* accumulate — the more often you upload, the better change detection gets. |
-| `fixtures` | **Whenever games are rearranged** | European progress and cup ties move Premier League games, which is what creates the double and blank gameweeks that decide chip timing. |
-| Your `picks` | **Each week once the gameweek has started** | Loads your actual 15, which turns on transfer advice and points-based chip valuation. |
+| `bootstrap-static` (prices, form, injuries) | Every background refresh | Forcing a refresh sooner |
+| `fixtures` | Every background refresh | Forcing a refresh sooner |
+| Last season's stats (`element-summary`) | Once, the first refresh that finds none captured yet — no gameweek needs to finish first | A CSV with underlying stats (xG, defensive contribution) the API's own `element-summary` doesn't carry |
+| This season's results | Once per gameweek, the first refresh after it finishes | Recording a result sooner than the next scheduled refresh |
+| Your `picks` | Every background refresh, once `FPL_TEAM_ID` is set and a gameweek has started | Loading a squad sooner than the next scheduled refresh |
+
+Running locally without the background scheduler (`--ingest-interval 0`, or the CLI's one-shot
+`fpl ingest`) is the one case where the automation genuinely isn't there - see "Running locally
+instead" below for what that means for you.
 
 ## Measuring the model
 
@@ -431,6 +443,24 @@ fix**, regardless of how it ranks by raw points — burying it under flashier-bu
 upgrades elsewhere would be actively misleading. If no single transfer can fix it within budget
 (a player already at the position's price floor has nowhere cheaper to go), that's reported as
 an explicit note instead of a silent gap.
+
+### When one swap isn't enough: whole-squad rebuilds
+
+Every card in "Suggested transfers" is priced as a single 1-for-1 swap - but a genuinely better
+player is sometimes only affordable by trimming two or three others to fund them, and no
+1-for-1 search can ever find that: every candidate it considers has to pay for itself entirely
+on its own. `selectBestTransferPlan()` (`src/optimise/squad.ts`) solves this as one whole-squad
+problem instead, the same integer program that already builds a squad from scratch, given the
+current squad's total value (squad cost plus bank) as its budget and a real cost for every
+transfer beyond the free allowance. It doesn't try combinations by trial and error - the hit
+cost is folded straight into the objective (a `max(0, transfers - free)` penalty via a slack
+variable), so the solver finds the provably best number of changes on its own, including "none"
+when nothing beats what you already have.
+
+This only ever appears as **"Squad rebuild worth considering"** - a distinct alternative below
+the single-transfer list, never merged into it - and only when it involves more than one change
+*and* beats the best single option shown above. A plan matching the top single pick, or a worse
+one, is not shown at all: there is nothing to add over what is already on the page.
 
 ### Positions are never hardcoded
 

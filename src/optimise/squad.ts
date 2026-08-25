@@ -416,6 +416,193 @@ export async function selectBestSquad(
   return { squad, eleven, totalCost, bankRemaining: budget - totalCost };
 }
 
+export interface TransferPlanSelection {
+  squad: ProjectedPlayer[];
+  eleven: StartingEleven;
+  totalCost: number;
+  bankRemaining: number;
+  /** Reference-squad players not in the new squad. */
+  transfersOut: ProjectedPlayer[];
+  /** New-squad players not in the reference squad. Same length as transfersOut. */
+  transfersIn: ProjectedPlayer[];
+  hitsTaken: number;
+  hitCost: number;
+}
+
+/**
+ * The best legal squad reachable from a reference squad within a transfer budget - not just one
+ * swap at a time, the whole squad considered together.
+ *
+ * A single good player is sometimes only affordable by trimming two or three others to fund
+ * them - findTransfers()'s pairwise search can never find that, because every candidate it
+ * considers has to be a net gain entirely on its own, one swap at a time. This solves the whole
+ * thing as one problem instead: spend up to the full current squad value plus bank, and pay a
+ * hit for every transfer beyond the free allowance, exactly as findTransfers() does - but let
+ * the solver decide how many changes are actually worth making, all at once, provably optimal
+ * for the constraints given rather than found by trial and error.
+ *
+ * The hit cost is folded straight into the objective via a slack variable `hits`, bounded below
+ * by zero and required to be at least (transfers made - free transfers). Since hits only ever
+ * costs the objective, the solver pushes it down to exactly that value at the optimum - the
+ * standard linear-programming way to fold in a max(0, x) penalty without branching on it.
+ */
+export async function selectBestTransferPlan(
+  pool: readonly ProjectedPlayer[],
+  referenceSquad: readonly ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+  solver: Solver,
+  options: { totalBudget: number; freeTransfers: number; hitCost: number } & SelectionOptions,
+): Promise<TransferPlanSelection> {
+  const selectable = pool.filter((player) => !player.availability.excluded);
+  assertPoolIsViable(selectable, rules, options.totalBudget);
+
+  const referenceIds = new Set(referenceSquad.map((player) => player.playerId));
+  const referenceSelectable = selectable.filter((player) => referenceIds.has(player.playerId));
+
+  const constraints: Constraint[] = [
+    {
+      name: 'squad_size',
+      terms: selectable.map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      bound: { type: 'equal', value: rules.squad.size },
+    },
+    {
+      name: 'budget',
+      terms: selectable.map((player) => ({
+        variable: IN_SQUAD(player.playerId),
+        coefficient: player.price,
+      })),
+      bound: { type: 'atMost', value: options.totalBudget },
+    },
+    // hits must be non-negative: an explicit row rather than relying on an implicit default
+    // column bound, so this holds regardless of how the underlying solver treats an unlisted
+    // variable.
+    { name: 'hits_non_negative', terms: [{ variable: 'hits', coefficient: 1 }], bound: { type: 'atLeast', value: 0 } },
+    // hits >= transfersMade - freeTransfers, i.e. hits >= (squadSize - kept) - freeTransfers,
+    // rearranged so every term has a fixed coefficient: hits + sum(kept) >= squadSize - free.
+    {
+      name: 'hit_slack',
+      terms: [
+        { variable: 'hits', coefficient: 1 },
+        ...referenceSelectable.map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      ],
+      bound: { type: 'atLeast', value: rules.squad.size - options.freeTransfers },
+    },
+  ];
+
+  for (const [position, required] of Object.entries(rules.squad.positionCounts)) {
+    constraints.push({
+      name: `squad_position_${position}`,
+      terms: selectable
+        .filter((player) => player.position === position)
+        .map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      bound: { type: 'equal', value: required },
+    });
+  }
+
+  const clubIds = [...new Set(selectable.map((player) => player.clubId))];
+  for (const clubId of clubIds) {
+    constraints.push({
+      name: `club_limit_${clubId}`,
+      terms: selectable
+        .filter((player) => player.clubId === clubId)
+        .map((player) => ({ variable: IN_SQUAD(player.playerId), coefficient: 1 })),
+      bound: { type: 'atMost', value: rules.squad.maxPerClub },
+    });
+  }
+
+  for (const player of selectable) {
+    constraints.push({
+      name: `starter_owned_${player.playerId}`,
+      terms: [
+        { variable: IN_XI(player.playerId), coefficient: 1 },
+        { variable: IN_SQUAD(player.playerId), coefficient: -1 },
+      ],
+      bound: { type: 'atMost', value: 0 },
+    });
+  }
+
+  const program: IntegerProgram = {
+    name: 'best_transfer_plan',
+    direction: 'maximise',
+    objective: [
+      ...selectable.map((player) => ({
+        variable: IN_SQUAD(player.playerId),
+        coefficient:
+          selectionValue(player, weights) * benchWeightFor(player, rules, weights, options) +
+          futureValueBonusFor(player, options),
+      })),
+      ...selectable.map((player) => ({
+        variable: IN_XI(player.playerId),
+        coefficient:
+          selectionValue(player, weights) * (1 - benchWeightFor(player, rules, weights, options)),
+      })),
+      ...selectable.map((player) => ({
+        variable: IS_CAPTAIN(player.playerId),
+        coefficient:
+          selectionValue(player, weights) * (rules.captain.multiplier - 1) +
+          captainBonusFor(player, options),
+      })),
+      { variable: 'hits', coefficient: -options.hitCost },
+    ],
+    constraints: [
+      ...constraints,
+      ...elevenConstraints(selectable, rules),
+      ...captaincyConstraints(selectable),
+    ],
+    binaries: [
+      ...selectable.map((player) => IN_SQUAD(player.playerId)),
+      ...selectable.map((player) => IN_XI(player.playerId)),
+      ...selectable.map((player) => IS_CAPTAIN(player.playerId)),
+    ],
+  };
+
+  const result = await solver.solve(program);
+  if (!result.optimal) {
+    throw new InfeasibleError(
+      `No legal transfer plan could be found within £${(options.totalBudget / 10).toFixed(1)}m ` +
+        `(solver reported: ${result.status}).`,
+    );
+  }
+
+  const squad = selectable.filter(
+    (player) => (result.values.get(IN_SQUAD(player.playerId)) ?? 0) > 0.5,
+  );
+  const starters = squad.filter((player) => (result.values.get(IN_XI(player.playerId)) ?? 0) > 0.5);
+  const starterIds = new Set(starters.map((player) => player.playerId));
+  const bench = squad.filter((player) => !starterIds.has(player.playerId));
+  const captain = starters.find(
+    (player) => (result.values.get(IS_CAPTAIN(player.playerId)) ?? 0) > 0.5,
+  );
+  if (!captain) throw new InfeasibleError('Solver returned no captain');
+
+  const totalCost = squad.reduce((sum, player) => sum + player.price, 0);
+
+  assertLegalSquad(squad, rules, { budget: options.totalBudget });
+  const eleven = buildEleven(starters, bench, captain, rules, weights);
+  assertLegalStartingEleven(eleven.starters, eleven.bench, rules, {
+    squad,
+    captainId: eleven.captain.playerId,
+    viceCaptainId: eleven.viceCaptain.playerId,
+  });
+
+  const newIds = new Set(squad.map((player) => player.playerId));
+  const transfersOut = referenceSquad.filter((player) => !newIds.has(player.playerId));
+  const transfersIn = squad.filter((player) => !referenceIds.has(player.playerId));
+  const hitsTaken = Math.max(0, transfersOut.length - options.freeTransfers);
+
+  return {
+    squad,
+    eleven,
+    totalCost,
+    bankRemaining: options.totalBudget - totalCost,
+    transfersOut,
+    transfersIn,
+    hitsTaken,
+    hitCost: hitsTaken * options.hitCost,
+  };
+}
+
 /** Fail with something actionable before handing an impossible problem to the solver. */
 function assertPoolIsViable(
   pool: readonly ProjectedPlayer[],

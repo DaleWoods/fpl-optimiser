@@ -7,6 +7,7 @@ import {
   orderBench,
   selectBestEleven,
   selectBestSquad,
+  selectBestTransferPlan,
   selectionValue,
   type SquadSelection,
 } from '../../src/optimise/squad.js';
@@ -415,5 +416,79 @@ describe('best squad from the whole pool', () => {
     } else {
       expect(greedyCost > rules.squad.budget || !greedyLegal).toBe(true);
     }
+  });
+});
+
+describe('best transfer plan (whole-squad rebuild within budget)', () => {
+  it('finds a two-player swap that only pays off together, when no single swap could afford it', async () => {
+    const squad = legalSquad(); // 15 players, £4.5m each, xPts 4 each, clubs 1-5 (3 each)
+    const totalBudget = squad.reduce((sum, p) => sum + p.price, 0); // 675, no bank
+
+    // A standout midfielder at £7.5m - a single swap could only free bank(0) + one £4.5m
+    // player's price = £4.5m, nowhere near enough on its own. Affordable only by also
+    // downgrading a second player to free the rest of the budget.
+    const star = player({ playerId: 101, name: 'Star', position: 'MID', clubId: 9, price: 75, xPts: 12 });
+    const cheapDef = player({ playerId: 102, name: 'CheapDef', position: 'DEF', clubId: 9, price: 10, xPts: 2 });
+    const pool = [...squad, star, cheapDef];
+
+    const plan = await selectBestTransferPlan(pool, squad, rules, weights, solver, {
+      totalBudget,
+      freeTransfers: 1,
+      hitCost: rules.transfers.hitCost,
+    });
+
+    expect(plan.transfersIn.map((p) => p.playerId)).toContain(101);
+    expect(plan.transfersOut).toHaveLength(plan.transfersIn.length);
+    expect(plan.hitsTaken).toBe(plan.transfersOut.length - 1);
+    expect(plan.totalCost).toBeLessThanOrEqual(totalBudget);
+  });
+
+  it('makes no changes when nothing in the pool beats the reference squad', async () => {
+    const squad = legalSquad();
+    const totalBudget = squad.reduce((sum, p) => sum + p.price, 0);
+    // Same price, strictly worse - never worth taking even for free.
+    const worseAlternative = player({ playerId: 101, position: 'MID', clubId: 9, price: 45, xPts: 3 });
+
+    const plan = await selectBestTransferPlan([...squad, worseAlternative], squad, rules, weights, solver, {
+      totalBudget,
+      freeTransfers: 1,
+      hitCost: rules.transfers.hitCost,
+    });
+
+    expect(plan.transfersOut).toEqual([]);
+    expect(plan.transfersIn).toEqual([]);
+    expect(plan.hitsTaken).toBe(0);
+  });
+
+  it('never returns a squad over budget or over the three-per-club limit', async () => {
+    const squad = legalSquad();
+    const totalBudget = squad.reduce((sum, p) => sum + p.price, 0);
+    // Offset ids well clear of legalSquad()'s 1-15 - playerPool() numbers its own players from 1.
+    const pool = playerPool({ clubs: 12, perPosition: 3 }).map((p) => ({ ...p, playerId: p.playerId + 1000 }));
+
+    const plan = await selectBestTransferPlan([...squad, ...pool], squad, rules, weights, solver, {
+      totalBudget,
+      freeTransfers: 1,
+      hitCost: rules.transfers.hitCost,
+    });
+
+    expect(validateSquad(plan.squad, rules)).toEqual([]);
+    expect(plan.totalCost).toBeLessThanOrEqual(totalBudget);
+  });
+
+  it('takes a hit only when the plan is worth more than it costs', async () => {
+    const squad = legalSquad();
+    const totalBudget = squad.reduce((sum, p) => sum + p.price, 0);
+    // A tiny upgrade, not worth a -4 hit even though it is a genuine improvement.
+    const marginallyBetter = player({ playerId: 101, position: 'MID', clubId: 9, price: 45, xPts: 4.2 });
+
+    const plan = await selectBestTransferPlan([...squad, marginallyBetter], squad, rules, weights, solver, {
+      totalBudget,
+      freeTransfers: 0,
+      hitCost: rules.transfers.hitCost,
+    });
+
+    // With no free transfers at all, a swap worth only +0.2 xPts must not be taken for a -4 hit.
+    expect(plan.transfersOut).toEqual([]);
   });
 });

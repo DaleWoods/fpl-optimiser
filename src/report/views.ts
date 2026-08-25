@@ -355,6 +355,35 @@ export function renderRecommendation(rec: Recommendation): string {
       : ''
   }
 
+  ${
+    rec.transferPlan
+      ? `<h2>Squad rebuild worth considering</h2>
+         <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">Sometimes a player is only
+         affordable by changing more than one at once &mdash; the whole squad considered
+         together, not swap by swap. This is an alternative to the single transfers above, not
+         on top of them.</p>
+         <div class="card">
+           <h3 style="margin:0 0 .4rem">${rec.transferPlan.playersOut.length} transfers
+             <span class="pill good">${rec.transferPlan.netGain >= 0 ? '+' : ''}${rec.transferPlan.netGain.toFixed(2)} pts net</span>
+             ${
+               rec.transferPlan.hitsTaken > 0
+                 ? `<span class="pill" style="background:var(--warn-fg);color:#000">-${rec.transferPlan.hitCost} hit</span>`
+                 : '<span class="pill">no hit</span>'
+             }
+           </h3>
+           <p style="margin:.3rem 0"><strong>Out:</strong> ${rec.transferPlan.playersOut
+             .map((p) => escapeHtml(p.name))
+             .join(', ')}</p>
+           <p style="margin:.3rem 0"><strong>In:</strong> ${rec.transferPlan.playersIn
+             .map((p) => escapeHtml(p.name))
+             .join(', ')}</p>
+           <p class="muted" style="margin:.3rem 0;font-size:.88rem">New squad cost
+             ${formatMoney(rec.transferPlan.totalCost)}, ${formatMoney(rec.transferPlan.bankRemaining)}
+             left in the bank.</p>
+         </div>`
+      : ''
+  }
+
   <h2>Evidence behind these projections</h2>
   <div class="card"><ul class="tight">
     <li>${rec.playersConsidered} players considered, model ${escapeHtml(rec.modelVersion)}</li>
@@ -683,12 +712,58 @@ for (const slotId of slots) {
     send(slotId, e.dataTransfer.files);
   });
 }
+
+const fetchBtn = document.getElementById('fetch-now');
+const fetchStatus = document.getElementById('fetch-status');
+if (fetchBtn) {
+  const poll = async () => {
+    try {
+      const res = await fetch('/healthz');
+      const body = await res.json();
+      if (body.ingesting) {
+        fetchStatus.textContent = 'Fetching… this can take a while the first time.';
+        setTimeout(poll, 2000);
+      } else if (body.lastIngestError) {
+        fetchStatus.textContent = 'Finished with a problem: ' + body.lastIngestError;
+        fetchBtn.disabled = false;
+      } else {
+        fetchStatus.textContent = 'Done - reloading…';
+        setTimeout(() => location.reload(), 600);
+      }
+    } catch (err) {
+      fetchStatus.textContent = 'Lost track of progress: ' + err.message;
+      fetchBtn.disabled = false;
+    }
+  };
+  fetchBtn.onclick = async () => {
+    fetchBtn.disabled = true;
+    fetchStatus.textContent = 'Started…';
+    try {
+      await fetch('/ingest', { method: 'POST' });
+      setTimeout(poll, 1000);
+    } catch (err) {
+      fetchStatus.textContent = 'Could not start: ' + err.message;
+      fetchBtn.disabled = false;
+    }
+  };
+}
 `;
 
   const body = `
-  <div class="banner info">Each slot below accepts one kind of file and checks what you give
-  it, so a file dropped in the wrong place is refused with an explanation rather than quietly
-  imported as the wrong thing.</div>
+  <div class="card" style="display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">
+    <button class="btn accent" id="fetch-now">Fetch latest data now</button>
+    <span class="muted" id="fetch-status" style="font-size:.9rem"></span>
+  </div>
+  <p class="muted" style="font-size:.88rem;margin:.4rem 0 0">Most of what's below already
+  arrives on its own &mdash; the server refreshes prices, fixtures, your squad and last
+  season's history automatically in the background, with no file needed. This button just
+  forces that refresh right now instead of waiting for the next scheduled one. The cards below
+  are for the two genuine exceptions: uploading something sooner than the schedule, or supplying
+  detail (like a community stats export) the FPL API itself doesn't carry.</p>
+
+  <div class="banner info" style="margin-top:.8rem">Each slot below accepts one kind of file and
+  checks what you give it, so a file dropped in the wrong place is refused with an explanation
+  rather than quietly imported as the wrong thing.</div>
 
   <style>
     .card.over { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,255,135,.2); }

@@ -495,6 +495,15 @@ describe('recommendation with a squad loaded', () => {
       expect(transfer.in.position).toBe(transfer.out.position);
       expect(transfer.reason).toMatch(/Net gain/);
     }
+
+    // Whenever a whole-squad rebuild is offered, it must actually be a genuine, better
+    // alternative to the single-transfer list above it - not a duplicate of the same advice.
+    if (result.transferPlan) {
+      expect(result.transferPlan.playersOut.length).toBe(result.transferPlan.playersIn.length);
+      expect(result.transferPlan.playersOut.length).toBeGreaterThan(1);
+      expect(result.transferPlan.netGain).toBeGreaterThan(result.transfers[0]?.netGain ?? 0);
+      expect(result.transferPlan.hitCost).toBe(result.transferPlan.hitsTaken * rules.transfers.hitCost);
+    }
   });
 
   it('never suggests bringing in an unavailable player', async () => {
@@ -648,10 +657,11 @@ describe('recommendation with a squad loaded', () => {
     expect(second.previousComparison?.previousEventId).toBe(1);
   });
 
-  it('never compares a from-scratch build against an earlier gameweek', async () => {
+  it('never compares a from-scratch build against an earlier gameweek, or offers it a transfer plan', async () => {
     const result = await recommend(db, rules, weights, { eventId: 1, teamId, fromScratch: true });
     expect(result.mode).toBe('build-squad');
     expect(result.previousComparison).toBeNull();
+    expect(result.transferPlan).toBeNull();
   });
 });
 

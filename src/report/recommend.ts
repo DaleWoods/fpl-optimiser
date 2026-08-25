@@ -18,7 +18,7 @@ import {
 } from '../model/accuracy.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
-import { selectBestEleven, selectBestSquad } from '../optimise/squad.js';
+import { selectBestEleven, selectBestSquad, selectBestTransferPlan } from '../optimise/squad.js';
 
 export interface TransferOption {
   out: ProjectedPlayer;
@@ -153,6 +153,19 @@ export function diffAgainstPrevious(
   };
 }
 
+export interface TransferPlanSummary {
+  playersOut: ProjectedPlayer[];
+  playersIn: ProjectedPlayer[];
+  hitsTaken: number;
+  hitCost: number;
+  /** This gameweek's swing from the current XI, after the hit - the same basis as a single
+   *  TransferOption's netGain, so the two are directly comparable. */
+  netGain: number;
+  eleven: StartingEleven;
+  totalCost: number;
+  bankRemaining: number;
+}
+
 export interface Recommendation {
   mode: 'build-squad' | 'existing-squad';
   eventId: number;
@@ -167,6 +180,13 @@ export interface Recommendation {
   bankRemaining: number;
 
   transfers: TransferOption[];
+  /**
+   * A whole-squad rebuild considered together, when it beats the best single transfer -
+   * genuinely different players may only be affordable by changing more than one at once. Null
+   * whenever the best plan found is the same as (or worse than) just picking the top single
+   * option above, so this only ever appears when it adds something.
+   */
+  transferPlan: TransferPlanSummary | null;
   /** What changed since the last recommendation, one gameweek back - null the first time. */
   previousComparison: RecommendationDiff | null;
   notes: string[];
@@ -759,8 +779,9 @@ export async function recommend(
       totalCost: selection.totalCost,
       bankRemaining: selection.bankRemaining,
       transfers: [],
-      // A from-scratch build has no existing squad to have evolved from, so there is nothing
-      // meaningful to diff against even if a recommendation exists for an earlier gameweek.
+      // No existing squad to rebuild from, or diff against, or an earlier recommendation to
+      // compare with.
+      transferPlan: null,
       previousComparison: null,
       notes,
       playersConsidered: projections.length,
@@ -827,6 +848,52 @@ export async function recommend(
 
   const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);
 
+  // A whole-squad rebuild, considered together rather than one swap at a time - the only way
+  // to find a player who is only affordable by trimming two or three others to fund them.
+  // "Selling price" is the same current-price proxy used everywhere else in this app.
+  let transferPlan: TransferPlanSummary | null = null;
+  try {
+    const plan = await selectBestTransferPlan(projections, owned.squad, rules, weights, solver, {
+      totalBudget: totalCost + bank,
+      freeTransfers,
+      hitCost: rules.transfers.hitCost,
+      captainConsistencyBonus,
+      futureValueBonus,
+      benchBoostPull: benchBoostRelief,
+    });
+
+    const netGain =
+      Math.round((plan.eleven.expectedPoints - eleven.expectedPoints - plan.hitCost) * 100) / 100;
+    const bestSingleNetGain = transfers[0]?.netGain ?? 0;
+
+    // Surfaced only when it involves more than one change AND genuinely beats the best single
+    // option above - otherwise it is either the same advice already shown, or worse.
+    if (plan.transfersOut.length > 1 && netGain > bestSingleNetGain) {
+      transferPlan = {
+        playersOut: plan.transfersOut,
+        playersIn: plan.transfersIn,
+        hitsTaken: plan.hitsTaken,
+        hitCost: plan.hitCost,
+        netGain,
+        eleven: plan.eleven,
+        totalCost: plan.totalCost,
+        bankRemaining: plan.bankRemaining,
+      };
+      notes.push(
+        `A ${plan.transfersOut.length}-player squad rebuild nets +${netGain.toFixed(2)} points ` +
+          `after ${plan.hitsTaken > 0 ? `a -${plan.hitCost} hit` : 'no hit'} - more than any ` +
+          `single transfer above manages alone, because ${plan.transfersIn.map((p) => p.name).join(', ')} ` +
+          `${plan.transfersIn.length > 1 ? 'are' : 'is'} only affordable by changing more than one ` +
+          `player at once. See "Squad rebuild worth considering" below.`,
+      );
+    }
+  } catch (cause) {
+    notes.push(
+      `Could not evaluate a multi-transfer squad rebuild (${(cause as Error).message}) - the ` +
+        'single-transfer options above still stand on their own.',
+    );
+  }
+
   const previousComparison = diffAgainstPrevious(
     {
       starters: eleven.starters.map((p) => ({ playerId: p.playerId, name: p.name })),
@@ -872,6 +939,7 @@ export async function recommend(
     totalCost,
     bankRemaining: bank,
     transfers,
+    transferPlan,
     previousComparison,
     notes,
     playersConsidered: projections.length,

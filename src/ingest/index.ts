@@ -64,8 +64,8 @@ export async function ingestAll(
   // Element-summary is the slowest ingestion by far (one request per player), so it is not run
   // on every refresh - but it is also the only source of the exact per-gameweek actual points
   // this app grades projections against, so it must not sit waiting for someone to ask for it
-  // either. The fix: run it automatically, but only the first time the most recently finished
-  // gameweek shows up with no fixture-history for it yet - once per gameweek, self-throttling.
+  // either. The fix: run it automatically, but only when there is a genuine reason to -
+  // self-throttling, not a fixed schedule.
   const latestFinished = db
     .prepare('SELECT id FROM event WHERE finished = 1 ORDER BY id DESC LIMIT 1')
     .get() as { id: number } | undefined;
@@ -77,12 +77,25 @@ export async function ingestAll(
         .get(latestFinished.id) as { n: number }
     ).n === 0;
 
-  if (options.includePlayerSummaries || notYetCaptured) {
-    report(
-      notYetCaptured && !options.includePlayerSummaries
-        ? `Gameweek ${latestFinished!.id} just finished - fetching each player's actual result...`
-        : 'Ingesting per-player match history (one request per player, throttled)...',
-    );
+  // The other reason to run it: last season's history (element-summary's history_past) has
+  // never been captured at all. This is what makes the pre-season "last season's stats" import
+  // genuinely optional rather than required - the same weekly background refresh that already
+  // fetches prices seeds it once, automatically, with no gameweek needing to finish first. A
+  // manual CSV upload still works and can still add detail this doesn't (see importSlots.ts),
+  // but nobody has to remember to do it just to unblock the model.
+  const neverCapturedLastSeason =
+    (db.prepare('SELECT COUNT(*) AS n FROM player_season_history').get() as { n: number }).n === 0;
+
+  const reason = options.includePlayerSummaries
+    ? 'Ingesting per-player match history (one request per player, throttled)...'
+    : notYetCaptured
+      ? `Gameweek ${latestFinished!.id} just finished - fetching each player's actual result...`
+      : neverCapturedLastSeason
+        ? "No last season's history yet - fetching it automatically, one request per player..."
+        : null;
+
+  if (reason) {
+    report(reason);
     summaries = await ingestPlayerSummaries(db, api, {
       playerIds: options.playerIds,
       onProgress: (done, total) => {
