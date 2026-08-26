@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ModelWeights, Rules } from '../config/schema.js';
 import { classifyAvailability } from '../domain/availability.js';
 import type { ProjectedPlayer } from '../domain/types.js';
+import { recentFixturesByPlayer, sumRecent, type RecentFixtureRow } from './recentForm.js';
 import { computeLeagueTable } from './table.js';
 import { projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
 
@@ -216,6 +217,11 @@ export function buildProjections(
     lastSeason.set(row.playerId, row);
   }
 
+  // Recent gameweeks (this season only), for the recency-weighted blend below - one shared
+  // fetch, sliced per purpose since minutes and attacking rates each have their own window size.
+  const recentWindowSize = Math.max(weights.minutes.recentMatches, weights.attacking.recentMatches);
+  const recentFixtures = recentFixturesByPlayer(db, recentWindowSize);
+
   const projected: ProjectedPlayer[] = [];
 
   for (const row of players) {
@@ -249,10 +255,57 @@ export function buildProjections(
     // player with one lucky cameo outscoring genuine starters. Defcon is a stable volume stat
     // and keeps the same treatment for consistency.
     const priorMins = weights.attacking.priorWeightMinutes;
-    const rate = (total: number | null): number | null =>
-      usingPrevious
-        ? shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins)
-        : per90(total, sourceMinutes);
+
+    // Recent form, blended in on top of the season-long rate - but only while using this
+    // season's own evidence (falling back to last season already has its own shrinkage, and
+    // "recent form" would not mean anything there anyway). The blend weight scales down when
+    // the recent window itself is thin - a single substitute cameo must not swing a rate as
+    // hard as several real starts would, the same shrinkage principle used for last season's
+    // rate above, just applied to this season's own recent window instead of a whole season.
+    const recentAll = usingPrevious ? [] : (recentFixtures.get(row.playerId) ?? []);
+    const recentAttackingWindow = recentAll.slice(0, weights.attacking.recentMatches);
+    const recentAttackingMinutes = sumRecent(recentAttackingWindow, (r) => r.minutes);
+
+    const rate = (total: number | null, recentField: (r: RecentFixtureRow) => number | null, recentWeight: number): number | null => {
+      if (usingPrevious) return shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins);
+      const seasonRate = per90(total, sourceMinutes);
+      if (recentAttackingMinutes <= 0) return seasonRate;
+      const recentTotal = sumRecent(recentAttackingWindow, recentField);
+      const recentRate = (recentTotal / recentAttackingMinutes) * 90;
+      const confidence = Math.min(
+        1,
+        recentAttackingMinutes / (weights.attacking.recentMatches * weights.minutes.expectedMinutesIfStarting),
+      );
+      const effectiveWeight = recentWeight * confidence;
+      return seasonRate === null
+        ? recentRate
+        : effectiveWeight * recentRate + (1 - effectiveWeight) * seasonRate;
+    };
+
+    // Same idea for the minutes model: blend the recent start RATE with the season-long one,
+    // then feed it back as an effective starts count over the same season-long sample size, so
+    // the existing Bayesian shrinkage toward the prior (in projectMinutes) still sees the true
+    // volume of evidence - only the numerator reflects recent form more than a flat season
+    // average would.
+    const seasonStarts = usingPrevious ? (previous.starts ?? 0) : (row.starts ?? 0);
+    const seasonMatches = usingPrevious
+      ? Math.round((previous.minutes ?? 0) / 90)
+      : (playedByTeam.get(row.teamId) ?? 0);
+
+    let effectiveStarts = seasonStarts;
+    if (!usingPrevious && seasonMatches > 0) {
+      const recentMinutesWindow = recentAll.slice(0, weights.minutes.recentMatches);
+      if (recentMinutesWindow.length > 0) {
+        const recentStartRate =
+          sumRecent(recentMinutesWindow, (r) => r.starts) / recentMinutesWindow.length;
+        const seasonStartRate = seasonStarts / seasonMatches;
+        const confidence = Math.min(1, recentMinutesWindow.length / weights.minutes.recentMatches);
+        const effectiveWeight = weights.minutes.recentWeight * confidence;
+        const blendedStartRate =
+          effectiveWeight * recentStartRate + (1 - effectiveWeight) * seasonStartRate;
+        effectiveStarts = blendedStartRate * seasonMatches;
+      }
+    }
 
     const input: PlayerModelInput = {
       playerId: row.playerId,
@@ -261,17 +314,15 @@ export function buildProjections(
       availability,
       ownership: row.ownership,
       minutesPlayed: row.minutes ?? 0,
-      matchesAvailable: usingPrevious
-        ? Math.round((previous.minutes ?? 0) / 90)
-        : (playedByTeam.get(row.teamId) ?? 0),
-      starts: usingPrevious ? (previous.starts ?? 0) : (row.starts ?? 0),
-      xgPer90: rate(source.expectedGoals),
-      xaPer90: rate(source.expectedAssists),
-      goalsPer90: rate(source.goals),
-      assistsPer90: rate(source.assists),
-      savesPer90: rate(source.saves),
-      defconPer90: rate(source.defensiveContribution),
-      bonusPer90: rate(source.bonus),
+      matchesAvailable: seasonMatches,
+      starts: effectiveStarts,
+      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight),
+      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight),
+      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight),
+      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight),
+      savesPer90: rate(source.saves, (r) => r.saves, weights.saves.recentWeight),
+      defconPer90: rate(source.defensiveContribution, (r) => r.defensiveContribution, weights.defensiveContribution.recentWeight),
+      bonusPer90: rate(source.bonus, (r) => r.bonus, weights.bonus.recentWeight),
       fixtures: fixturesByTeam.get(row.teamId) ?? [],
       usingPreviousSeason: usingPrevious,
       previousSeasonName: usingPrevious ? previous.seasonName : null,

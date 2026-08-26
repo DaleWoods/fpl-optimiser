@@ -235,6 +235,181 @@ describe('previous-season history', () => {
   });
 });
 
+describe('recency-weighted form', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = openTestDatabase();
+  });
+
+  /** Both players: identical season-long baseline, differing only in expected_goals shape. */
+  function baseline(id: number, totalXg: number) {
+    return {
+      id,
+      minutes: 900,
+      starts: 10,
+      expected_goals: totalXg,
+      goals_scored: 0,
+      expected_assists: 0,
+      assists: 0,
+      saves: 0,
+      bonus: 0,
+      defensive_contribution: 0,
+    };
+  }
+
+  it('pulls a rate toward a recent hot streak, away from a flat season average', async () => {
+    // 10 games each, 90 minutes, identical season-total xG (3.4) - player 11's is concentrated
+    // in the last 6 games (the recentMatches window), player 12's is spread evenly across all 10.
+    const hotHistory = [0.1, 0.1, 0.1, 0.1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]; // sums to 3.4
+    const flatHistory = Array(10).fill(0.34); // sums to 3.4
+
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+          players: defaultPlayers().map((p) => {
+            const override = p.id === 11 ? baseline(11, 3.4) : p.id === 12 ? baseline(12, 3.4) : undefined;
+            return override ? { ...p, ...override } : p;
+          }),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({ fixtures: [fakeFixture(1, 1, 1, 2), fakeFixture(2, 1, 3, 4)] }),
+    );
+
+    const matches = (history: number[]) =>
+      history.map((xg) => ({ minutes: 90, starts: 1, expected_goals: xg, goals_scored: 0 }));
+    const api = new StubFplApi({
+      elementSummary: {
+        11: fakeElementSummary(11, matches(hotHistory)),
+        12: fakeElementSummary(12, matches(flatHistory)),
+      },
+    });
+    await ingestPlayerSummaries(db, api, { playerIds: [11, 12] });
+
+    const projections = buildProjections(db, 1, rules, weights);
+    const hot = projections.find((p) => p.playerId === 11)!;
+    const flat = projections.find((p) => p.playerId === 12)!;
+
+    // Same season-long total, same everything else - the only possible reason for a difference
+    // is the recent-form blend picking up the concentration in the last 6 games.
+    expect(hot.xPts).toBeGreaterThan(flat.xPts);
+  });
+
+  it('does not let a single recent cameo swing a rate as hard as a genuine recent run at the same rate would', async () => {
+    // Identical season-long baseline for both (1.8 xG over 900 minutes). Both also show exactly
+    // the same PER-90 rate (0.9) in their most recent form - the only difference is how much of
+    // it is backed by real minutes: one 90-minute cameo versus six full 90-minute games at that
+    // same rate. Isolates the confidence scaling from the rate itself.
+    const filler = () => ({ minutes: 90, starts: 1, expected_goals: 0.18, goals_scored: 0 });
+    const oneCameoHistory = [
+      ...Array.from({ length: 4 }, filler),
+      { minutes: 0, starts: 0, expected_goals: 0, goals_scored: 0 },
+      { minutes: 0, starts: 0, expected_goals: 0, goals_scored: 0 },
+      { minutes: 0, starts: 0, expected_goals: 0, goals_scored: 0 },
+      { minutes: 0, starts: 0, expected_goals: 0, goals_scored: 0 },
+      { minutes: 0, starts: 0, expected_goals: 0, goals_scored: 0 },
+      { minutes: 90, starts: 1, expected_goals: 0.9, goals_scored: 0 }, // the one hot cameo
+    ];
+    const genuineRunHistory = [
+      ...Array.from({ length: 4 }, filler),
+      ...Array.from({ length: 6 }, () => ({ minutes: 90, starts: 1, expected_goals: 0.9, goals_scored: 0 })),
+    ];
+
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+          players: defaultPlayers().map((p) => {
+            const override = p.id === 11 ? baseline(11, 1.8) : p.id === 12 ? baseline(12, 1.8) : undefined;
+            return override ? { ...p, ...override } : p;
+          }),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({ fixtures: [fakeFixture(1, 1, 1, 2), fakeFixture(2, 1, 3, 4)] }),
+    );
+
+    const api = new StubFplApi({
+      elementSummary: {
+        11: fakeElementSummary(11, oneCameoHistory),
+        12: fakeElementSummary(12, genuineRunHistory),
+      },
+    });
+    await ingestPlayerSummaries(db, api, { playerIds: [11, 12] });
+
+    const projections = buildProjections(db, 1, rules, weights);
+    const oneCameo = projections.find((p) => p.playerId === 11)!;
+    const genuineRun = projections.find((p) => p.playerId === 12)!;
+
+    expect(oneCameo.xPts).toBeLessThan(genuineRun.xPts);
+  });
+
+  it('raises the effective start rate for a player who has nailed down a place recently', async () => {
+    // 10 gameweeks: benched/cameo for the first 6, a nailed-on starter for the last 4.
+    const recentStarter = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1];
+    // Same season-long total starts (4 out of 10), but spread evenly rather than recently.
+    const evenStarter = [1, 0, 1, 0, 1, 0, 1, 0, 0, 0];
+
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+          players: defaultPlayers().map((p) => {
+            const override =
+              p.id === 11
+                ? { ...baseline(11, 2), starts: 4, minutes: 400 }
+                : p.id === 12
+                  ? { ...baseline(12, 2), starts: 4, minutes: 400 }
+                  : undefined;
+            return override ? { ...p, ...override } : p;
+          }),
+        }),
+      }),
+      rules,
+    );
+    // playedByTeam (the season-matches denominator) counts every finished fixture regardless of
+    // event, so 9 finished fixtures (events 2-10, already played) plus event 1's own upcoming
+    // fixture gives seasonMatches = 9 without inflating event 1 itself into a false double
+    // gameweek - enough games for the recent-6 window to genuinely differ from an even spread.
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2),
+          ...Array.from({ length: 9 }, (_, i) => fakeFixture(i + 2, i + 2, 1, 2, { finished: true })),
+        ],
+      }),
+    );
+
+    const matches = (starts: number[]) =>
+      starts.map((s) => ({ minutes: s ? 90 : 10, starts: s, expected_goals: 0.2, goals_scored: 0 }));
+    const api = new StubFplApi({
+      elementSummary: {
+        11: fakeElementSummary(11, matches(recentStarter)),
+        12: fakeElementSummary(12, matches(evenStarter)),
+      },
+    });
+    await ingestPlayerSummaries(db, api, { playerIds: [11, 12] });
+
+    const projections = buildProjections(db, 1, rules, weights);
+    const nailedOnNow = projections.find((p) => p.playerId === 11)!;
+    const rotationRisk = projections.find((p) => p.playerId === 12)!;
+
+    expect(nailedOnNow.expectedMinutes).toBeGreaterThan(rotationRisk.expectedMinutes);
+  });
+});
+
 describe('elite manager ownership', () => {
   let db: Database;
 

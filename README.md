@@ -392,6 +392,19 @@ Every projection says which evidence produced it, and the recommendation page li
    before that.
 4. **Curated pre-season notes** (`config/intel.json`). See below.
 
+### Recent form counts for more than the season average
+
+Within "this season's stats", the last several gameweeks are weighted more heavily than the
+season-long average, not just averaged in equally — a player heating up or cooling down shows up
+before the whole-season number catches up. Both windows (`recentMatches`, default 6) and blend
+strengths (`recentWeight`, per stat category in `config/model.weights.json`) are tunable. The
+blend itself scales down automatically when the recent window is thin: a single substitute
+cameo cannot swing a rate as hard as several genuine starts at the same rate would, the same
+sample-size caution the model already applies to a shrunk previous-season rate, just applied to
+this season's own recent window instead of a whole season. This uses `player_fixture_history`
+(the per-gameweek breakdown that already arrives automatically, see "Moving to the next
+gameweek" above) - nothing new to import for it.
+
 ### Why curated notes exist
 
 **The app cannot read the web.** It can call the FPL API and nothing else. Anything that comes
