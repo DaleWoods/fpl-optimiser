@@ -192,6 +192,85 @@ export function formatFixtures(fixtures: { opponentShort: string; isHome: boolea
     .join(' + ');
 }
 
+/** One player on the pitch view: a plain shirt (no per-club kit colours - no licensed asset for
+ *  that here), name, opponent and xPts underneath. */
+function shirtCard(
+  player: {
+    playerId: number;
+    name: string;
+    clubShort: string;
+    price: number;
+    xPts: number;
+    fixtures: { opponentShort: string; isHome: boolean; difficulty: number | null }[];
+  },
+  options: { captainId: number; viceCaptainId: number; benchIndex?: number },
+): string {
+  const armband =
+    player.playerId === options.captainId
+      ? '<span class="armband">C</span>'
+      : player.playerId === options.viceCaptainId
+        ? '<span class="armband v">V</span>'
+        : '';
+  const fixtureText =
+    player.fixtures.length === 0
+      ? 'BLANK'
+      : player.fixtures.map((f) => `${f.isHome ? 'vs' : '@'} ${f.opponentShort}`).join(' + ');
+
+  return `<div class="shirt-card${options.benchIndex !== undefined ? ' bench' : ''}">
+    ${armband}
+    <div class="shirt">${escapeHtml(player.clubShort)}</div>
+    <div class="name">${options.benchIndex !== undefined ? `${options.benchIndex}. ` : ''}${escapeHtml(player.name)}</div>
+    <div class="meta"><span>${escapeHtml(fixtureText)}</span><span>${player.xPts.toFixed(1)} xPts</span></div>
+  </div>`;
+}
+
+/** The starting XI laid out on a pitch by formation, plus a substitutes strip below it -
+ *  mirroring the actual FPL team page rather than a table, so the squad reads at a glance. */
+function renderPitch(eleven: {
+  starters: {
+    playerId: number;
+    name: string;
+    clubShort: string;
+    position: string;
+    price: number;
+    xPts: number;
+    fixtures: { opponentShort: string; isHome: boolean; difficulty: number | null }[];
+  }[];
+  bench: {
+    playerId: number;
+    name: string;
+    clubShort: string;
+    position: string;
+    price: number;
+    xPts: number;
+    fixtures: { opponentShort: string; isHome: boolean; difficulty: number | null }[];
+  }[];
+  captain: { playerId: number };
+  viceCaptain: { playerId: number };
+}): string {
+  const options = { captainId: eleven.captain.playerId, viceCaptainId: eleven.viceCaptain.playerId };
+
+  // Attacking end at the top, same convention as the FPL site's own pitch view.
+  const rows = ['FWD', 'MID', 'DEF', 'GKP']
+    .map((position) => eleven.starters.filter((player) => player.position === position))
+    .filter((group) => group.length > 0)
+    .map(
+      (group) =>
+        `<div class="pitch-row">${group.map((player) => shirtCard(player, options)).join('')}</div>`,
+    )
+    .join('');
+
+  const bench = eleven.bench
+    .map((player, index) => shirtCard(player, { ...options, benchIndex: index + 1 }))
+    .join('');
+
+  return `<div class="pitch">${rows}</div>
+  <div class="bench-strip">
+    <div class="bench-label">Substitutes &middot; auto-sub order</div>
+    <div class="pitch-row">${bench}</div>
+  </div>`;
+}
+
 function playerRow(
   player: {
     position: string;
@@ -330,17 +409,22 @@ export function renderRecommendation(rec: Recommendation): string {
   }
 
   <h2>Starting XI</h2>
-  <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">
-    <strong>Confidence</strong> is how much real playing-time evidence backs a player's own
-    rate &mdash; not whether this is a good pick. A nailed-on starter can be high confidence and
-    still low-scoring in a tough fixture, both at once; check the <strong>Fixture</strong>
-    column and FDR for that. Confidence only turns low when the evidence itself is thin (little
-    or no minutes, or a rate carried over from last season).
-  </p>
-  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${starters}</tbody></table></div></div>
+  ${renderPitch(rec.eleven)}
 
-  <h2>Bench <span class="muted" style="font-weight:400">(auto-sub order)</span></h2>
-  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div></div>
+  <details style="margin-top:.9rem">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem">Table view, prices &amp; why each pick</summary>
+    <p class="muted" style="font-size:.88rem;margin:.7rem 0 .5rem">
+      <strong>Confidence</strong> is how much real playing-time evidence backs a player's own
+      rate &mdash; not whether this is a good pick. A nailed-on starter can be high confidence and
+      still low-scoring in a tough fixture, both at once; check the <strong>Fixture</strong>
+      column and FDR for that. Confidence only turns low when the evidence itself is thin (little
+      or no minutes, or a rate carried over from last season).
+    </p>
+    <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${starters}</tbody></table></div></div>
+
+    <h3 style="margin-top:1rem">Bench <span class="muted" style="font-weight:400">(auto-sub order)</span></h3>
+    <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div></div>
+  </details>
 
   ${
     rec.transfers.length > 0

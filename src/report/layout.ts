@@ -176,6 +176,75 @@ tbody tr:last-child td { border-bottom: 0; }
 .banner.warn { background: var(--warn-bg); color: var(--warn-fg); }
 .banner.info { background: var(--surface); border: 1px solid var(--line); }
 
+/* The pitch view: a formation layout mirroring the actual FPL team page, so the squad reads at
+   a glance instead of only as a table. Shirts are plain (no per-club kit colours - there is no
+   licensed asset for that here), coloured by role in the squad rather than by club. */
+.pitch {
+  background:
+    radial-gradient(ellipse at 50% 8%, rgba(255,255,255,.10), transparent 55%),
+    repeating-linear-gradient(180deg, #0c8a3e 0 11%, #0a7a37 11% 22%);
+  border-radius: 14px; padding: 1.1rem .6rem .8rem; position: relative; overflow: hidden;
+  box-shadow: var(--shadow); border: 1px solid rgba(0,0,0,.15);
+}
+.pitch::before {
+  content: ""; position: absolute; left: 50%; top: 6%; width: 5.5rem; height: 5.5rem;
+  border: 2px solid rgba(255,255,255,.35); border-radius: 50%; transform: translateX(-50%);
+}
+.pitch::after {
+  content: ""; position: absolute; left: 8%; right: 8%; top: 0; height: 0;
+  border-top: 2px solid rgba(255,255,255,.3);
+}
+.pitch-row {
+  display: flex; justify-content: center; align-items: flex-start; gap: .5rem;
+  flex-wrap: nowrap; margin: 1.1rem 0; position: relative; z-index: 1;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: .1rem;
+}
+.shirt-card {
+  display: flex; flex-direction: column; align-items: center; width: 5.2rem; text-align: center;
+  position: relative;
+}
+.shirt {
+  width: 2.6rem; height: 2.3rem; border-radius: 6px 6px 3px 3px; background: ${BRAND.purple};
+  border: 2px solid rgba(255,255,255,.55); display: flex; align-items: center;
+  justify-content: center; font-size: .62rem; font-weight: 800; color: #fff;
+  box-shadow: 0 2px 5px rgba(0,0,0,.25);
+}
+.shirt-card.bench .shirt { background: #55596a; opacity: .92; }
+.shirt-card .armband {
+  position: absolute; top: -.3rem; right: .35rem; width: 1.05rem; height: 1.05rem;
+  border-radius: 50%; background: ${BRAND.green}; color: ${BRAND.purple}; font-size: .62rem;
+  font-weight: 800; display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--surface);
+}
+.shirt-card .armband.v { background: var(--cyan); }
+.shirt-card .name {
+  margin-top: .3rem; font-size: .74rem; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.55);
+  max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; line-height: 1.15;
+}
+.shirt-card .meta {
+  font-size: .64rem; color: rgba(255,255,255,.88); text-shadow: 0 1px 3px rgba(0,0,0,.55);
+  display: flex; gap: .3rem; justify-content: center; flex-wrap: wrap;
+}
+.bench-strip {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: .8rem .6rem; margin: .6rem 0 0; box-shadow: var(--shadow);
+}
+.bench-strip .bench-label {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  font-weight: 700; margin: 0 0 .55rem .3rem;
+}
+.bench-strip .pitch-row { margin: 0; }
+.bench-strip .shirt-card .name, .bench-strip .shirt-card .meta { color: var(--fg); text-shadow: none; }
+.bench-strip .shirt-card .meta { color: var(--muted); }
+@media (max-width: 34rem) {
+  .pitch-row { gap: .3rem; }
+  .shirt-card { width: 3.7rem; }
+  .shirt { width: 2.15rem; height: 1.9rem; }
+  .shirt-card .name { font-size: .62rem; }
+  .shirt-card .meta { font-size: .55rem; gap: .18rem; }
+}
+
 tr.flagged td { background: var(--flag-bg); color: var(--flag-fg); }
 tr.bench td { opacity: .78; }
 tr.special td { background: var(--hi); }
