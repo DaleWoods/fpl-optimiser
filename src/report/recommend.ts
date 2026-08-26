@@ -428,12 +428,17 @@ function loadOwnedSquad(
   db: Database,
   teamId: number,
   projections: readonly ProjectedPlayer[],
-): { squad: ProjectedPlayer[]; bank: number | null; unresolved: UnresolvedPick[] } | null {
+): {
+  squad: ProjectedPlayer[];
+  bank: number | null;
+  unresolved: UnresolvedPick[];
+  asOfEventId: number | null;
+} | null {
   const state = db
     .prepare(
-      `SELECT id, bank FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
+      `SELECT id, bank, event_id AS eventId FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
     )
-    .get(teamId) as { id: number; bank: number | null } | undefined;
+    .get(teamId) as { id: number; bank: number | null; eventId: number | null } | undefined;
 
   if (!state) return null;
 
@@ -465,7 +470,7 @@ function loadOwnedSquad(
   // of - counts as "no squad loaded".
   if (squad.length === 0) return null;
 
-  return { squad, bank: state.bank, unresolved };
+  return { squad, bank: state.bank, unresolved, asOfEventId: state.eventId };
 }
 
 /**
@@ -819,6 +824,17 @@ export async function recommend(
 
   const owned = options.teamId ? loadOwnedSquad(db, options.teamId, projections) : null;
 
+  if (owned && owned.asOfEventId !== null && owned.asOfEventId < event.id) {
+    notes.push(
+      `Your squad shown here is as of Gameweek ${owned.asOfEventId} - your last completed ` +
+        `gameweek, not Gameweek ${event.id}. FPL keeps squads private until a gameweek's own ` +
+        "deadline passes, even from this app's own automatic pull, so if you've made transfers " +
+        `for the upcoming gameweek since then, they will not show here until ` +
+        `${event.deadlineIso ? `the ${event.deadlineIso} deadline` : "that gameweek's deadline"} ` +
+        'passes - that is a genuine FPL platform restriction, not a bug in this app.',
+    );
+  }
+
   if (owned && owned.unresolved.length > 0) {
     const names = owned.unresolved.map((pick) => pick.name ?? `player #${pick.playerId}`);
     notes.push(
@@ -1001,7 +1017,7 @@ export async function recommend(
     },
     new Set(transfers.map((t) => t.out.playerId)),
     new Set(transfers.map((t) => t.in.playerId)),
-    previousRecommendationDetail(db, event.id),
+    previousRecommendationDetail(db, event.id, options.teamId ?? null),
   );
 
   saveRecommendation(db, {

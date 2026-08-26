@@ -702,11 +702,81 @@ describe('recommendation with a squad loaded', () => {
     expect(second.previousComparison?.previousEventId).toBe(1);
   });
 
+  it('explains that a squad still on an earlier gameweek is not a bug - FPL keeps the next one private until its own deadline', async () => {
+    await loadSquad(pickLegalFifteen(db));
+    await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    // A second gameweek to plan for, but the squad was never re-imported for it - exactly the
+    // situation right after a manager makes a transfer for the upcoming gameweek: the public
+    // API cannot see it until that gameweek's own deadline passes.
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players,
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+        }),
+      }),
+      rules,
+    );
+    const gw2Fixtures = [];
+    for (let index = 0; index < teams.length; index += 2) {
+      gw2Fixtures.push(fakeFixture(100 + index / 2, 2, teams[index]!.id, teams[index + 1]!.id));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures: gw2Fixtures }));
+
+    const result = await recommend(db, rules, weights, { eventId: 2, teamId });
+
+    expect(result.mode).toBe('existing-squad');
+    expect(result.notes.join(' ')).toMatch(/as of Gameweek 1/i);
+    expect(result.notes.join(' ')).toMatch(/genuine FPL platform restriction, not a bug/i);
+  });
+
   it('never compares a from-scratch build against an earlier gameweek, or offers it a transfer plan', async () => {
     const result = await recommend(db, rules, weights, { eventId: 1, teamId, fromScratch: true });
     expect(result.mode).toBe('build-squad');
     expect(result.previousComparison).toBeNull();
     expect(result.transferPlan).toBeNull();
+  });
+
+  it('never diffs a genuinely loaded squad against an earlier from-scratch build - that squad was never really yours', async () => {
+    // Gameweek 1: no squad loaded yet, so this saves a from-scratch build under kind='squad'.
+    const scratch = await recommend(db, rules, weights, { eventId: 1, teamId, fromScratch: true });
+    expect(scratch.mode).toBe('build-squad');
+
+    // Gameweek 2: a real squad gets loaded for the first time.
+    await loadSquad(pickLegalFifteen(db));
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players,
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+        }),
+      }),
+      rules,
+    );
+    const gw2Fixtures = [];
+    for (let index = 0; index < teams.length; index += 2) {
+      gw2Fixtures.push(fakeFixture(100 + index / 2, 2, teams[index]!.id, teams[index + 1]!.id));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures: gw2Fixtures }));
+
+    const result = await recommend(db, rules, weights, { eventId: 2, teamId });
+
+    // Must not invent "changed since gameweek 1" against a squad that was never actually owned.
+    expect(result.mode).toBe('existing-squad');
+    expect(result.previousComparison).toBeNull();
   });
 });
 

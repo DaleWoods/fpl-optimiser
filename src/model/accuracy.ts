@@ -123,20 +123,30 @@ export interface StoredRecommendationDetail {
  * Every recommend() call already saves its starters, bench, captain and vice-captain (it has to,
  * for grading later), so there is nothing new to record here: this just reads that same history
  * back for the gameweek before the one being generated now.
+ *
+ * Deliberately excludes kind='squad' (a from-scratch build, saved whenever no owned squad could
+ * be loaded that time - see recommend()'s build-squad path). That squad was never actually
+ * "yours"; diffing today's real squad against it produces nonsense like a made-up player
+ * "dropping to the bench" who you never owned. Only kind='xi', a recommendation made from a
+ * genuinely loaded squad, is a fair baseline for "what changed". Also scoped to the same entry,
+ * so a stale or differently-configured team's history can never bleed into this one's diff.
  */
 export function previousRecommendationDetail(
   db: Database,
   beforeEventId: number,
+  entryId: number | null = null,
 ): StoredRecommendationDetail | null {
   const stored = db
     .prepare(
       `SELECT r.event_id AS eventId, e.name AS eventName, r.detail_json AS detail
        FROM recommendation r
        LEFT JOIN event e ON e.id = r.event_id
-       WHERE r.event_id < ? AND r.kind IN ('xi', 'squad')
+       WHERE r.event_id < ? AND r.kind = 'xi' AND r.entry_id IS ?
        ORDER BY r.event_id DESC, r.created_at DESC, r.id DESC LIMIT 1`,
     )
-    .get(beforeEventId) as { eventId: number; eventName: string | null; detail: string } | undefined;
+    .get(beforeEventId, entryId) as
+    | { eventId: number; eventName: string | null; detail: string }
+    | undefined;
   if (!stored) return null;
 
   try {

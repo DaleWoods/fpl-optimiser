@@ -346,7 +346,7 @@ describe('grading the model', () => {
         dataTakenAt: null,
       });
 
-      const detail = previousRecommendationDetail(db, 2);
+      const detail = previousRecommendationDetail(db, 2, 2651633);
       expect(detail?.eventId).toBe(1);
       expect(detail?.captainId).toBe(1);
       expect(detail?.starters.map((p) => p.playerId)).toEqual([1, 2, 3]);
@@ -364,7 +364,7 @@ describe('grading the model', () => {
       });
 
       // Asking "what came before gameweek 2" must not return gameweek 2's own recommendation.
-      expect(previousRecommendationDetail(db, 2)).toBeNull();
+      expect(previousRecommendationDetail(db, 2, 2651633)).toBeNull();
     });
 
     it('prefers the latest recommendation when a gameweek was regenerated more than once', () => {
@@ -387,7 +387,38 @@ describe('grading the model', () => {
         dataTakenAt: null,
       });
 
-      expect(previousRecommendationDetail(db, 2)?.captainId).toBe(2);
+      expect(previousRecommendationDetail(db, 2, 2651633)?.captainId).toBe(2);
+    });
+
+    it('never uses a from-scratch build (kind=squad) as the baseline for "what changed"', () => {
+      // Saved whenever no owned squad could be loaded that time - see recommend()'s
+      // build-squad path. It was never really "your squad", so diffing against it would
+      // invent changes for players you never owned.
+      saveRecommendation(db, {
+        eventId: 1,
+        entryId: 2651633,
+        kind: 'squad',
+        modelVersion: weights.modelVersion,
+        summary: 'built from scratch, no squad was loaded that time',
+        detail: { starters: starters([99]), bench: [], captainId: 99, viceCaptainId: 99 },
+        dataTakenAt: null,
+      });
+
+      expect(previousRecommendationDetail(db, 2, 2651633)).toBeNull();
+    });
+
+    it('never mixes in another team\'s recommendation history', () => {
+      saveRecommendation(db, {
+        eventId: 1,
+        entryId: 999999,
+        kind: 'xi',
+        modelVersion: weights.modelVersion,
+        summary: 'a different team entirely',
+        detail: { starters: starters([42]), bench: [], captainId: 42, viceCaptainId: 42 },
+        dataTakenAt: null,
+      });
+
+      expect(previousRecommendationDetail(db, 2, 2651633)).toBeNull();
     });
   });
 
