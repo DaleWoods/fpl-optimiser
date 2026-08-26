@@ -503,6 +503,22 @@ upgrades elsewhere would be actively misleading. If no single transfer can fix i
 (a player already at the position's price floor has nowhere cheaper to go), that's reported as
 an explicit note instead of a silent gap.
 
+### Timing a transfer: information, not a verdict
+
+The top suggested transfer (skipping a **Priority fix** - there is never a case for delaying a
+genuinely dead slot) can carry a note comparing its target's projection this gameweek against
+their own average across the rest of the horizon. Well below it means their value is weighted
+toward the weeks ahead, not this one; well above it means the opposite - most of their near-term
+value is sitting in this single week. Either way, the note only ever states the comparison - it
+never tells you to wait or to act now. Whether buying ahead of a fixture swing beats waiting for
+it to start depends on price-rise risk and whatever else needs fixing this week, and this app
+does not try to weigh that for you.
+
+This is deliberately short of full multi-gameweek transfer planning (deciding whether to bank a
+free transfer now for a bigger move in two or three weeks, say) - that is a much harder planning
+problem, and a wrong nudge there is actively costly. What's here uses data the horizon already
+computes for every transfer, at essentially no extra risk: relevant context, not a plan.
+
 ### When one swap isn't enough: whole-squad rebuilds
 
 Every card in "Suggested transfers" is priced as a single 1-for-1 swap - but a genuinely better

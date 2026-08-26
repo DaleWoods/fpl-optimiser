@@ -223,6 +223,14 @@ export const modelWeightsSchema = z.strictObject({
    */
   transfers: z.strictObject({
     priorityFixXPtsThreshold: z.number().min(0),
+    /**
+     * Purely informational, never a recommendation to wait or a scoring change - see
+     * transferTimingNoteFor() in src/report/recommend.ts. The top non-priority transfer target's
+     * this-gameweek projection is compared against their own average across the rest of the
+     * horizon; a ratio this far from 1 in either direction earns a note about which weeks their
+     * value is really concentrated in, so a manager can weigh timing for themselves.
+     */
+    timingNoteRatio: z.number().min(0).max(1),
   }),
   /**
    * A soft, informational signal only - never an xPts adjustment, never a gate on selection.

@@ -7,9 +7,17 @@ import { ingestBootstrap, ingestEntry, ingestFixtures } from '../../src/ingest/i
 import { ingestEliteOwnership } from '../../src/ingest/elite.js';
 import { importPayload } from '../../src/ingest/import.js';
 import { buildProjections } from '../../src/model/build.js';
-import { checkReadiness, diffAgainstPrevious, recommend, resolveTargetEvent } from '../../src/report/recommend.js';
+import {
+  checkReadiness,
+  diffAgainstPrevious,
+  recommend,
+  resolveTargetEvent,
+  transferTimingNoteFor,
+} from '../../src/report/recommend.js';
 import type { StoredRecommendationDetail } from '../../src/model/accuracy.js';
+import type { Horizon } from '../../src/model/horizon.js';
 import { validateSquad, validateStartingEleven } from '../../src/rules/validate.js';
+import { player } from '../support/players.js';
 import {
   defaultTeams,
   fakeBootstrap,
@@ -1059,6 +1067,70 @@ describe('multi-gameweek horizon', () => {
       // future-value bonus doing its job.
       expect(result.squad.map((p) => p.playerId)).toContain(16);
     });
+  });
+});
+
+describe('transferTimingNoteFor', () => {
+  // Real horizon.decay (0.75), 3 gameweeks: weights 1, 0.75, 0.5625.
+  const totalWeight = 1 + 0.75 + 0.5625;
+  const futureWeight = 0.75 + 0.5625; // every gameweek after the target one
+
+  const horizonWith = (currentXPts: number, futureXPts: number, playerId: number): Horizon => ({
+    gameweeks: [
+      { eventId: 1, name: 'GW1', weight: 1, fixtureCount: 1, doubleClubCount: 0 },
+      { eventId: 2, name: 'GW2', weight: 0.75, fixtureCount: 1, doubleClubCount: 0 },
+      { eventId: 3, name: 'GW3', weight: 0.5625, fixtureCount: 1, doubleClubCount: 0 },
+    ],
+    totalWeight,
+    players: new Map([
+      [playerId, { playerId, currentXPts, horizonXPts: currentXPts + futureXPts, futureXPts }],
+    ]),
+  });
+
+  it('notes when this gameweek is well below the target\'s own average across the rest of the horizon', () => {
+    const target = player({ playerId: 16, name: 'Future Star' });
+    // futureAverage = 6.5625 / 1.3125 = 5; ratio = 1 / 5 = 0.2, below the 0.6 threshold.
+    const horizon = horizonWith(1, futureWeight * 5, 16);
+
+    const note = transferTimingNoteFor(target, horizon, weights);
+    expect(note).toMatch(/Future Star.*well below their own average/);
+    expect(note).toMatch(/wait for their fixtures to turn/);
+  });
+
+  it('notes when this gameweek is well above the target\'s own average across the rest of the horizon', () => {
+    const target = player({ playerId: 16, name: 'One Week Wonder' });
+    // futureAverage = 1.3125 / 1.3125 = 1; ratio = 10 / 1 = 10, above the 1/0.6 threshold.
+    const horizon = horizonWith(10, futureWeight * 1, 16);
+
+    const note = transferTimingNoteFor(target, horizon, weights);
+    expect(note).toMatch(/One Week Wonder.*well above their own average/);
+    expect(note).toMatch(/considering delaying/);
+  });
+
+  it('says nothing when value is roughly even across the horizon', () => {
+    const target = player({ playerId: 16 });
+    // futureAverage = 5.25 / 1.3125 = 4; ratio = 4 / 4 = 1, comfortably inside the band.
+    const horizon = horizonWith(4, futureWeight * 4, 16);
+
+    expect(transferTimingNoteFor(target, horizon, weights)).toBeNull();
+  });
+
+  it('says nothing with only one gameweek in the horizon - there is no "rest of the horizon" to compare against', () => {
+    const target = player({ playerId: 16 });
+    const horizon: Horizon = {
+      gameweeks: [{ eventId: 1, name: 'GW1', weight: 1, fixtureCount: 1, doubleClubCount: 0 }],
+      totalWeight: 1,
+      players: new Map([[16, { playerId: 16, currentXPts: 1, horizonXPts: 1, futureXPts: 0 }]]),
+    };
+
+    expect(transferTimingNoteFor(target, horizon, weights)).toBeNull();
+  });
+
+  it('says nothing for a player missing from the horizon entirely', () => {
+    const target = player({ playerId: 99 });
+    const horizon = horizonWith(1, futureWeight * 5, 16); // playerId 16, not 99
+
+    expect(transferTimingNoteFor(target, horizon, weights)).toBeNull();
   });
 });
 

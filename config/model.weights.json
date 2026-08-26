@@ -195,9 +195,14 @@
       "treated as a dead slot regardless of how the raw numbers rank - see findTransfers() in",
       "src/report/recommend.ts. 1.0 sits well below a normal fringe player's projection (bench",
       "players with a genuine game to come typically project 1.5-2+) and comfortably above a",
-      "backup goalkeeper or an unused-substitute's near-zero projection."
+      "backup goalkeeper or an unused-substitute's near-zero projection.",
+      "timingNoteRatio: purely informational, never a recommendation to wait or a scoring change -",
+      "see transferTimingNoteFor(). 0.6 means a note appears once this gameweek's projection is",
+      "below 60% of the target's own average across the rest of the horizon, or above 1/0.6 of it -",
+      "either way, their value is concentrated well away from an even spread across the run."
     ],
-    "priorityFixXPtsThreshold": 1.0
+    "priorityFixXPtsThreshold": 1.0,
+    "timingNoteRatio": 0.6
   },
 
   "priceTrend": {

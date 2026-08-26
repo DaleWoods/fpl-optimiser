@@ -62,6 +62,50 @@ function captainConsistencyBonusFor(
   return bonus;
 }
 
+/**
+ * Purely informational context on a transfer target's timing - never a recommendation to wait,
+ * never a scoring change. Compares this gameweek's own projection against the target's own
+ * average across the rest of the horizon: when the two are far apart, their value is
+ * concentrated in particular weeks rather than spread evenly, which is worth knowing before
+ * deciding whether to make the move now or wait. Deliberately does not try to answer that
+ * question itself - whether to buy ahead of a fixture swing or wait for it to start depends on
+ * price-rise risk and what else needs fixing this week, neither of which this weighs.
+ */
+export function transferTimingNoteFor(
+  target: ProjectedPlayer,
+  horizon: Horizon,
+  weights: ModelWeights,
+): string | null {
+  if (horizon.gameweeks.length <= 1) return null;
+
+  const h = horizonFor(horizon, target.playerId);
+  const futureWeight = horizon.totalWeight - horizon.gameweeks[0]!.weight;
+  if (futureWeight <= 0 || h.futureXPts <= 0) return null;
+
+  const futureAverage = h.futureXPts / futureWeight;
+  if (futureAverage <= 0) return null;
+
+  const ratio = h.currentXPts / futureAverage;
+
+  if (ratio <= weights.transfers.timingNoteRatio) {
+    return (
+      `${target.name}'s projection this gameweek (${h.currentXPts.toFixed(2)}) is well below ` +
+      `their own average across the rest of the horizon (${futureAverage.toFixed(2)}) - their ` +
+      `value here is concentrated in the weeks ahead, not this one. Worth knowing before ` +
+      `deciding whether to make this transfer now or wait for their fixtures to turn.`
+    );
+  }
+  if (ratio >= 1 / weights.transfers.timingNoteRatio) {
+    return (
+      `${target.name}'s projection this gameweek (${h.currentXPts.toFixed(2)}) is well above ` +
+      `their own average across the rest of the horizon (${futureAverage.toFixed(2)}) - most of ` +
+      `their near-term value is concentrated in this one week. Worth knowing if you were ` +
+      `considering delaying this transfer.`
+    );
+  }
+  return null;
+}
+
 interface NamedPlayer {
   playerId: number;
   name: string;
@@ -958,6 +1002,15 @@ export async function recommend(
         'replacements that would are all priced above what selling just this one player affords. ' +
         'Freeing up funds by downgrading elsewhere first, or accepting a hit, may be the only way.',
     );
+  }
+
+  // Purely informational timing context on the top non-priority transfer - never a
+  // recommendation to wait, never a scoring change. A priority fix (a dead squad slot) never
+  // gets this note: there is no case for delaying a genuinely urgent fix.
+  const topNonPriority = transfers.find((transfer) => !transfer.priority);
+  if (topNonPriority) {
+    const timingNote = transferTimingNoteFor(topNonPriority.in, horizon, weights);
+    if (timingNote) notes.push(timingNote);
   }
 
   const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);
