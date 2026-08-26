@@ -108,6 +108,8 @@ export const elementSchema = z.looseObject({
   now_cost: requiredNumeric(),
   cost_change_start: numeric(),
   cost_change_event: numeric(),
+  transfers_in_event: numeric(),
+  transfers_out_event: numeric(),
 
   status: z.string().min(1),
   chance_of_playing_this_round: numeric(),

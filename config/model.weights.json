@@ -192,5 +192,17 @@
       "backup goalkeeper or an unused-substitute's near-zero projection."
     ],
     "priorityFixXPtsThreshold": 1.0
+  },
+
+  "priceTrend": {
+    "$comment": [
+      "A soft, informational note only - never an xPts adjustment, never a gate on selection.",
+      "FPL's real price-change algorithm is unpublished, so this is not a prediction of exactly",
+      "when a price will move, only a 'worth knowing' flag. Ranks every player by net transfers",
+      "this gameweek (in minus out) and flags the topN at each end, but only when net transfers",
+      "clear netTransfersFloor - otherwise a quiet gameweek's top 20 is really just noise."
+    ],
+    "topN": 20,
+    "netTransfersFloor": 5000
   }
 }

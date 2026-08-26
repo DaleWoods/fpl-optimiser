@@ -27,6 +27,8 @@ interface PlayerRow {
   expectedAssists: number | null;
   defensiveContribution: number | null;
   epNext: number | null;
+  transfersInEvent: number | null;
+  transfersOutEvent: number | null;
 }
 
 interface TeamRow {
@@ -88,6 +90,41 @@ function shrinkRate(
 }
 
 /**
+ * Flag players trending toward a price rise or fall, purely as an informational note - never an
+ * xPts adjustment, never a gate on selection. FPL's real price-change algorithm is unpublished,
+ * so this ranks every player by net transfers this gameweek (in minus out) and flags the topN at
+ * each end, but only when net transfers clear netTransfersFloor - otherwise a quiet gameweek's
+ * top 20 is really just noise, not a genuine signal.
+ */
+function classifyPriceTrends(
+  players: readonly { playerId: number; transfersInEvent: number | null; transfersOutEvent: number | null }[],
+  weights: ModelWeights,
+): Map<number, 'rising' | 'falling'> {
+  const trends = new Map<number, 'rising' | 'falling'>();
+
+  const withNet = players
+    .filter((player) => player.transfersInEvent !== null && player.transfersOutEvent !== null)
+    .map((player) => ({
+      playerId: player.playerId,
+      net: player.transfersInEvent! - player.transfersOutEvent!,
+    }));
+
+  const rising = [...withNet]
+    .filter((player) => player.net >= weights.priceTrend.netTransfersFloor)
+    .sort((a, b) => b.net - a.net)
+    .slice(0, weights.priceTrend.topN);
+  const falling = [...withNet]
+    .filter((player) => -player.net >= weights.priceTrend.netTransfersFloor)
+    .sort((a, b) => a.net - b.net)
+    .slice(0, weights.priceTrend.topN);
+
+  for (const player of rising) trends.set(player.playerId, 'rising');
+  for (const player of falling) trends.set(player.playerId, 'falling');
+
+  return trends;
+}
+
+/**
  * Turn stored data into projections for a gameweek.
  *
  * Reads the most recent snapshot for every player, the fixtures for the gameweek, and the club
@@ -113,7 +150,8 @@ export function buildProjections(
               ps.news, ps.selected_by_percent AS ownership, ps.minutes, ps.starts,
               ps.goals_scored AS goals, ps.assists, ps.saves, ps.bonus,
               ps.expected_goals AS expectedGoals, ps.expected_assists AS expectedAssists,
-              ps.defensive_contribution AS defensiveContribution, ps.ep_next AS epNext
+              ps.defensive_contribution AS defensiveContribution, ps.ep_next AS epNext,
+              ps.transfers_in_event AS transfersInEvent, ps.transfers_out_event AS transfersOutEvent
        FROM player_snapshot ps
        JOIN player p ON p.id = ps.player_id
        JOIN team t ON t.id = p.team_id
@@ -221,6 +259,8 @@ export function buildProjections(
   // fetch, sliced per purpose since minutes and attacking rates each have their own window size.
   const recentWindowSize = Math.max(weights.minutes.recentMatches, weights.attacking.recentMatches);
   const recentFixtures = recentFixturesByPlayer(db, recentWindowSize);
+
+  const priceTrends = classifyPriceTrends(players, weights);
 
   const projected: ProjectedPlayer[] = [];
 
@@ -333,6 +373,22 @@ export function buildProjections(
 
     const projection = projectPlayer(input, weights, rules);
 
+    const priceTrend = priceTrends.get(row.playerId);
+    const reasons =
+      priceTrend === 'rising'
+        ? [
+            ...projection.reasons,
+            'Heavily transferred in this gameweek - among the most net transfers in, so price ' +
+              'may be close to a rise (not a guarantee - FPL does not publish the real algorithm).',
+          ]
+        : priceTrend === 'falling'
+          ? [
+              ...projection.reasons,
+              'Heavily transferred out this gameweek - among the most net transfers out, so ' +
+                'price may be close to a fall (not a guarantee - FPL does not publish the real algorithm).',
+            ]
+          : projection.reasons;
+
     projected.push({
       playerId: row.playerId,
       name: row.name,
@@ -346,7 +402,7 @@ export function buildProjections(
       breakdown: projection.breakdown,
       expectedMinutes: projection.expectedMinutes,
       confidence: projection.confidence,
-      reasons: projection.reasons,
+      reasons,
       fixtures: input.fixtures.map((fixture) => ({
         opponentShort: fixture.opponentShort,
         isHome: fixture.isHome,

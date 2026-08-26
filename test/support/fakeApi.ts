@@ -41,6 +41,8 @@ export interface FakePlayerSpec {
   expected_assists?: number;
   expected_goals_conceded?: number;
   defensive_contribution?: number;
+  transfers_in_event?: number;
+  transfers_out_event?: number;
 }
 
 export const DEFAULT_ELEMENT_TYPES = [
@@ -116,6 +118,8 @@ export function fakePlayer(spec: FakePlayerSpec) {
     expected_goal_involvements: s((spec.expected_goals ?? 0) + (spec.expected_assists ?? 0)),
     expected_goals_conceded: s(spec.expected_goals_conceded ?? 0),
     defensive_contribution: s(spec.defensive_contribution ?? 0),
+    transfers_in_event: spec.transfers_in_event ?? 0,
+    transfers_out_event: spec.transfers_out_event ?? 0,
   };
 }
 

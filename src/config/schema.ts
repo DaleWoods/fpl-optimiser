@@ -211,6 +211,19 @@ export const modelWeightsSchema = z.strictObject({
   transfers: z.strictObject({
     priorityFixXPtsThreshold: z.number().min(0),
   }),
+  /**
+   * A soft, informational signal only - never an xPts adjustment, never a gate on selection.
+   * FPL's real price-change algorithm is unpublished; this is not a prediction of exactly when a
+   * price will move, only a "worth knowing" flag for whoever is otherwise close to a transfer
+   * decision.
+   */
+  priceTrend: z.strictObject({
+    /** How many of the most-transferred-in and most-transferred-out players get flagged. */
+    topN: positiveInt,
+    /** Net transfers this gameweek (in minus out) below which a top-N rank is not flagged at
+     *  all - early season, or a quiet gameweek, produces a top 20 that is really just noise. */
+    netTransfersFloor: nonNegativeInt,
+  }),
 });
 
 export const appConfigSchema = z.strictObject({

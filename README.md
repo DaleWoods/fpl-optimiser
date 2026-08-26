@@ -414,6 +414,17 @@ this season's own recent window instead of a whole season. This uses `player_fix
 (the per-gameweek breakdown that already arrives automatically, see "Moving to the next
 gameweek" above) - nothing new to import for it.
 
+### Price trend flags are informational only, never a scoring factor
+
+A player's "why this player?" reasons can note that they are heavily transferred in or out this
+gameweek - a soft, purely informational flag, never an xPts adjustment and never a gate on
+selection. FPL does not publish its real price-change algorithm, so this is not a prediction of
+exactly when a price will move: it ranks every player by net transfers this gameweek (in minus
+out, from `bootstrap-static`) and flags the top `priceTrend.topN` (default 20) at each end, but
+only once net transfers clear `priceTrend.netTransfersFloor` (default 5,000) - otherwise a quiet
+gameweek's top 20 is really just noise, not a genuine signal. Worth knowing before a transfer
+decision, not a reason to chase or panic-sell a player on its own.
+
 ### Why curated notes exist
 
 **The app cannot read the web.** It can call the FPL API and nothing else. Anything that comes

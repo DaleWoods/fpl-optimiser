@@ -217,14 +217,16 @@ export function ingestBootstrapPayload(
       form, points_per_game, total_points, selected_by_percent, ep_this, ep_next,
       minutes, starts, goals_scored, assists, clean_sheets, goals_conceded, saves, bonus, bps,
       yellow_cards, red_cards, expected_goals, expected_assists, expected_goal_involvements,
-      expected_goals_conceded, defensive_contribution, raw_json
+      expected_goals_conceded, defensive_contribution, transfers_in_event, transfers_out_event,
+      raw_json
     ) VALUES (
       @snapshot_id, @player_id, @taken_at, @now_cost, @cost_change_start, @cost_change_event,
       @status, @chance_of_playing_this_round, @chance_of_playing_next_round, @news, @news_added_iso,
       @form, @points_per_game, @total_points, @selected_by_percent, @ep_this, @ep_next,
       @minutes, @starts, @goals_scored, @assists, @clean_sheets, @goals_conceded, @saves, @bonus, @bps,
       @yellow_cards, @red_cards, @expected_goals, @expected_assists, @expected_goal_involvements,
-      @expected_goals_conceded, @defensive_contribution, @raw_json
+      @expected_goals_conceded, @defensive_contribution, @transfers_in_event, @transfers_out_event,
+      @raw_json
     )
   `);
 
@@ -342,6 +344,8 @@ export function ingestBootstrapPayload(
         expected_goal_involvements: element.expected_goal_involvements,
         expected_goals_conceded: element.expected_goals_conceded,
         defensive_contribution: element.defensive_contribution,
+        transfers_in_event: element.transfers_in_event,
+        transfers_out_event: element.transfers_out_event,
         raw_json: JSON.stringify(element),
       });
     }

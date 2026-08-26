@@ -410,6 +410,64 @@ describe('recency-weighted form', () => {
   });
 });
 
+describe('price trend', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = openTestDatabase();
+  });
+
+  // A small topN/floor, independent of the real config, so the test is not tied to how many
+  // players defaultPlayers() happens to seed.
+  const tunedWeights = { ...weights, priceTrend: { topN: 1, netTransfersFloor: 1000 } };
+
+  it('flags a player heavily transferred in as trending up, and one heavily transferred out as trending down', async () => {
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+          players: defaultPlayers().map((p) => {
+            if (p.id === 1) return { ...p, transfers_in_event: 50000, transfers_out_event: 200 };
+            if (p.id === 2) return { ...p, transfers_in_event: 100, transfers_out_event: 40000 };
+            return p;
+          }),
+        }),
+      }),
+      rules,
+    );
+
+    const projections = buildProjections(db, 1, rules, tunedWeights);
+    const risingPlayer = projections.find((p) => p.playerId === 1)!;
+    const fallingPlayer = projections.find((p) => p.playerId === 2)!;
+    const untouchedPlayer = projections.find((p) => p.playerId === 3)!;
+
+    expect(risingPlayer.reasons.join(' ')).toMatch(/transferred in.*price may be close to a rise/i);
+    expect(fallingPlayer.reasons.join(' ')).toMatch(/transferred out.*price may be close to a fall/i);
+    expect(untouchedPlayer.reasons.join(' ')).not.toMatch(/transferred (in|out)/i);
+  });
+
+  it('does not flag anyone when net transfers everywhere sit below the floor', async () => {
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+          players: defaultPlayers().map((p) =>
+            p.id === 1 ? { ...p, transfers_in_event: 500, transfers_out_event: 100 } : p,
+          ),
+        }),
+      }),
+      rules,
+    );
+
+    const projections = buildProjections(db, 1, rules, tunedWeights);
+    for (const player of projections) {
+      expect(player.reasons.join(' ')).not.toMatch(/transferred (in|out)/i);
+    }
+  });
+});
+
 describe('elite manager ownership', () => {
   let db: Database;
 
