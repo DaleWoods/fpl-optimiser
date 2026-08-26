@@ -14,6 +14,7 @@ import {
   previousRecommendationDetail,
   recordGameweekResult,
   saveRecommendation,
+  simulateAutoSubs,
 } from '../../src/model/accuracy.js';
 import { fakeBootstrap, fakeEvent, defaultPlayers } from '../support/fakeApi.js';
 
@@ -469,6 +470,213 @@ describe('grading the model', () => {
 
       expect(previousRecommendationDetail(db, 2, 2651633)).toBeNull();
     });
+  });
+
+  describe('simulateAutoSubs', () => {
+    // 1 GKP, 4 DEF, 5 MID, 1 FWD - a legal 4-5-1 starting XI, at the MID cap (max 5).
+    const positionById = new Map<number, string>([
+      [1, 'GKP'],
+      [2, 'DEF'],
+      [3, 'DEF'],
+      [4, 'DEF'],
+      [5, 'DEF'],
+      [6, 'MID'],
+      [7, 'MID'],
+      [8, 'MID'],
+      [9, 'MID'],
+      [10, 'MID'],
+      [11, 'FWD'],
+      [12, 'MID'], // bench #1
+      [13, 'DEF'], // bench #2
+      [14, 'FWD'], // bench #3
+      [15, 'GKP'], // bench #4
+    ]);
+    const starters = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((playerId) => ({ playerId }));
+    const bench = [12, 13, 14, 15].map((playerId) => ({ playerId }));
+    const played = (points: number) => ({ points, minutes: 90 });
+    const blank = { points: 0, minutes: 0 };
+
+    it('subs on the next bench player who played when a starter blanks', () => {
+      const actualById = new Map<number, { points: number; minutes: number | null }>([
+        [1, played(5)],
+        [2, played(2)],
+        [3, played(2)],
+        [4, played(2)],
+        [5, blank], // starting DEF blanks
+        [6, played(3)],
+        [7, played(3)],
+        [8, played(3)],
+        [9, played(3)],
+        [10, played(3)],
+        [11, played(4)],
+        [12, blank], // bench #1 also blank
+        [13, played(6)], // bench #2 played - should come on for player 5
+        [14, blank],
+        [15, blank],
+      ]);
+
+      const result = simulateAutoSubs(starters, bench, positionById, actualById, null, null, rules);
+
+      expect(result.finalXi).toContain(13);
+      expect(result.finalXi).not.toContain(5);
+      // Every other blanked or unused bench player is irrelevant to the total.
+      expect(result.total).toBe(5 + 2 + 2 + 2 + 6 + 3 + 3 + 3 + 3 + 3 + 4);
+    });
+
+    it('skips a bench player who would make the formation illegal, and uses the next one who does not', () => {
+      const actualById = new Map<number, { points: number; minutes: number | null }>([
+        [1, played(0)],
+        [2, played(0)],
+        [3, played(0)],
+        [4, played(0)],
+        [5, blank], // starting DEF blanks; DEF is at 4, MID already at its max of 5
+        [6, played(0)],
+        [7, played(0)],
+        [8, played(0)],
+        [9, played(0)],
+        [10, played(0)],
+        [11, played(0)],
+        [12, played(9)], // bench #1: a MID - would push MID to 6, illegal, must be skipped
+        [13, played(7)], // bench #2: a DEF - keeps the formation legal, used instead
+        [14, blank],
+        [15, blank],
+      ]);
+
+      const result = simulateAutoSubs(starters, bench, positionById, actualById, null, null, rules);
+
+      expect(result.finalXi).toContain(13);
+      expect(result.finalXi).not.toContain(12);
+      expect(result.finalXi).not.toContain(5);
+    });
+
+    it('never replaces a blanked goalkeeper with an outfield player, even if one is available', () => {
+      const actualById = new Map<number, { points: number; minutes: number | null }>([
+        [1, blank], // starting GKP blanks
+        [2, played(1)],
+        [3, played(1)],
+        [4, played(1)],
+        [5, played(1)],
+        [6, played(1)],
+        [7, played(1)],
+        [8, played(1)],
+        [9, played(1)],
+        [10, played(1)],
+        [11, played(1)],
+        [12, played(9)], // bench MID played, but must never come on for a goalkeeper
+        [13, played(9)],
+        [14, played(9)],
+        [15, blank], // bench GKP also blanked - no legal replacement exists
+      ]);
+
+      const result = simulateAutoSubs(starters, bench, positionById, actualById, null, null, rules);
+
+      // The goalkeeper stays put, scoring 0, rather than being replaced by an outfield player.
+      expect(result.finalXi).toContain(1);
+      expect(result.finalXi).not.toContain(15);
+    });
+
+    it('moves the captain\'s double to the vice-captain when the captain blanks', () => {
+      const actualById = new Map<number, { points: number; minutes: number | null }>([
+        [1, played(2)],
+        [2, played(2)],
+        [3, played(2)],
+        [4, played(2)],
+        [5, played(2)],
+        [6, played(2)],
+        [7, played(2)],
+        [8, played(2)],
+        [9, played(2)],
+        [10, played(2)],
+        [11, blank], // the captain, blanks
+        [12, blank],
+        [13, blank],
+        [14, blank],
+        [15, blank],
+      ]);
+
+      const result = simulateAutoSubs(starters, bench, positionById, actualById, 11, 10, rules);
+
+      // Player 11 (captain, blanked) scores 0 either way; player 10 (vice) is doubled instead.
+      const withoutDouble = 2 * 10 + 0;
+      expect(result.total).toBe(withoutDouble + 2); // +2 for vice-captain's double
+    });
+
+    it('doubles nobody when both the captain and vice-captain blank', () => {
+      const actualById = new Map<number, { points: number; minutes: number | null }>([
+        [1, played(2)],
+        [2, played(2)],
+        [3, played(2)],
+        [4, played(2)],
+        [5, played(2)],
+        [6, played(2)],
+        [7, played(2)],
+        [8, played(2)],
+        [9, played(2)],
+        [10, blank], // vice, blanks
+        [11, blank], // captain, blanks
+        [12, blank],
+        [13, blank],
+        [14, blank],
+        [15, blank],
+      ]);
+
+      const result = simulateAutoSubs(starters, bench, positionById, actualById, 11, 10, rules);
+      expect(result.total).toBe(2 * 9);
+    });
+  });
+
+  it('grades a stored recommendation with real auto-subs applied, not just the 11 originally picked', () => {
+    const squad = [
+      { playerId: 1, position: 'GKP' },
+      { playerId: 2, position: 'DEF' },
+      { playerId: 3, position: 'DEF' },
+      { playerId: 4, position: 'DEF' },
+      { playerId: 5, position: 'MID' },
+      { playerId: 6, position: 'MID' },
+      { playerId: 7, position: 'MID' },
+      { playerId: 8, position: 'FWD' },
+      { playerId: 9, position: 'FWD' },
+      { playerId: 10, position: 'FWD' },
+      { playerId: 11, position: 'DEF' },
+      { playerId: 12, position: 'GKP' }, // bench #1
+      { playerId: 13, position: 'DEF' }, // bench #2
+      { playerId: 14, position: 'MID' }, // bench #3
+      { playerId: 15, position: 'FWD' }, // bench #4
+    ];
+    const startersDetail = squad.slice(0, 11).map((p) => ({ playerId: p.playerId, xPts: 4 }));
+    const benchDetail = squad.slice(11).map((p) => ({ playerId: p.playerId, xPts: 2 }));
+
+    for (const player of squad) {
+      project(player.playerId, 1, 4);
+    }
+    // Player 11 (a starting DEF) blanks; bench #2 (player 13, also DEF) comes on for them.
+    for (const player of squad) {
+      actual(player.playerId, 1, player.playerId === 11 ? 0 : 3);
+    }
+    // actual() always records 90 minutes - only need to zero out player 11's, so they read as
+    // having not played rather than having played and scored 0.
+    db.prepare('UPDATE actual_points SET minutes = 0 WHERE player_id = 11 AND event_id = 1').run();
+
+    saveRecommendation(db, {
+      eventId: 1,
+      entryId: 2651633,
+      kind: 'xi',
+      modelVersion: weights.modelVersion,
+      summary: 'test',
+      detail: {
+        starters: startersDetail,
+        bench: benchDetail,
+        captainId: startersDetail[0]!.playerId,
+        viceCaptainId: startersDetail[1]!.playerId,
+        squad,
+      },
+      dataTakenAt: null,
+    });
+
+    const result = evaluateGameweek(db, 1, rules, 2651633);
+    // Without auto-subs this would be 10*3 (11 blanks at 0) with captain doubled = 33.
+    // With the bench DEF subbed on for the blank, it is 10*3 + 3, captain still doubled.
+    expect(result.recommendedXiActual).toBe(10 * 3 + 3 + 3);
   });
 
   it('surfaces the league average and highest score straight from bootstrap-static, once the gameweek finishes', async () => {

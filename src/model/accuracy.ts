@@ -414,29 +414,72 @@ export function evaluateGameweek(
     try {
       const detail = JSON.parse(stored.detail) as {
         starters?: { playerId: number; xPts: number }[];
+        bench?: { playerId: number; xPts: number }[];
         captainId?: number;
+        viceCaptainId?: number;
         squad?: { playerId: number; position: string }[];
       };
 
       const actualById = new Map(withError.map((row) => [row.playerId, row.actual]));
 
       if (detail.starters && detail.starters.length > 0) {
-        let total = 0;
         let predicted = 0;
         let scored = 0;
         for (const starter of detail.starters) {
-          const actual = actualById.get(starter.playerId);
           const multiplier = starter.playerId === detail.captainId ? rules.captain.multiplier : 1;
-          if (actual !== undefined) {
-            total += actual * multiplier;
-            scored += 1;
-          }
+          if (actualById.has(starter.playerId)) scored += 1;
           predicted += starter.xPts * multiplier;
         }
+
         if (scored > 0) {
-          recommendedXiActual = total;
           recommendedXiPredicted = Math.round(predicted * 10) / 10;
+
+          if (detail.bench && detail.squad && detail.squad.length > 0) {
+            // Replays FPL's own auto-sub and captain-armband rules against what actually
+            // happened this gameweek, so this grades the score that really would have counted
+            // - not just the 11 names originally picked, which understates it every time a
+            // starter blanks.
+            const positionById = new Map(detail.squad.map((player) => [player.playerId, player.position]));
+            const squadIds = detail.squad.map((player) => player.playerId);
+            const minutesRows = squadIds.length
+              ? (db
+                  .prepare(
+                    `SELECT player_id AS playerId, points, minutes FROM actual_points
+                     WHERE event_id = ? AND player_id IN (${squadIds.map(() => '?').join(',')})`,
+                  )
+                  .all(eventId, ...squadIds) as {
+                  playerId: number;
+                  points: number;
+                  minutes: number | null;
+                }[])
+              : [];
+            const actualWithMinutesById = new Map(
+              minutesRows.map((row) => [row.playerId, { points: row.points, minutes: row.minutes }]),
+            );
+
+            recommendedXiActual = simulateAutoSubs(
+              detail.starters,
+              detail.bench,
+              positionById,
+              actualWithMinutesById,
+              detail.captainId ?? null,
+              detail.viceCaptainId ?? null,
+              rules,
+            ).total;
+          } else {
+            // An older stored recommendation from before auto-sub grading existed - fall back
+            // to the plain sum rather than losing the row entirely.
+            let total = 0;
+            for (const starter of detail.starters) {
+              const actual = actualById.get(starter.playerId);
+              if (actual === undefined) continue;
+              const multiplier = starter.playerId === detail.captainId ? rules.captain.multiplier : 1;
+              total += actual * multiplier;
+            }
+            recommendedXiActual = total;
+          }
         }
+
         if (scored < detail.starters.length) {
           notes.push(
             `${detail.starters.length - scored} of the recommended XI have no recorded result, ` +
@@ -475,6 +518,81 @@ export function evaluateGameweek(
     ...leagueScores(db, eventId),
     notes,
   };
+}
+
+/**
+ * Replay FPL's own auto-sub and captain-armband rules against what actually happened, so grading
+ * reflects the score that really would have counted - not just the 11 names originally picked,
+ * which understates it every time a starter blanks.
+ *
+ * A starter with 0 actual minutes (or no recorded minutes at all) is replaced by the first bench
+ * player, in auto-sub priority order, who did play and keeps the formation legal. A goalkeeper
+ * can only be replaced by the bench goalkeeper, never an outfield player, whatever the formation
+ * bounds would otherwise allow. If the captain blanks, the doubled points move to the
+ * vice-captain instead - independently of which bench player, if any, fills either's vacated
+ * slot - and if both blank, nobody is doubled that gameweek, exactly as FPL itself behaves.
+ */
+export function simulateAutoSubs(
+  starters: { playerId: number }[],
+  bench: { playerId: number }[],
+  positionById: Map<number, string>,
+  actualById: Map<number, { points: number; minutes: number | null }>,
+  captainId: number | null,
+  viceCaptainId: number | null,
+  rules: Rules,
+): { total: number; finalXi: number[] } {
+  const blanked = (playerId: number): boolean => {
+    const actual = actualById.get(playerId);
+    return !actual || (actual.minutes ?? 0) === 0;
+  };
+
+  const positionCounts = (ids: number[]): Record<string, number> => {
+    const counts: Record<string, number> = {};
+    for (const id of ids) {
+      const position = positionById.get(id) ?? 'MID';
+      counts[position] = (counts[position] ?? 0) + 1;
+    }
+    return counts;
+  };
+
+  let xi = starters.map((s) => s.playerId);
+  const used = new Set(xi);
+  const benchOrder = bench.map((b) => b.playerId);
+
+  for (const outId of starters.map((s) => s.playerId)) {
+    if (!blanked(outId)) continue;
+    const outIsGoalkeeper = positionById.get(outId) === 'GKP';
+
+    for (const inId of benchOrder) {
+      if (used.has(inId) || blanked(inId)) continue;
+      const inIsGoalkeeper = positionById.get(inId) === 'GKP';
+      if (outIsGoalkeeper !== inIsGoalkeeper) continue;
+
+      const candidate = xi.map((id) => (id === outId ? inId : id));
+      const counts = positionCounts(candidate);
+      const legal = Object.entries(rules.startingXi.positionBounds).every(
+        ([position, bounds]) => (counts[position] ?? 0) >= bounds.min && (counts[position] ?? 0) <= bounds.max,
+      );
+      if (!legal) continue;
+
+      xi = candidate;
+      used.delete(outId);
+      used.add(inId);
+      break;
+    }
+  }
+
+  const captainPlayed = captainId !== null && !blanked(captainId);
+  const vicePlayed = viceCaptainId !== null && !blanked(viceCaptainId);
+  const doubledId = captainPlayed ? captainId : vicePlayed ? viceCaptainId : null;
+
+  const total = xi.reduce((sum, id) => {
+    const points = actualById.get(id)?.points ?? 0;
+    const multiplier = id === doubledId ? rules.captain.multiplier : 1;
+    return sum + points * multiplier;
+  }, 0);
+
+  return { total, finalXi: xi };
 }
 
 /**

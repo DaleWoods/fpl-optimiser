@@ -206,6 +206,15 @@ directions, and compares three numbers per gameweek: what the recommended XI was
 score, what it actually scored, and what the **best XI available from that squad** would have
 scored in hindsight. That last gap is what better projections were worth, in real points.
 
+"What it actually scored" replays FPL's own auto-sub rules against what really happened - a
+starter with 0 minutes is replaced by the first bench player, in auto-sub order, who did play
+and keeps the formation legal (a goalkeeper only ever comes on for a goalkeeper), and the
+captain's double moves to the vice-captain if the captain blanked - rather than just summing the
+11 names originally picked, which would understate it every time a starter blanked. It still
+doesn't account for transfer hits or chip multipliers, so it isn't quite your final live FPL
+score - that's the separate "You scored" figure alongside it, recorded from your own entry
+history.
+
 Alongside your own score, it also shows the whole game's **average** and **highest** score for
 each gameweek — the same numbers the official app shows on its home screen. There is nothing to
 import for these: they ride along in `bootstrap-static`, which you're already uploading weekly,
