@@ -483,6 +483,51 @@ describe('recommendation with a squad loaded', () => {
     ).toEqual([]);
   });
 
+  it('keeps advising off the rest of a real squad instead of silently rebuilding from scratch when one owned player drops out of the latest player data', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen);
+
+    // Simulate the next weekly bootstrap-static import dropping one owned player entirely (a
+    // real, if rare, occurrence - e.g. a player deregistered from the league). The `player`
+    // table still remembers them from the earlier import; only the latest snapshot does not.
+    const droppedId = fifteen[0]!;
+    const { teams, players } = bigLeague();
+    const survivors = players.filter((player) => player.id !== droppedId);
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players: survivors,
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+        }),
+      }),
+      rules,
+    );
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    // Must still be the real 15, with a zero-projected placeholder standing in for the one pick
+    // that could not be resolved - never a fresh from-scratch build just because of that one
+    // player, and never an invalid 14-man squad that trips the composition rules either.
+    expect(result.mode).toBe('existing-squad');
+    expect(result.squad).toHaveLength(15);
+    expect(result.squad.map((p) => p.playerId).sort((a, b) => a - b)).toEqual(
+      [...fifteen].sort((a, b) => a - b),
+    );
+    const placeholder = result.squad.find((p) => p.playerId === droppedId)!;
+    expect(placeholder.xPts).toBe(0);
+    expect(placeholder.availability.excluded).toBe(true);
+    expect(result.eleven.starters.some((p) => p.playerId === droppedId)).toBe(false);
+    expect(
+      validateStartingEleven(result.eleven.starters, result.eleven.bench, rules, {
+        squad: result.squad,
+      }),
+    ).toEqual([]);
+    expect(result.notes.join(' ')).toMatch(/could not be matched/i);
+    expect(result.notes.join(' ')).not.toMatch(/does not expose your picks/i);
+  });
+
   it('suggests transfers that improve the projected score', async () => {
     const fifteen = pickLegalFifteen(db);
     await loadSquad(fifteen, 50);

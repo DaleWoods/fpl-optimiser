@@ -354,11 +354,81 @@ export function resolveTargetEvent(db: Database, eventId?: number): EventRow | n
 }
 
 /** The 15 currently owned, as projected players, or null when no squad is loaded. */
+/**
+ * A squad member whose pick could not be resolved against this gameweek's projections - the
+ * player_snapshot they came from does not have an entry for that id, most likely because they
+ * dropped out of a later bootstrap-static import. Reported so the caller can explain what
+ * happened; the squad slot itself is filled by a zero-projected placeholder (see
+ * `placeholderForUnresolvedPick`) rather than simply vanishing, so squad size and position
+ * composition - which every downstream rules check assumes is exactly rules.squad.size - stay
+ * correct, and the normal transfer machinery naturally flags the placeholder for replacement.
+ */
+export interface UnresolvedPick {
+  playerId: number;
+  name: string | null;
+}
+
+/**
+ * Stand in for a squad member whose id is not in this gameweek's projections. Identity (name,
+ * club, position) comes from the `player` table, which keeps every id ever seen even after a
+ * later bootstrap-static import drops them; price falls back to their last known player_snapshot
+ * price so the budget maths stays realistic. Marked excluded (like any unavailable player, e.g.
+ * the existing "dead squad slot" case) so it can never be selected into the XI, but still counts
+ * toward squad size and position composition like any other bench player.
+ */
+function placeholderForUnresolvedPick(db: Database, playerId: number): ProjectedPlayer | null {
+  const identity = db
+    .prepare(
+      `SELECT p.web_name AS name, p.team_id AS clubId, t.short_name AS clubShort,
+              pos.short_name AS position
+       FROM player p
+       JOIN team t ON t.id = p.team_id
+       JOIN position pos ON pos.id = p.position_id
+       WHERE p.id = ?`,
+    )
+    .get(playerId) as
+    | { name: string; clubId: number; clubShort: string; position: string }
+    | undefined;
+
+  if (!identity) return null;
+
+  const lastKnown = db
+    .prepare(
+      `SELECT now_cost AS price FROM player_snapshot WHERE player_id = ? ORDER BY snapshot_id DESC LIMIT 1`,
+    )
+    .get(playerId) as { price: number } | undefined;
+
+  return {
+    playerId,
+    name: identity.name,
+    clubId: identity.clubId,
+    clubShort: identity.clubShort,
+    position: identity.position,
+    price: lastKnown?.price ?? 0,
+    availability: {
+      state: 'unavailable',
+      probability: 0,
+      reason: 'Not in the most recently imported player data',
+      excluded: true,
+    },
+    xPts: 0,
+    xPtsRaw: 0,
+    breakdown: {},
+    expectedMinutes: 0,
+    confidence: 'low',
+    reasons: [
+      'Missing from the most recently imported player data, so nothing can be projected for ' +
+        "them - re-import this season's player data to refresh this.",
+    ],
+    fixtures: [],
+  };
+}
+
 function loadOwnedSquad(
   db: Database,
   teamId: number,
   projections: readonly ProjectedPlayer[],
-): { squad: ProjectedPlayer[]; bank: number | null } | null {
+): { squad: ProjectedPlayer[]; bank: number | null; unresolved: UnresolvedPick[] } | null {
   const state = db
     .prepare(
       `SELECT id, bank FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
@@ -374,11 +444,28 @@ function loadOwnedSquad(
   if (picks.length === 0) return null;
 
   const byId = new Map(projections.map((player) => [player.playerId, player]));
-  const squad = picks
-    .map((pick) => byId.get(pick.playerId))
-    .filter((player): player is ProjectedPlayer => player !== undefined);
+  const squad: ProjectedPlayer[] = [];
+  const unresolved: UnresolvedPick[] = [];
+  for (const pick of picks) {
+    const player = byId.get(pick.playerId);
+    if (player) {
+      squad.push(player);
+      continue;
+    }
+    // A handful of unresolved picks (a player who dropped out of the latest bootstrap-static
+    // import) must not throw away the rest of a real, just-imported squad and silently fall
+    // back to building a brand new team from scratch - that is far more surprising than a
+    // squad with one placeholder slot and a clear note explaining what is missing.
+    const placeholder = placeholderForUnresolvedPick(db, pick.playerId);
+    if (placeholder) squad.push(placeholder);
+    unresolved.push({ playerId: pick.playerId, name: placeholder?.name ?? null });
+  }
 
-  return squad.length === picks.length ? { squad, bank: state.bank } : null;
+  // Only genuinely nothing resolving at all - not even an id the `player` table has ever heard
+  // of - counts as "no squad loaded".
+  if (squad.length === 0) return null;
+
+  return { squad, bank: state.bank, unresolved };
 }
 
 /**
@@ -731,6 +818,17 @@ export async function recommend(
   }
 
   const owned = options.teamId ? loadOwnedSquad(db, options.teamId, projections) : null;
+
+  if (owned && owned.unresolved.length > 0) {
+    const names = owned.unresolved.map((pick) => pick.name ?? `player #${pick.playerId}`);
+    notes.push(
+      `${names.length === 1 ? '1 player' : `${names.length} players`} from your imported squad ` +
+        `(${names.join(', ')}) could not be matched to this gameweek's data - they are kept as a ` +
+        `zero-projected placeholder below so the rest of your real squad is still used, rather ` +
+        'than building a fresh team from scratch, and should show up as a priority transfer to ' +
+        "fix. Re-import this season's player data, then your squad, to clear this.",
+    );
+  }
 
   if (!owned || options.fromScratch) {
     if (!owned && options.teamId) {
