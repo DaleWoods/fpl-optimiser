@@ -381,7 +381,7 @@ function commandAccuracy(flags: Map<string, string | true>): number {
   const db = openDatabase({ path: config.app.database.path });
 
   const gwFlag = flags.get('gw');
-  const season = evaluateSeason(db, config.rules);
+  const season = evaluateSeason(db, config.rules, config.app.teamId);
 
   console.log('Model accuracy');
   console.log('='.repeat(64));
@@ -416,7 +416,7 @@ function commandAccuracy(flags: Map<string, string | true>): number {
     typeof gwFlag === 'string' ? Number(gwFlag) : season.gameweeks.at(-1)?.eventId;
 
   if (targetGw !== undefined) {
-    const detail = evaluateGameweek(db, targetGw, config.rules);
+    const detail = evaluateGameweek(db, targetGw, config.rules, config.app.teamId);
     if (detail.playersScored > 0) {
       console.log(`\nGameweek ${targetGw} in detail (model ${detail.modelVersion}):`);
       console.log('\n  By position:');

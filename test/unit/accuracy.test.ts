@@ -322,10 +322,59 @@ describe('grading the model', () => {
       dataTakenAt: null,
     });
 
-    const result = evaluateGameweek(db, 1, rules);
+    const result = evaluateGameweek(db, 1, rules, 2651633);
     // Eleven players on 3 points, with the captain doubled.
     expect(result.recommendedXiActual).toBe(11 * 3 + 3);
     expect(result.recommendedXiPredicted).toBeCloseTo(11 * 4 + 4, 1);
+  });
+
+  it('never grades a from-scratch build (kind=squad) as if it were the recommended XI you followed', () => {
+    const squad = defaultPlayers().slice(0, 15).map((p) => ({ playerId: p.id, position: 'MID' }));
+    const starters = squad.slice(0, 11).map((p) => ({ playerId: p.playerId, xPts: 4 }));
+
+    for (const player of squad) {
+      project(player.playerId, 1, 4);
+      actual(player.playerId, 1, 3);
+    }
+
+    // Saved whenever no owned squad could be loaded that time - never actually followed.
+    saveRecommendation(db, {
+      eventId: 1,
+      entryId: 2651633,
+      kind: 'squad',
+      modelVersion: weights.modelVersion,
+      summary: 'built from scratch, no squad was loaded that time',
+      detail: { starters, captainId: starters[0]!.playerId, squad },
+      dataTakenAt: null,
+    });
+
+    const result = evaluateGameweek(db, 1, rules, 2651633);
+    expect(result.recommendedXiActual).toBeNull();
+    expect(result.recommendedXiPredicted).toBeNull();
+  });
+
+  it('never grades another team\'s stored recommendation', () => {
+    const squad = defaultPlayers().slice(0, 15).map((p) => ({ playerId: p.id, position: 'MID' }));
+    const starters = squad.slice(0, 11).map((p) => ({ playerId: p.playerId, xPts: 4 }));
+
+    for (const player of squad) {
+      project(player.playerId, 1, 4);
+      actual(player.playerId, 1, 3);
+    }
+
+    saveRecommendation(db, {
+      eventId: 1,
+      entryId: 999999,
+      kind: 'xi',
+      modelVersion: weights.modelVersion,
+      summary: 'a different team entirely',
+      detail: { starters, captainId: starters[0]!.playerId, squad },
+      dataTakenAt: null,
+    });
+
+    const result = evaluateGameweek(db, 1, rules, 2651633);
+    expect(result.recommendedXiActual).toBeNull();
+    expect(result.recommendedXiPredicted).toBeNull();
   });
 
   describe('previousRecommendationDetail', () => {
@@ -466,11 +515,20 @@ describe('grading the model', () => {
     recordGameweekResult(db, 2651633, 1, { actualPoints: 62 });
     recordGameweekResult(db, 2651633, 2, { actualPoints: 71 });
 
-    const season = evaluateSeason(db, rules);
+    const season = evaluateSeason(db, rules, 2651633);
     expect(season.gameweeks.map((g) => g.eventId)).toEqual([1, 2]);
     expect(season.gameweeks[0]?.yourActual).toBe(62);
     expect(season.overall?.gameweeks).toBe(2);
     expect(season.overall?.meanAbsoluteError).toBeCloseTo(0.5, 5);
+  });
+
+  it('never shows another team\'s recorded score as "you scored"', () => {
+    project(1, 1, 5);
+    actual(1, 1, 4);
+    recordGameweekResult(db, 999999, 1, { actualPoints: 62 });
+
+    const season = evaluateSeason(db, rules, 2651633);
+    expect(season.gameweeks[0]?.yourActual).toBeNull();
   });
 
   it('carries the league average and highest through into the season summary', async () => {

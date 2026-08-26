@@ -206,9 +206,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     }
 
     if (url.pathname === '/accuracy' || url.pathname === '/accuracy.json') {
-      const season = evaluateSeason(db, config.rules);
+      const season = evaluateSeason(db, config.rules, config.app.teamId);
       const lastGraded = season.gameweeks.at(-1);
-      const latest = lastGraded ? evaluateGameweek(db, lastGraded.eventId, config.rules) : null;
+      const latest = lastGraded
+        ? evaluateGameweek(db, lastGraded.eventId, config.rules, config.app.teamId)
+        : null;
 
       if (url.pathname === '/accuracy.json') {
         response.writeHead(200, JSON_HEADERS);

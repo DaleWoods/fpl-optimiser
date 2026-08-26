@@ -968,7 +968,9 @@ export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy 
               RMSE ${latest.rootMeanSquareError.toFixed(2)}.</p>
            ${
              latest.recommendedXiActual !== null
-               ? `<p style="margin:.2rem 0">The recommended XI was projected at
+               ? `<p style="margin:.2rem 0">The recommended XI (without auto-subs applied, and
+                  ignoring transfer hits or chips - not your final live FPL score, which is the
+                  separate "You scored" figure below) was projected at
                   <strong>${latest.recommendedXiPredicted?.toFixed(1)}</strong> and actually scored
                   <strong>${latest.recommendedXiActual}</strong>.${
                     latest.bestPossibleFromSquad !== null

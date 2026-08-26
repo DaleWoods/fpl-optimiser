@@ -288,6 +288,7 @@ export function evaluateGameweek(
   db: Database,
   eventId: number,
   rules: Rules,
+  entryId: number | null = null,
 ): GameweekAccuracy {
   const notes: string[] = [];
 
@@ -397,13 +398,17 @@ export function evaluateGameweek(
   let recommendedXiPredicted: number | null = null;
   let bestPossibleFromSquad: number | null = null;
 
+  // kind='xi' only: a kind='squad' row is a from-scratch build (saved whenever no owned squad
+  // could be loaded that time), never actually "your" recommended XI, so grading against it
+  // would score a fantasy team that was never followed. Scoped to entry_id for the same reason
+  // previousRecommendationDetail() is - another team's history must never bleed in here either.
   const stored = db
     .prepare(
       `SELECT detail_json AS detail FROM recommendation
-       WHERE event_id = ? AND kind IN ('xi', 'squad')
+       WHERE event_id = ? AND kind = 'xi' AND entry_id IS ?
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(eventId) as { detail: string } | undefined;
+    .get(eventId, entryId) as { detail: string } | undefined;
 
   if (stored) {
     try {
@@ -517,7 +522,7 @@ export function bestElevenByActual(
 }
 
 /** Grade every gameweek that has both projections and results. */
-export function evaluateSeason(db: Database, rules: Rules): SeasonAccuracy {
+export function evaluateSeason(db: Database, rules: Rules, entryId: number | null = null): SeasonAccuracy {
   const eventIds = (
     db
       .prepare(
@@ -543,7 +548,9 @@ export function evaluateSeason(db: Database, rules: Rules): SeasonAccuracy {
 
   const yourResults = new Map(
     (
-      db.prepare('SELECT event_id AS eventId, actual_points AS points FROM gameweek_result').all() as {
+      db
+        .prepare('SELECT event_id AS eventId, actual_points AS points FROM gameweek_result WHERE entry_id IS ?')
+        .all(entryId) as {
         eventId: number;
         points: number | null;
       }[]
@@ -551,7 +558,7 @@ export function evaluateSeason(db: Database, rules: Rules): SeasonAccuracy {
   );
 
   const gameweeks = eventIds.map((eventId) => {
-    const accuracy = evaluateGameweek(db, eventId, rules);
+    const accuracy = evaluateGameweek(db, eventId, rules, entryId);
     return {
       eventId,
       playersScored: accuracy.playersScored,
