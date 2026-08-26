@@ -62,6 +62,67 @@ interface FixtureRow {
   teamA: number;
   difficultyH: number | null;
   difficultyA: number | null;
+  kickoffTime: number | null;
+}
+
+/**
+ * Which clubs have a fixture this gameweek that follows their previous fixture (any earlier
+ * gameweek) by fewer than restDaysThreshold days - most often a European tie sandwiched in
+ * between two league gameweeks, since that is the only reason a top-flight club's own league
+ * fixtures get shuffled this tight. Computed purely from imported fixture kickoff times: the FPL
+ * API carries no European fixtures at all, so a short gap between two Premier League ones is the
+ * only signal available.
+ */
+function clubsWithShortRest(
+  db: Database,
+  thisWeek: readonly FixtureRow[],
+  restDaysThreshold: number,
+): Set<number> {
+  const allKickoffs = db
+    .prepare(
+      `SELECT team_h AS teamH, team_a AS teamA, kickoff_time AS kickoffTime
+       FROM fixture WHERE kickoff_time IS NOT NULL ORDER BY kickoff_time ASC`,
+    )
+    .all() as { teamH: number; teamA: number; kickoffTime: number }[];
+
+  const byTeam = new Map<number, number[]>();
+  for (const row of allKickoffs) {
+    for (const teamId of [row.teamH, row.teamA]) {
+      const list = byTeam.get(teamId) ?? [];
+      list.push(row.kickoffTime);
+      byTeam.set(teamId, list);
+    }
+  }
+
+  // Largest timestamp strictly before `before`, in an ascending-sorted array.
+  const previousKickoff = (sorted: number[], before: number): number | null => {
+    let lo = 0;
+    let hi = sorted.length - 1;
+    let result: number | null = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid]! < before) {
+        result = sorted[mid]!;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return result;
+  };
+
+  const restDaysSeconds = restDaysThreshold * 24 * 3600;
+  const shortRest = new Set<number>();
+  for (const fixture of thisWeek) {
+    if (fixture.kickoffTime === null) continue;
+    for (const teamId of [fixture.teamH, fixture.teamA]) {
+      const previous = previousKickoff(byTeam.get(teamId) ?? [], fixture.kickoffTime);
+      if (previous !== null && fixture.kickoffTime - previous < restDaysSeconds) {
+        shortRest.add(teamId);
+      }
+    }
+  }
+  return shortRest;
 }
 
 /** Per-90 rate, or null when there are not enough minutes to say anything. */
@@ -176,10 +237,13 @@ export function buildProjections(
   const fixtures = db
     .prepare(
       `SELECT id, event_id AS eventId, team_h AS teamH, team_a AS teamA,
-              team_h_difficulty AS difficultyH, team_a_difficulty AS difficultyA
+              team_h_difficulty AS difficultyH, team_a_difficulty AS difficultyA,
+              kickoff_time AS kickoffTime
        FROM fixture WHERE event_id = ?`,
     )
     .all(eventId) as FixtureRow[];
+
+  const shortRestClubs = clubsWithShortRest(db, fixtures, weights.minutes.rotationRiskRestDaysThreshold);
 
   // Current league form, blended into club strength. Computed from imported fixture results,
   // so it needs no separate upload and updates the moment results land. Bounded so a hot start
@@ -368,6 +432,7 @@ export function buildProjections(
       previousSeasonName: usingPrevious ? previous.seasonName : null,
       previousSeasonPoints: usingPrevious ? previous.totalPoints : null,
       previousSeasonMinutes: usingPrevious ? previous.minutes : null,
+      shortRestFixture: shortRestClubs.has(row.teamId),
       fallbackExpectedPoints: row.epNext,
     };
 

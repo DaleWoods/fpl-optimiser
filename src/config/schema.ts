@@ -118,6 +118,19 @@ export const modelWeightsSchema = z.strictObject({
     lowOwnershipThreshold: z.number().min(0).max(100),
     /** The start-probability ceiling applied below lowOwnershipThreshold. */
     lowOwnershipStartCap: probability,
+    /**
+     * A club playing again this soon after its last fixture - most often a European tie
+     * sandwiched between two league gameweeks, since that is the only reason a top-flight club's
+     * own league fixtures get shuffled this tight - is a real rotation risk the model has no
+     * other way to see: the FPL API carries no European fixtures at all, only the Premier League
+     * ones already imported, so a short gap between two of those is the signal, not a curated
+     * list of "clubs in Europe" that would need separate upkeep and still not know the exact
+     * date. Below this many days since the club's previous fixture, rotationRiskDiscount applies.
+     */
+    rotationRiskRestDaysThreshold: z.number().min(0),
+    /** Multiplicative discount to start probability when rotationRiskRestDaysThreshold applies.
+     *  1.0 disables it entirely. */
+    rotationRiskDiscount: probability,
   }),
   teamStrength: z.strictObject({
     leagueAverageGoalsPerGame: z.number().positive(),

@@ -414,6 +414,25 @@ this season's own recent window instead of a whole season. This uses `player_fix
 (the per-gameweek breakdown that already arrives automatically, see "Moving to the next
 gameweek" above) - nothing new to import for it.
 
+### Rotation risk, from fixture congestion rather than a guessed list of European clubs
+
+A club playing again within `minutes.rotationRiskRestDaysThreshold` days (default 4) of its
+previous fixture gets a modest, config-driven discount (`minutes.rotationRiskDiscount`, default
+0.9 - a 10% reduction) applied to every one of its players' start probability that gameweek, with
+a note in "why this player?" explaining why.
+
+The FPL API carries no European fixtures at all - only the Premier League ones this app already
+imports - so there is no way to know directly whether a club has a Champions League, Europa or
+Conference League tie in a given week. A short gap between two of its *Premier League* fixtures
+is the closest thing to a reliable signal available without maintaining a separate curated list
+of "clubs currently in Europe": that gap is almost always caused by exactly that (a top-flight
+club's own league fixtures do not otherwise get shuffled this tight), and unlike a curated list
+it needs no upkeep, degrades to "no discount" the moment data is missing rather than silently
+going stale, and catches other causes of a squeezed calendar (a cup replay, a rearranged fixture)
+for free. The trade-off is that it cannot single out which players within a squad are actually
+rotation risks - it discounts the whole club's players equally, when in reality a manager
+protects some more than others.
+
 ### Price trend flags are informational only, never a scoring factor
 
 A player's "why this player?" reasons can note that they are heavily transferred in or out this

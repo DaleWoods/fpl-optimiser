@@ -167,6 +167,25 @@ describe('minutes', () => {
     const unknown = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: null }), weights);
     expect(unknown.ownershipCapped).toBe(false);
   });
+
+  it('discounts the start chance for a club on unusually short rest, most often a European tie sandwiched in between', () => {
+    const normalRest = projectMinutes(input({ starts: 10, matchesAvailable: 10, shortRestFixture: false }), weights);
+    const shortRest = projectMinutes(input({ starts: 10, matchesAvailable: 10, shortRestFixture: true }), weights);
+
+    expect(shortRest.rotationRiskApplied).toBe(true);
+    expect(normalRest.rotationRiskApplied).toBe(false);
+    expect(shortRest.startProbability).toBeLessThan(normalRest.startProbability);
+    expect(shortRest.startProbability).toBeCloseTo(
+      normalRest.startProbability * weights.minutes.rotationRiskDiscount,
+      6,
+    );
+  });
+
+  it('never applies the rotation-risk discount when the config disables it', () => {
+    const off = { ...weights, minutes: { ...weights.minutes, rotationRiskDiscount: 1 } };
+    const result = projectMinutes(input({ starts: 10, matchesAvailable: 10, shortRestFixture: true }), off);
+    expect(result.rotationRiskApplied).toBe(false);
+  });
 });
 
 describe('defensive contribution', () => {

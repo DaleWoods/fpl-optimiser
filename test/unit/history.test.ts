@@ -468,6 +468,89 @@ describe('price trend', () => {
   });
 });
 
+describe('rotation risk from a short turnaround between fixtures', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = openTestDatabase();
+  });
+
+  it('discounts minutes for a club whose gameweek 2 fixture follows gameweek 1 by only a few days - most often a European tie squeezed in between', async () => {
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2026-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2026-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers(),
+        }),
+      }),
+      rules,
+    );
+
+    const gw1Kickoff = Date.parse('2026-08-21T17:30:00Z');
+    const shortRestKickoff = new Date(gw1Kickoff + 3 * 24 * 3600 * 1000).toISOString(); // 3 days later
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          // Gameweek 1: every club plays, establishing each one's "previous" kickoff.
+          fakeFixture(1, 1, 1, 2, { finished: true }),
+          fakeFixture(2, 1, 3, 4, { finished: true }),
+          // Gameweek 2: teams 1 & 2 are back after only 3 days (short rest); teams 3 & 4 get
+          // the normal 7-day gap (fakeFixture's own default kickoff for gameweek 2).
+          fakeFixture(3, 2, 1, 2, { kickoff_time: shortRestKickoff }),
+          fakeFixture(4, 2, 3, 4),
+        ],
+      }),
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    // Player 8 (team 1, first MID) and player 38 (team 3, first MID) share identical underlying
+    // stats in defaultPlayers() - the only difference is which club has the short turnaround.
+    const shortRestPlayer = projections.find((p) => p.playerId === 8)!;
+    const normalRestPlayer = projections.find((p) => p.playerId === 38)!;
+
+    expect(shortRestPlayer.expectedMinutes).toBeLessThan(normalRestPlayer.expectedMinutes);
+    expect(shortRestPlayer.reasons.join(' ')).toMatch(/fewer than 4 days.*rotation risk/i);
+    expect(normalRestPlayer.reasons.join(' ')).not.toMatch(/rotation risk/i);
+  });
+
+  it('does not discount a normal 7-day gap between gameweeks', async () => {
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2026-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2026-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers(),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2, { finished: true }),
+          fakeFixture(2, 1, 3, 4, { finished: true }),
+          fakeFixture(3, 2, 1, 2), // default kickoff: 7 days after gameweek 1
+          fakeFixture(4, 2, 3, 4),
+        ],
+      }),
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    for (const player of projections) {
+      expect(player.reasons.join(' ')).not.toMatch(/rotation risk/i);
+    }
+  });
+});
+
 describe('elite manager ownership', () => {
   let db: Database;
 

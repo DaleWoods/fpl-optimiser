@@ -65,6 +65,13 @@ export interface PlayerModelInput {
   previousSeasonMinutes?: number | null;
 
   /**
+   * True when this club's fixture this gameweek follows its previous one by fewer than
+   * rotationRiskRestDaysThreshold days - most often a European tie sandwiched between two
+   * league gameweeks. See MinutesProjection.rotationRiskApplied.
+   */
+  shortRestFixture?: boolean;
+
+  /**
    * The FPL API's own expected-points figure (ep_next), used only as a fallback.
    *
    * At the start of a season every season-to-date stat is zero, so a form-based model has
@@ -145,6 +152,8 @@ export interface MinutesProjection {
    * shrinkage on its own would say. See lowOwnershipThreshold/lowOwnershipStartCap.
    */
   ownershipCapped: boolean;
+  /** True when shortRestFixture pulled the start probability down. See rotationRiskDiscount. */
+  rotationRiskApplied: boolean;
 }
 
 /**
@@ -184,6 +193,13 @@ export function projectMinutes(
     clampedStart = minutes.lowOwnershipStartCap;
   }
 
+  // Applied after the ownership cap, as a further reduction on whatever start probability
+  // resulted - a rotation risk is additional evidence, not a replacement for the ownership read.
+  const rotationRiskApplied = input.shortRestFixture === true && minutes.rotationRiskDiscount < 1;
+  if (rotationRiskApplied) {
+    clampedStart *= minutes.rotationRiskDiscount;
+  }
+
   const benchAppearance = (1 - clampedStart) * minutes.benchAppearanceProbability;
 
   return {
@@ -194,6 +210,7 @@ export function projectMinutes(
       clampedStart * minutes.expectedMinutesIfStarting +
       benchAppearance * minutes.expectedMinutesIfBenched,
     ownershipCapped,
+    rotationRiskApplied,
   };
 }
 
@@ -401,6 +418,14 @@ export function projectPlayer(
         `${weights.minutes.lowOwnershipThreshold}% below which the rest of the FPL crowd's team ` +
         `news is trusted over a stray appearance. Start chance capped at ` +
         `${Math.round(weights.minutes.lowOwnershipStartCap * 100)}% regardless of recent minutes.`,
+    );
+  }
+
+  if (minutes.rotationRiskApplied) {
+    reasons.push(
+      `This club's fixture follows its previous one by fewer than ` +
+        `${weights.minutes.rotationRiskRestDaysThreshold} days - most often a sign of a ` +
+        'European tie sandwiched in between. Start chance discounted for rotation risk.',
     );
   }
 
