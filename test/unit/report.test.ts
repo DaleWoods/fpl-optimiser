@@ -168,6 +168,38 @@ describe('state of play', () => {
     expect(state.squadNote).toMatch(/before the first deadline/i);
   });
 
+  it('keeps showing the real squad when the latest refresh attempt for a new gameweek came back with no picks yet', async () => {
+    await ingestBootstrap(db, new StubFplApi({ bootstrap: fakeBootstrap() }), rules);
+    await ingestEntry(
+      db,
+      new StubFplApi({
+        entry: { [teamId]: fakeEntry(teamId, { current_event: 1 }) },
+        history: { [teamId]: { current: [], chips: [] } },
+        picks: { [`${teamId}:1`]: fakePicks([1, 2, 3, 4, 5]) },
+      }),
+      teamId,
+      rules,
+    );
+
+    // Gameweek 2 becomes current, but this refresh could not retrieve picks for it yet (no
+    // `picks` entry configured makes the stub 404, exactly like the real API right around a
+    // deadline). ingestEntry() still records a manager_state snapshot for it, with zero
+    // squad_pick rows, more recent than the perfectly good gameweek 1 one.
+    await ingestEntry(
+      db,
+      new StubFplApi({
+        entry: { [teamId]: fakeEntry(teamId, { current_event: 2 }) },
+        history: { [teamId]: { current: [], chips: [] } },
+      }),
+      teamId,
+      rules,
+    );
+
+    const state = getStateOfPlay(db, { teamId, staleAfterSeconds: 3600 });
+    expect(state.squadLoaded).toBe(true);
+    expect(state.squad.map((p) => p.playerId).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it('surfaces flagged players in the squad', async () => {
     const players = defaultPlayers().map((player) =>
       player.id === 1

@@ -536,6 +536,57 @@ describe('recommendation with a squad loaded', () => {
     expect(result.notes.join(' ')).not.toMatch(/does not expose your picks/i);
   });
 
+  it('keeps the real squad when the next gameweek\'s automatic picks refresh briefly comes back empty (a 404 right around a deadline)', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen);
+
+    // Gameweek 2 becomes current, but this particular refresh could not retrieve this team's
+    // picks for it yet (no `picks` entry configured for teamId:2 makes the stub 404, exactly
+    // like the real API does right around a deadline). ingestEntry() handles that gracefully -
+    // but it still records a manager_state snapshot, with zero squad_pick rows, more recent
+    // than the perfectly good gameweek 1 one.
+    await ingestEntry(
+      db,
+      new StubFplApi({
+        entry: { [teamId]: fakeEntry(teamId, { current_event: 2, last_deadline_bank: 20 }) },
+        history: { [teamId]: { current: [], chips: [] } },
+      }),
+      teamId,
+      rules,
+    );
+
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players,
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+        }),
+      }),
+      rules,
+    );
+    const gw2Fixtures = [];
+    for (let index = 0; index < teams.length; index += 2) {
+      gw2Fixtures.push(fakeFixture(100 + index / 2, 2, teams[index]!.id, teams[index + 1]!.id));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures: gw2Fixtures }));
+
+    const result = await recommend(db, rules, weights, { eventId: 2, teamId });
+
+    // Must still be the real gameweek 1 squad, not a from-scratch build just because the
+    // latest refresh attempt for gameweek 2 came back empty.
+    expect(result.mode).toBe('existing-squad');
+    expect(result.squad.map((p) => p.playerId).sort((a, b) => a - b)).toEqual(
+      [...fifteen].sort((a, b) => a - b),
+    );
+    expect(result.notes.join(' ')).toMatch(/as of Gameweek 1/i);
+  });
+
   it('suggests transfers that improve the projected score', async () => {
     const fifteen = pickLegalFifteen(db);
     await loadSquad(fifteen, 50);

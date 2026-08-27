@@ -478,9 +478,20 @@ function loadOwnedSquad(
   unresolved: UnresolvedPick[];
   asOfEventId: number | null;
 } | null {
+  // The latest manager_state row with at least one squad_pick - not just the latest row full
+  // stop. ingestEntry() writes a manager_state snapshot on every refresh even when that
+  // gameweek's picks are not retrievable yet (the API 404s right around a deadline, or briefly
+  // lags behind entry.current_event flipping over), and that snapshot carries zero squad_pick
+  // rows. Picking the latest row unconditionally would let that empty snapshot shadow a
+  // perfectly good previous one and make a real, just-loaded squad vanish the moment the next
+  // background refresh runs into that gap - exactly the "whole new team" bug this already broke
+  // once. asOfEventId then correctly reports the last gameweek actually loaded, and the
+  // known-stale note below explains why.
   const state = db
     .prepare(
-      `SELECT id, bank, event_id AS eventId FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
+      `SELECT ms.id, ms.bank, ms.event_id AS eventId FROM manager_state ms
+       WHERE ms.entry_id = ? AND EXISTS (SELECT 1 FROM squad_pick sp WHERE sp.manager_state_id = ms.id)
+       ORDER BY ms.captured_at DESC LIMIT 1`,
     )
     .get(teamId) as { id: number; bank: number | null; eventId: number | null } | undefined;
 

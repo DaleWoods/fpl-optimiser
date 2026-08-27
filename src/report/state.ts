@@ -165,8 +165,27 @@ export function getStateOfPlay(
         | undefined)
     : undefined;
 
+  // The latest manager_state row with at least one squad_pick - not just the latest row full
+  // stop (that is `state` above, kept for bank/free-transfers/chips, which are legitimately
+  // freshest there regardless of picks). ingestEntry() writes a manager_state snapshot on every
+  // refresh even when that gameweek's picks are not retrievable yet (the API 404s right around
+  // a deadline, or briefly lags behind entry.current_event flipping over), and that snapshot
+  // carries zero squad_pick rows. Using `state.id` unconditionally for the squad listing would
+  // let that empty snapshot shadow a perfectly good previous one and make the Dashboard's squad
+  // table go blank the moment a background refresh runs into that gap - see the identical fix
+  // and fuller explanation in loadOwnedSquad(), src/report/recommend.ts.
+  const squadStateId = options.teamId
+    ? (db
+        .prepare(
+          `SELECT ms.id FROM manager_state ms
+           WHERE ms.entry_id = ? AND EXISTS (SELECT 1 FROM squad_pick sp WHERE sp.manager_state_id = ms.id)
+           ORDER BY ms.captured_at DESC LIMIT 1`,
+        )
+        .get(options.teamId) as { id: number } | undefined)?.id
+    : undefined;
+
   let squad: SquadPlayerView[] = [];
-  if (state) {
+  if (squadStateId !== undefined) {
     squad = db
       .prepare(
         `SELECT sp.player_id AS playerId, p.web_name AS name, t.short_name AS team,
@@ -184,7 +203,7 @@ export function getStateOfPlay(
          WHERE sp.manager_state_id = ?
          ORDER BY sp.slot`,
       )
-      .all(state.id)
+      .all(squadStateId)
       .map((row) => {
         const r = row as Record<string, unknown>;
         return {
