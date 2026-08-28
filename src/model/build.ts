@@ -372,8 +372,15 @@ export function buildProjections(
     const recentAttackingWindow = recentAll.slice(0, weights.attacking.recentMatches);
     const recentAttackingMinutes = sumRecent(recentAttackingWindow, (r) => r.minutes);
 
-    const rate = (total: number | null, recentField: (r: RecentFixtureRow) => number | null, recentWeight: number): number | null => {
-      if (usingPrevious) return shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins);
+    const rate = (
+      total: number | null,
+      recentField: (r: RecentFixtureRow) => number | null,
+      recentWeight: number,
+      priorWeightMinutesOverride: number = priorMins,
+    ): number | null => {
+      if (usingPrevious) {
+        return shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorWeightMinutesOverride);
+      }
       // Same shrinkage as the previous-season branch above, and for the same reason: a
       // this-season rate from one big early game is exactly as thin a sample as a one-cameo
       // rate from last season, and deserves exactly as little confidence. Without this, a
@@ -381,7 +388,7 @@ export function buildProjections(
       // full face value from gameweek 2 onward - the "stops a lucky cameo outscoring genuine
       // starters" protection the comment above promises, but that this branch never actually
       // delivered for the season everyone actually cares about.
-      const seasonRate = shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins);
+      const seasonRate = shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorWeightMinutesOverride);
       if (recentAttackingMinutes <= 0) return seasonRate;
       const recentTotal = sumRecent(recentAttackingWindow, recentField);
       const recentRate = (recentTotal / recentAttackingMinutes) * 90;
@@ -394,6 +401,22 @@ export function buildProjections(
         ? recentRate
         : effectiveWeight * recentRate + (1 - effectiveWeight) * seasonRate;
     };
+
+    // Goal involvement (goals and assists, and the xG/xA that anchor them) gets extra caution
+    // for a goalkeeper or defender specifically: shrinking toward zero with one shared prior
+    // weight cannot be right for both a striker (whose true rate is genuinely often close to
+    // that prior) and a defender (whose true rate is close to zero) at the same time. One goal
+    // from a defender in an early match is far more surprising, and far weaker evidence of a
+    // real repeatable threat, than the same goal from a forward - a real bug (a defender's one
+    // gameweek 1 goal comfortably outranked Haaland's whole season-to-date output for gameweek
+    // 2's captaincy) that raising the shared prior weight alone was not enough to fully close.
+    // Applies only to goal involvement, not to defensive contribution, saves or bonus - those
+    // already have their own position-appropriate treatment (DefCon's threshold is set per
+    // position in rules.json) and are not the rare, high-variance events goals and assists are.
+    const isLowGoalThreatPosition = row.position === 'GKP' || row.position === 'DEF';
+    const goalInvolvementPriorMins = isLowGoalThreatPosition
+      ? weights.attacking.lowThreatPriorWeightMinutes
+      : priorMins;
 
     // Same idea for the minutes model: blend the recent start RATE with the season-long one,
     // then feed it back as an effective starts count over the same season-long sample size, so
@@ -429,10 +452,10 @@ export function buildProjections(
       minutesPlayed: row.minutes ?? 0,
       matchesAvailable: seasonMatches,
       starts: effectiveStarts,
-      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight),
-      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight),
-      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight),
-      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight),
+      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight, goalInvolvementPriorMins),
+      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight, goalInvolvementPriorMins),
+      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight, goalInvolvementPriorMins),
+      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight, goalInvolvementPriorMins),
       savesPer90: rate(source.saves, (r) => r.saves, weights.saves.recentWeight),
       defconPer90: rate(source.defensiveContribution, (r) => r.defensiveContribution, weights.defensiveContribution.recentWeight),
       bonusPer90: rate(source.bonus, (r) => r.bonus, weights.bonus.recentWeight),

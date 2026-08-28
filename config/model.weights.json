@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.12.0",
+  "modelVersion": "heuristic-0.13.0",
 
   "availability": {
     "$comment": [
@@ -79,15 +79,20 @@
       "shared by every category (goals, assists, saves, defensive contribution, bonus), not just",
       "attacking ones. 900 (ten matches) rather than a shorter, weaker prior because a goal is a",
       "rare, high-value, high-variance event: one goal in one early match is nowhere near enough",
-      "evidence that a player - a defender especially - has a real, repeatable scoring threat,",
-      "and treating it as such was a real bug (a defender who scored one gameweek 1 goal was",
-      "projected to outscore Haaland on it alone for gameweek 2)."
+      "evidence that a player has a real, repeatable scoring threat.",
+      "lowThreatPriorWeightMinutes: a stronger prior again, applied only to goal involvement for a",
+      "GKP or DEF. One shared prior cannot be right for both a striker (whose true rate is",
+      "genuinely close to it) and a defender (whose true rate is close to zero) at once - even",
+      "900 minutes was not enough to stop a defender's one gameweek 1 goal outranking Haaland's",
+      "whole season-to-date output for gameweek 2's captaincy. 2700 (thirty matches) means a",
+      "defender needs a real, sustained run of goal involvement before it counts for much."
     ],
     "recentMatches": 6,
     "recentWeight": 0.6,
     "xgWeight": 0.7,
     "fixtureScalingWeight": 1.0,
-    "priorWeightMinutes": 900
+    "priorWeightMinutes": 900,
+    "lowThreatPriorWeightMinutes": 2700
   },
 
   "cleanSheet": {

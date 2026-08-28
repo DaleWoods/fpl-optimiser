@@ -496,7 +496,49 @@ describe("this season's own rate is shrunk by sample size too, not just last sea
     // Well below appearance points (~1.14 for a nailed-on starter) - one goal must not become
     // the dominant, headline reason to captain a defender.
     expect(player.breakdown.goals).toBeGreaterThan(0);
-    expect(player.breakdown.goals).toBeLessThan(0.5);
+    expect(player.breakdown.goals).toBeLessThan(0.2);
+  });
+
+  it('shrinks a one-off goal harder for a defender than for a forward with the identical game', async () => {
+    // Players 3 (DEF) and 13 (FWD) are both team 1's - same club, same fixture, same exact
+    // gameweek 1 line: one goal in 90 minutes, xG 0.9. A forward's goal threat is genuinely
+    // closer to that rate long-run, so it should not be crushed nearly as hard as a defender's -
+    // this is a real positional prior, not a blanket "trust goals less" nerf.
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers().map((p) =>
+            p.id === 3 || p.id === 13
+              ? { ...p, minutes: 90, starts: 1, goals_scored: 1, expected_goals: 0.9 }
+              : p,
+          ),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2, { finished: true }),
+          fakeFixture(2, 2, 1, 2),
+        ],
+      }),
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    const defender = projections.find((p) => p.playerId === 3)!;
+    const forward = projections.find((p) => p.playerId === 13)!;
+
+    // A goal is worth less to a forward (4 points) than a defender (6), which by itself would
+    // cut the other way - so this margin is entirely down to the weaker shrinkage a forward's
+    // goal involvement gets, not the raw points difference.
+    expect(forward.breakdown.goals).toBeGreaterThan(defender.breakdown.goals! * 1.5);
   });
 });
 

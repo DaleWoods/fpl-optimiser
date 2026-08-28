@@ -149,6 +149,14 @@ export const modelWeightsSchema = z.strictObject({
     xgWeight: probability,
     fixtureScalingWeight: z.number().min(0),
     priorWeightMinutes: z.number().min(0),
+    /**
+     * A stronger version of priorWeightMinutes, applied only to goal involvement (goals,
+     * assists, and the xG/xA behind them) for a goalkeeper or defender. One shared prior cannot
+     * be right for both a striker, whose true goal rate is genuinely close to that prior, and a
+     * defender, whose true rate is close to zero - a defender's one early goal needs far more
+     * evidence behind it before it reads as a real, repeatable threat rather than a one-off.
+     */
+    lowThreatPriorWeightMinutes: z.number().min(0),
   }),
   cleanSheet: z.strictObject({
     maxProbability: probability,

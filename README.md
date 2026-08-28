@@ -433,6 +433,18 @@ enough on its own to outrank a genuine elite forward for the next gameweek's cap
 exactly this reason: a goal is rare and high-variance enough that one match is nowhere near
 sufficient evidence of a real, repeatable rate, whoever scored it.
 
+Raising the shared prior helped but was still not enough, because one shared number cannot
+correctly describe both a striker (whose true goal rate genuinely sits close to it) and a
+defender (whose true rate is close to zero) at the same time. `heuristic-0.13.0` adds
+`attacking.lowThreatPriorWeightMinutes` (2700 minutes - thirty matches), applied only to goal
+involvement - goals, assists, and the xG/xA behind them - for a goalkeeper or defender. This is
+a genuine, well-established positional fact (defenders and goalkeepers score and assist far less
+often than midfielders and forwards, structurally, not just in this early sample), the same kind
+of real-world knowledge DefCon's own per-position threshold already encodes - not a thumb on the
+scale for any particular player. A goalkeeper's or defender's one early goal now needs a real,
+sustained run behind it before it counts for much; a midfielder's or forward's does not, because
+their underlying goal threat was never the surprising part.
+
 ### Rotation risk, from fixture congestion rather than a guessed list of European clubs
 
 A club playing again within `minutes.rotationRiskRestDaysThreshold` days (default 4) of its
