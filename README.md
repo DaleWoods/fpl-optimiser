@@ -416,13 +416,22 @@ gameweek" above) - nothing new to import for it.
 
 The season-long side of that blend gets the same sample-size shrinkage a previous-season rate
 already had - a season-to-date rate from one big early game is exactly as thin a sample as a
-one-cameo rate from last season, and is now dampened the same way (a 90-minute sample keeps a
-quarter of its face value; a full season keeps nearly all of it). Early in a season - gameweek 2
-or 3, say - this matters a lot: without it, a single outlier game (a defender's one huge
-defensive-contribution haul, a striker's hat-trick against a poor side) was trusted at full face
-value from the very next gameweek on, which could plausibly rank them above a genuine elite
-performer on much stronger underlying evidence. This was a real bug, not a design choice - fixed
-in `heuristic-0.11.0`.
+one-cameo rate from last season, and is now dampened the same way (`attacking.priorWeightMinutes`,
+900 minutes - ten matches - before a rate is even half-trusted; a 90-minute sample keeps under a
+tenth of its face value). Early in a season - gameweek 2 or 3, say - this matters a lot: without
+it, a single outlier game (a defender's one huge defensive-contribution haul, a striker's
+hat-trick against a poor side) was trusted at full face value from the very next gameweek on,
+which could plausibly rank them above a genuine elite performer on much stronger underlying
+evidence. This was a real bug, not a design choice - fixed in `heuristic-0.11.0`.
+
+That first fix (shrinking the rate at all, rather than not) was not, on its own, strong enough
+for the rarest and highest-value events. A defender's one gameweek 1 goal - worth 6 points, an
+event that genuinely happens once every several dozen matches for most defenders - was still
+being read as roughly a tenth of a repeatable ~1-goal-per-match threat even after that shrinkage,
+enough on its own to outrank a genuine elite forward for the next gameweek's captaincy.
+`priorWeightMinutes` moved from 270 (three matches) to 900 (ten) in `heuristic-0.12.0` for
+exactly this reason: a goal is rare and high-variance enough that one match is nowhere near
+sufficient evidence of a real, repeatable rate, whoever scored it.
 
 ### Rotation risk, from fixture congestion rather than a guessed list of European clubs
 

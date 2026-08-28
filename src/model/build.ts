@@ -134,11 +134,12 @@ function per90(total: number | null, minutes: number | null): number | null {
 /**
  * Shrink a per-90 rate toward zero in proportion to how few minutes sit behind it.
  *
- * Two goal involvements in 90 minutes is not a superstar rate, it is one good afternoon. With
- * priorWeightMinutes at 270, a 90-minute sample keeps a quarter of its face-value rate while a
- * full season keeps nearly all of it. Without this, fringe players with lucky cameos outscore
- * genuine starters in the projections - which is exactly how a 6-point season can look like a
- * must-have pick.
+ * One goal in 90 minutes is not a repeatable scoring threat, it is one good afternoon - and for
+ * a rare, high-value, high-variance event like a goal, one match is nowhere near enough evidence
+ * either way. With priorWeightMinutes at 900 (ten matches), a 90-minute sample keeps under a
+ * tenth of its face-value rate while a full season keeps most of it. Without this, a single
+ * early outlier game outscores genuine, sustained production in the projections - which is
+ * exactly how a defender's one gameweek 1 goal briefly outranked Haaland for gameweek 2.
  */
 function shrinkRate(
   rate: number | null,
@@ -354,10 +355,11 @@ export function buildProjections(
     const source = usingPrevious ? previous : row;
     const sourceMinutes = usingPrevious ? previous.minutes : row.minutes;
 
-    // Previous-season rates are shrunk by their sample size: a per-90 from 90 minutes keeps a
-    // quarter of its face value, a full season keeps nearly all of it. This is what stops a
-    // player with one lucky cameo outscoring genuine starters. Defcon is a stable volume stat
-    // and keeps the same treatment for consistency.
+    // Previous-season rates are shrunk by their sample size: a per-90 from 90 minutes keeps
+    // under a tenth of its face value, a full season keeps most of it. This is what stops a
+    // player with one lucky cameo outscoring genuine starters. Applied to every category, not
+    // just goals - defcon is a stable volume stat, but that only means it converges faster
+    // toward its true rate, not that a one-game sample of it deserves any less caution early on.
     const priorMins = weights.attacking.priorWeightMinutes;
 
     // Recent form, blended in on top of the season-long rate - but only while using this

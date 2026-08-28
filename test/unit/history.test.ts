@@ -421,8 +421,9 @@ describe("this season's own rate is shrunk by sample size too, not just last sea
     // Player 3 (team 1's first DEF) has an outlier gameweek 1: 20 CBIT actions in 90 minutes -
     // a raw per-90 rate of 20, twice the DEF DefCon threshold of 10. Taken at face value that
     // reads as an almost certain 2 points every week; shrunk by the same one-match sample-size
-    // caution already applied to a previous-season rate (a quarter of face value, per
-    // shrinkRate's own comment), it drops to 5 - *below* the threshold, a coin-flip at best.
+    // caution already applied to a previous-season rate (under a tenth of face value, per
+    // shrinkRate's own comment), it drops to under 2 - well *below* the threshold, nowhere near
+    // a repeatable reading.
     await ingestBootstrap(
       db,
       new StubFplApi({
@@ -455,6 +456,47 @@ describe("this season's own rate is shrunk by sample size too, not just last sea
     // this outlier game would produce - the whole point of the shrinkage.
     expect(player.breakdown.defensiveContribution).toBeGreaterThan(0);
     expect(player.breakdown.defensiveContribution).toBeLessThan(0.3);
+  });
+
+  it("does not let a defender's one gameweek 1 goal project as a repeatable scoring threat", async () => {
+    // Player 3 (team 1's first DEF) scores in gameweek 1 - one goal in 90 minutes, with a
+    // correspondingly strong underlying chance (xG 0.9 for that single shot). A goal is worth 6
+    // points for a defender, so taken at face value a repeatable ~1 goal/match rate would be a
+    // huge, dominant share of their projection - comfortably enough to outrank a genuine elite
+    // forward on one lucky afternoon. This was a real bug: a defender who scored once in
+    // gameweek 1 out-projected Haaland for gameweek 2's captaincy on the strength of it alone.
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers().map((p) =>
+            p.id === 3 ? { ...p, minutes: 90, starts: 1, goals_scored: 1, expected_goals: 0.9 } : p,
+          ),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2, { finished: true }),
+          fakeFixture(2, 2, 1, 2),
+        ],
+      }),
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    const player = projections.find((p) => p.playerId === 3)!;
+
+    // Well below appearance points (~1.14 for a nailed-on starter) - one goal must not become
+    // the dominant, headline reason to captain a defender.
+    expect(player.breakdown.goals).toBeGreaterThan(0);
+    expect(player.breakdown.goals).toBeLessThan(0.5);
   });
 });
 
