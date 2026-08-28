@@ -372,7 +372,14 @@ export function buildProjections(
 
     const rate = (total: number | null, recentField: (r: RecentFixtureRow) => number | null, recentWeight: number): number | null => {
       if (usingPrevious) return shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins);
-      const seasonRate = per90(total, sourceMinutes);
+      // Same shrinkage as the previous-season branch above, and for the same reason: a
+      // this-season rate from one big early game is exactly as thin a sample as a one-cameo
+      // rate from last season, and deserves exactly as little confidence. Without this, a
+      // defender's single standout defensive-contribution haul in gameweek 1 was trusted at
+      // full face value from gameweek 2 onward - the "stops a lucky cameo outscoring genuine
+      // starters" protection the comment above promises, but that this branch never actually
+      // delivered for the season everyone actually cares about.
+      const seasonRate = shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorMins);
       if (recentAttackingMinutes <= 0) return seasonRate;
       const recentTotal = sumRecent(recentAttackingWindow, recentField);
       const recentRate = (recentTotal / recentAttackingMinutes) * 90;

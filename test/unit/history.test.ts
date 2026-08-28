@@ -410,6 +410,54 @@ describe('recency-weighted form', () => {
   });
 });
 
+describe("this season's own rate is shrunk by sample size too, not just last season's", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = openTestDatabase();
+  });
+
+  it('does not trust one huge early-season defensive haul at full face value', async () => {
+    // Player 3 (team 1's first DEF) has an outlier gameweek 1: 20 CBIT actions in 90 minutes -
+    // a raw per-90 rate of 20, twice the DEF DefCon threshold of 10. Taken at face value that
+    // reads as an almost certain 2 points every week; shrunk by the same one-match sample-size
+    // caution already applied to a previous-season rate (a quarter of face value, per
+    // shrinkRate's own comment), it drops to 5 - *below* the threshold, a coin-flip at best.
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers().map((p) =>
+            p.id === 3 ? { ...p, minutes: 90, starts: 1, defensive_contribution: 20 } : p,
+          ),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2, { finished: true }),
+          fakeFixture(2, 2, 1, 2),
+        ],
+      }),
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    const player = projections.find((p) => p.playerId === 3)!;
+
+    // Nowhere near the ~1 point (2 points at near-certain probability) an unshrunk reading of
+    // this outlier game would produce - the whole point of the shrinkage.
+    expect(player.breakdown.defensiveContribution).toBeGreaterThan(0);
+    expect(player.breakdown.defensiveContribution).toBeLessThan(0.3);
+  });
+});
+
 describe('price trend', () => {
   let db: Database;
 

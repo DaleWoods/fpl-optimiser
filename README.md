@@ -414,6 +414,16 @@ this season's own recent window instead of a whole season. This uses `player_fix
 (the per-gameweek breakdown that already arrives automatically, see "Moving to the next
 gameweek" above) - nothing new to import for it.
 
+The season-long side of that blend gets the same sample-size shrinkage a previous-season rate
+already had - a season-to-date rate from one big early game is exactly as thin a sample as a
+one-cameo rate from last season, and is now dampened the same way (a 90-minute sample keeps a
+quarter of its face value; a full season keeps nearly all of it). Early in a season - gameweek 2
+or 3, say - this matters a lot: without it, a single outlier game (a defender's one huge
+defensive-contribution haul, a striker's hat-trick against a poor side) was trusted at full face
+value from the very next gameweek on, which could plausibly rank them above a genuine elite
+performer on much stronger underlying evidence. This was a real bug, not a design choice - fixed
+in `heuristic-0.11.0`.
+
 ### Rotation risk, from fixture congestion rather than a guessed list of European clubs
 
 A club playing again within `minutes.rotationRiskRestDaysThreshold` days (default 4) of its
