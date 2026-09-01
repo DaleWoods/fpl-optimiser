@@ -223,6 +223,13 @@ each gameweek — the same numbers the official app shows on its home screen. Th
 import for these: they ride along in `bootstrap-static`, which you're already uploading weekly,
 and appear automatically once a gameweek finishes and that week's upload lands.
 
+The page leads with a scorecard per gameweek - what was projected, what it scored, and how far
+out that was in words - because a projection with no outcome beside it cannot be judged, and an
+outcome with no projection beside it teaches nothing. The mean error, the bias, the per-position
+breakdown and the full table are all still there, but they explain that gap rather than opening
+with it, so the explanations sit behind a summary you can expand rather than in front of the
+numbers.
+
 To use it: run an optimise before the deadline, then just wait — results land on their own after
 the gameweek finishes. Only players with **both** a projection and a result are scored —
 counting a player who was never projected would flatter the model, and counting one with no

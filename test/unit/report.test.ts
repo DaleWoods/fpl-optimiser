@@ -5,8 +5,9 @@ import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } 
 import { nowSeconds, openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
 import { shouldPrimeOnBoot, startServer, type RunningServer } from '../../src/report/server.js';
-import { formatFixtures, renderDashboard } from '../../src/report/views.js';
+import { formatFixtures, renderAccuracy, renderDashboard } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
+import type { SeasonAccuracy } from '../../src/model/accuracy.js';
 import {
   defaultPlayers,
   fakeBootstrap,
@@ -664,5 +665,90 @@ describe('report server', () => {
     const withSquad = renderDashboard({ ...base, squadLoaded: true });
     expect(withSquad).toMatch(/End gameweek/);
     expect(withSquad).toContain('/optimise?generate=1&refresh=1');
+  });
+});
+
+describe('accuracy page', () => {
+  const gameweek = (overrides: Partial<SeasonAccuracy['gameweeks'][number]> = {}) => ({
+    eventId: 1,
+    playersScored: 40,
+    meanAbsoluteError: 1.6,
+    bias: 0.2,
+    recommendedXiPredicted: 62.5,
+    recommendedXiActual: 55,
+    bestPossibleFromSquad: 71,
+    yourActual: 61,
+    leagueAverage: 57,
+    leagueHighest: 129,
+    ...overrides,
+  });
+
+  const season = (overrides: Partial<SeasonAccuracy> = {}): SeasonAccuracy => ({
+    gameweeks: [gameweek()],
+    overall: { playersScored: 40, meanAbsoluteError: 1.6, bias: 0.2, gameweeks: 1 },
+    notes: [],
+    ...overrides,
+  });
+
+  it('shows the projection and the outcome side by side for every gameweek', () => {
+    // The whole point of the page. Before this, a gameweek's projected total was not on the
+    // page at all - only what it went on to score - so there was nothing to learn from.
+    const page = renderAccuracy(season(), null);
+    expect(page).toMatch(/We projected/);
+    expect(page).toMatch(/62\.5/);
+    expect(page).toMatch(/It scored/);
+    expect(page).toMatch(/>55</);
+  });
+
+  it('states the size and direction of the miss in words, not just a number', () => {
+    const under = renderAccuracy(
+      season({ gameweeks: [gameweek({ recommendedXiPredicted: 20, recommendedXiActual: 75 })] }),
+      null,
+    );
+    expect(under).toMatch(/55\.0 too low/);
+
+    const over = renderAccuracy(
+      season({ gameweeks: [gameweek({ recommendedXiPredicted: 75, recommendedXiActual: 20 })] }),
+      null,
+    );
+    expect(over).toMatch(/55\.0 too high/);
+  });
+
+  it('does not claim a miss for a gameweek that has not been scored yet', () => {
+    const page = renderAccuracy(
+      season({ gameweeks: [gameweek({ recommendedXiActual: null, bestPossibleFromSquad: null })] }),
+      null,
+    );
+    expect(page).toMatch(/not scored yet/);
+    expect(page).not.toMatch(/too (low|high)/);
+  });
+
+  it('leads with a plain-English verdict across the graded gameweeks', () => {
+    const page = renderAccuracy(
+      season({
+        gameweeks: [
+          gameweek({ eventId: 1, recommendedXiPredicted: 60, recommendedXiActual: 61 }),
+          gameweek({ eventId: 2, recommendedXiPredicted: 64, recommendedXiActual: 96 }),
+        ],
+      }),
+      null,
+    );
+    // 124 projected against 157 actual, over two gameweeks: 16.5 a week too low.
+    expect(page).toMatch(/projected at <strong>124\.0<\/strong>/);
+    expect(page).toMatch(/scored <strong>157<\/strong>/);
+    expect(page).toMatch(/16\.5 points a week too low/);
+  });
+
+  it('folds the explanations away behind a summary rather than opening with prose', () => {
+    const page = renderAccuracy(season(), null);
+    expect(page).toMatch(/<summary>What am I looking at\?<\/summary>/);
+    // The auto-sub caveat is still there for anyone who wants it - just not in the way.
+    expect(page).toMatch(/auto-sub rules/);
+  });
+
+  it('says nothing at all when there is nothing graded', () => {
+    const page = renderAccuracy({ gameweeks: [], overall: null, notes: ['Nothing to grade yet.'] }, null);
+    expect(page).toMatch(/Nothing to grade yet\./);
+    expect(page).not.toMatch(/We projected/);
   });
 });

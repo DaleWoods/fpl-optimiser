@@ -172,6 +172,45 @@ tbody tr:last-child td { border-bottom: 0; }
 .pill.good { background: var(--hi); color: var(--ok); font-weight: 600; }
 .pill.bad { background: var(--flag-bg); color: var(--flag-fg); font-weight: 600; }
 
+/* Accuracy page. Comparing a projection against what actually happened is the entire point
+   of that page, so the comparison is a scorecard per gameweek rather than two columns buried
+   in a nine-column table - and the explanation of what each number means is folded away
+   behind a summary, so the page can be read at a glance and interrogated only on demand. */
+.gw-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: .8rem; }
+.gw-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+           padding: .9rem 1rem; box-shadow: var(--shadow); }
+.gw-card .gw-head { display: flex; align-items: center; justify-content: space-between;
+                    gap: .5rem; margin-bottom: .55rem; }
+.gw-card .gw-name { font-weight: 800; font-size: 1.05rem; letter-spacing: -.01em; }
+.vs { display: flex; align-items: flex-end; gap: .45rem; }
+.vs .side { flex: 1; min-width: 0; }
+.vs .side .k { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); font-weight: 700; }
+.vs .side .v { font-size: 1.85rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; }
+.vs .arrow { color: var(--muted); font-size: 1.15rem; padding-bottom: .4rem; }
+.gw-foot { margin-top: .7rem; padding-top: .6rem; border-top: 1px solid var(--line);
+           display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .7rem; }
+.gw-foot .k { font-size: .66rem; text-transform: uppercase; letter-spacing: .05em;
+              color: var(--muted); font-weight: 700; }
+.gw-foot .v { font-weight: 700; font-size: .95rem; }
+.delta { display: inline-block; border-radius: 99px; padding: .12rem .6rem; font-size: .74rem;
+         font-weight: 700; white-space: nowrap; }
+.delta.close { background: var(--hi); color: var(--ok); }
+.delta.off { background: var(--warn-bg); color: var(--warn-fg); }
+.delta.none { background: var(--line); color: var(--muted); }
+
+details.explain { margin: .7rem 0 1.3rem; }
+details.explain summary { font-weight: 600; font-size: .9rem; cursor: pointer;
+  padding: .6rem .85rem; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; color: var(--fg); list-style: none; }
+details.explain summary::-webkit-details-marker { display: none; }
+details.explain summary::before { content: "▸ "; color: var(--muted); }
+details.explain[open] summary::before { content: "▾ "; }
+details.explain[open] summary { border-radius: 10px 10px 0 0; }
+details.explain .inner { border: 1px solid var(--line); border-top: 0;
+  border-radius: 0 0 10px 10px; padding: .1rem 1rem .9rem; background: var(--surface);
+  font-size: .91rem; }
+
 .banner { padding: .75rem 1rem; border-radius: 10px; margin: .9rem 0; font-size: .92rem; }
 .banner.warn { background: var(--warn-bg); color: var(--warn-fg); }
 .banner.info { background: var(--surface); border: 1px solid var(--line); }

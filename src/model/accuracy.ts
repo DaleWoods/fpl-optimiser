@@ -63,6 +63,12 @@ export interface SeasonAccuracy {
     playersScored: number;
     meanAbsoluteError: number;
     bias: number;
+    /**
+     * What the recommended XI was projected to score, next to what it actually scored. The
+     * pair is the whole point of the page - a projection with no outcome beside it cannot be
+     * judged, and an outcome with no projection beside it teaches nothing.
+     */
+    recommendedXiPredicted: number | null;
     recommendedXiActual: number | null;
     bestPossibleFromSquad: number | null;
     yourActual: number | null;
@@ -682,6 +688,7 @@ export function evaluateSeason(db: Database, rules: Rules, entryId: number | nul
       playersScored: accuracy.playersScored,
       meanAbsoluteError: accuracy.meanAbsoluteError,
       bias: accuracy.bias,
+      recommendedXiPredicted: accuracy.recommendedXiPredicted,
       recommendedXiActual: accuracy.recommendedXiActual,
       bestPossibleFromSquad: accuracy.bestPossibleFromSquad,
       yourActual: yourResults.get(eventId) ?? null,
