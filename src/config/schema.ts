@@ -106,7 +106,24 @@ export const modelWeightsSchema = z.strictObject({
     startThresholdMinutes: positiveInt,
     expectedMinutesIfStarting: z.number().min(0).max(90),
     expectedMinutesIfBenched: z.number().min(0).max(90),
+    /**
+     * The baseline prior for a player the crowd says nothing about. On its own this is applied
+     * to everyone equally, which after one match swamps the evidence entirely: 1 start in 1
+     * match lands on a 51% start chance whether the player is a nailed-on £15.5m striker or a
+     * £4.0m fringe defender. See ownershipPriorPivot for what separates them.
+     */
     priorStartProbability: probability,
+    /**
+     * Ownership percentage at which the start prior reaches ownershipPriorMax. Ownership is the
+     * crowd's aggregated team news - the same evidence lowOwnershipThreshold already trusts over
+     * our own start count, just used as a two-sided signal rather than only as a floor-level cap.
+     * A player two-thirds of managers own is owned *because* he is nailed on; a 2%-owned one is
+     * not. Without this the minutes model cannot tell those apart until several matches have
+     * been played, which flattens every projection into the same narrow band early in a season.
+     */
+    ownershipPriorPivot: z.number().positive().max(100),
+    /** The start prior for a player at or above ownershipPriorPivot. */
+    ownershipPriorMax: probability,
     priorWeightMatches: z.number().min(0),
     starterCompletesSixty: probability,
     benchAppearanceProbability: probability,

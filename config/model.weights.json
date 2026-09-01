@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.13.0",
+  "modelVersion": "heuristic-0.14.0",
 
   "availability": {
     "$comment": [
@@ -38,7 +38,13 @@
       "rotationRiskRestDaysThreshold/rotationRiskDiscount: a club playing again this soon after",
       "its last fixture is most often a European tie sandwiched between two league gameweeks -",
       "the only reason top-flight fixtures get shuffled this tight. The FPL API carries no",
-      "European fixtures at all, so a short gap between two Premier League ones is the signal."
+      "European fixtures at all, so a short gap between two Premier League ones is the signal.",
+      "ownershipPriorPivot/ownershipPriorMax: the start prior is set by ownership - the crowd's",
+      "aggregated team news - rather than being a flat number for everyone. A flat prior after one",
+      "match gave a nailed-on 70%-owned striker and a 2%-owned fringe defender the identical 51%",
+      "start chance, which flattened every early-season projection into the same narrow band and",
+      "filled defences with players who were not in the first XI. Same evidence lowOwnershipThreshold",
+      "already trusts over our own start count, used as a two-sided signal instead of only a cap."
     ],
     "recentMatches": 6,
     "recentWeight": 0.65,
@@ -46,6 +52,8 @@
     "expectedMinutesIfStarting": 80,
     "expectedMinutesIfBenched": 18,
     "priorStartProbability": 0.35,
+    "ownershipPriorPivot": 30.0,
+    "ownershipPriorMax": 0.9,
     "priorWeightMatches": 3,
     "starterCompletesSixty": 0.85,
     "benchAppearanceProbability": 0.4,

@@ -401,6 +401,40 @@ Every projection says which evidence produced it, and the recommendation page li
    before that.
 4. **Curated pre-season notes** (`config/intel.json`). See below.
 
+### Ownership sets the start prior, because the crowd knows who is nailed on
+
+Expected minutes drive appearance points and scale every other component, so getting them wrong
+is far more costly than a slightly-off scoring rate — a starter who does not play returns 0, not
+a bit less than projected.
+
+The start probability shrinks the observed start count toward a prior. That prior used to be a
+flat number for everybody (`minutes.priorStartProbability`, 0.35), which after a single match
+swamped the evidence completely: one start in one match landed on a 51% start chance whether the
+player was a nailed-on £15.5m striker or a £4.0m fringe defender. Every projection compressed
+into the same narrow band, proven starters were under-rated, fringe players over-rated, and tiny
+per-90 differences were left deciding captaincy and squad places. In a real gameweek 2 squad
+every outfield player in the XI showed the identical `appearance +1.14`, and the defence was
+full of players who were not in their club's first XI.
+
+`minutes.ownershipPriorPivot` (30%) and `minutes.ownershipPriorMax` (0.9) fix that by setting the
+prior from ownership: at or above the pivot the prior is 0.9, sliding down to the flat baseline
+at zero ownership. This is the same evidence `lowOwnershipThreshold` already trusted over our own
+start count — the crowd's aggregated team news, press-conference reading and injury knowledge,
+available from the very first gameweek — just used as a two-sided signal rather than only as a
+floor-level cap. A player two-thirds of managers own is owned *because* he is nailed on.
+
+Ownership only ever moves **minutes** here, never the per-90 scoring rates, so this is not
+"popular players score more" — it is "popular players are more likely to be on the pitch", which
+is plainly true and is exactly what the low-ownership cap already asserted in the other
+direction. The differential nudge still pushes xPts the opposite way at selection time.
+
+Related, and from the same gameweek: a player with **zero minutes** while his club had already
+played twice was still handed the FPL API's own `ep_next` figure at full face value (the
+`hasNoHistory` fallback), got picked, started, and returned 0. That figure is now scaled by the
+minutes we actually expect. Before a ball is kicked nothing changes — with no matches played the
+start probability is just the prior — but once the season is underway, zero minutes is evidence,
+not an absence of it. Both fixed in `heuristic-0.14.0`.
+
 ### Recent form counts for more than the season average
 
 Within "this season's stats", the last several gameweeks are weighted more heavily than the

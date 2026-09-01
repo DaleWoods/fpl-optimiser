@@ -153,19 +153,85 @@ describe('minutes', () => {
     expect(capped.startProbability).toBeLessThan(uncapped.startProbability);
   });
 
-  it('never raises the start chance for high ownership - it only ever caps, never boosts', () => {
-    const noOwnership = projectMinutes(input({ starts: 10, matchesAvailable: 10, ownership: null }), weights);
+  it('raises the start chance for a heavily-owned player - the crowd knows who is nailed on', () => {
+    // This deliberately replaces an earlier rule that ownership may only ever cap, never raise.
+    // A flat prior for everyone could not tell a nailed-on £15.5m striker from a £4.0m fringe
+    // defender after one match - both landed on 51% - which flattened every early-season
+    // projection and filled defences with players who were not in the first XI. Ownership is
+    // the crowd's team news, and it is evidence in both directions or it is not evidence.
+    const noOwnership = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: null }), weights);
     const highOwnership = projectMinutes(
-      input({ starts: 10, matchesAvailable: 10, ownership: 80 }),
+      input({ starts: 1, matchesAvailable: 1, ownership: 70 }),
       weights,
     );
+
     expect(highOwnership.ownershipCapped).toBe(false);
-    expect(highOwnership.startProbability).toBeCloseTo(noOwnership.startProbability, 6);
+    expect(highOwnership.startProbability).toBeGreaterThan(noOwnership.startProbability);
+    // The nailed-on read is the one that should look like a starter, not a coin flip.
+    expect(highOwnership.startProbability).toBeGreaterThan(0.85);
+    expect(noOwnership.startProbability).toBeLessThan(0.6);
+  });
+
+  it('lets ownership move expected minutes only, never the underlying scoring rate', () => {
+    // The line that keeps this evidence and not bandwagon-chasing: a popular player is more
+    // likely to be *on the pitch*, which is plainly true and is the same claim the low-ownership
+    // cap already makes in the other direction. He is not assumed to be better per minute.
+    const lowOwn = projectPlayer(input({ ownership: 5, starts: 10, matchesAvailable: 10 }), weights, rules);
+    const highOwn = projectPlayer(input({ ownership: 80, starts: 10, matchesAvailable: 10 }), weights, rules);
+
+    expect(highOwn.expectedMinutes).toBeGreaterThan(lowOwn.expectedMinutes);
+    // Points per expected minute is identical either way. Compared to 4 decimal places rather
+    // than more: both figures are rounded for display before they get here, so the last decimal
+    // is rounding noise - a genuine rate difference would be orders of magnitude larger.
+    expect(highOwn.breakdown.goals! / highOwn.expectedMinutes).toBeCloseTo(
+      lowOwn.breakdown.goals! / lowOwn.expectedMinutes,
+      4,
+    );
   });
 
   it('does not cap when ownership data is unavailable', () => {
     const unknown = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: null }), weights);
     expect(unknown.ownershipCapped).toBe(false);
+  });
+
+  it('no longer gives a nailed-on starter and a fringe player identical appearance points', () => {
+    // The reported symptom, from a real gameweek 2 squad: every outfield player in the XI showed
+    // appearance +1.14 - a 70%-owned £15.5m striker and a 3%-owned £4.0m fringe defender alike -
+    // because one start in one match landed on a 51% start chance for everybody.
+    const nailedOn = projectPlayer(input({ starts: 1, matchesAvailable: 1, ownership: 70 }), weights, rules);
+    const fringe = projectPlayer(input({ starts: 1, matchesAvailable: 1, ownership: 3 }), weights, rules);
+
+    expect(nailedOn.breakdown.appearance!).toBeGreaterThan(fringe.breakdown.appearance! + 0.4);
+  });
+
+  it('does not hand a full FPL expected-points figure to a player who has not played all season', () => {
+    // A defender with zero minutes while his club had already played twice still projected at
+    // the FPL API's own ep_next in full, was picked, started, and returned 0. Zero minutes once
+    // the season is underway is not an absence of evidence - it is evidence he is not playing.
+    const noHistory = {
+      minutesPlayed: 0,
+      starts: 0,
+      xgPer90: null,
+      goalsPer90: null,
+      xaPer90: null,
+      fallbackExpectedPoints: 2.2,
+    };
+    const neverPlayed = projectPlayer(
+      input({ ...noHistory, matchesAvailable: 2, ownership: 2 }),
+      weights,
+      rules,
+    );
+
+    expect(neverPlayed.breakdown.fplExpectedPoints).toBeDefined();
+    expect(neverPlayed.xPts).toBeLessThan(1);
+
+    // But before a ball is kicked, zero minutes means nothing yet - the figure stands.
+    const preSeason = projectPlayer(
+      input({ ...noHistory, matchesAvailable: 0, ownership: 40 }),
+      weights,
+      rules,
+    );
+    expect(preSeason.xPts).toBeGreaterThan(1.6);
   });
 
   it('discounts the start chance for a club on unusually short rest, most often a European tie sandwiched in between', () => {
@@ -278,22 +344,27 @@ describe('player projection', () => {
     expect(sum).toBeCloseTo(projection.xPtsRaw, 2);
   });
 
+  // These hold ownership fixed and toggle the knob instead of comparing two different ownership
+  // levels: ownership now also sets the start prior (see "raises the start chance..." above), so
+  // two players at different ownership no longer differ by the differential knob alone.
   it('ignores the differential knob when it is switched off', () => {
-    // Ownership above lowOwnershipThreshold, so only the differential knob is on trial here -
-    // the low-ownership start-probability cap is covered separately below.
     const off = { ...weights, differential: { ...weights.differential, weight: 0 } };
-    const popular = projectPlayer(input({ ownership: 60 }), off, rules);
-    const obscure = projectPlayer(input({ ownership: 5 }), off, rules);
-    expect(obscure.xPts).toBeCloseTo(popular.xPts, 6);
+    const withKnob = projectPlayer(input({ ownership: 5 }), weights, rules);
+    const without = projectPlayer(input({ ownership: 5 }), off, rules);
+
+    expect(without.breakdown.differential ?? 0).toBe(0);
+    expect(withKnob.xPts).toBeGreaterThan(without.xPts);
   });
 
   it('keeps the shipped differential nudge small enough to be a tiebreak, not a strategy', () => {
     // The shipped config turns the knob on, but only as a small nudge (D4, "leaning safe").
-    const popular = projectPlayer(input({ ownership: 60 }), weights, rules);
+    const off = { ...weights, differential: { ...weights.differential, weight: 0 } };
     const obscure = projectPlayer(input({ ownership: 5 }), weights, rules);
+    const same = projectPlayer(input({ ownership: 5 }), off, rules);
+
     expect(weights.differential.weight).toBeGreaterThan(0);
-    expect(obscure.xPts).toBeGreaterThan(popular.xPts);
-    expect(obscure.xPts - popular.xPts).toBeLessThan(1);
+    expect(obscure.xPts).toBeGreaterThan(same.xPts);
+    expect(obscure.xPts - same.xPts).toBeLessThan(1);
   });
 
   it('favours a differential once the knob is turned up', () => {

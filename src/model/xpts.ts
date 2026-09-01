@@ -157,6 +157,36 @@ export interface MinutesProjection {
 }
 
 /**
+ * The prior start probability to shrink a thin sample toward, set by ownership.
+ *
+ * A flat prior for everyone is the wrong shape early in a season: with priorWeightMatches at 3,
+ * one start in one match lands on 51% whether the player is a nailed-on £15.5m striker or a
+ * £4.0m fringe defender, because the prior swamps the single match of evidence. That flattens
+ * every projection into the same narrow band, under-rates proven starters, over-rates fringe
+ * players, and leaves tiny per-90 differences deciding captaincy and squad places.
+ *
+ * Ownership is the correction, for the same reason lowOwnershipThreshold already trusts it over
+ * our own start count: it is the crowd's aggregated team news, press-conference reading and
+ * injury knowledge, and it is available from the very first gameweek. A player two-thirds of
+ * managers own is owned *because* he is nailed on. Used as a two-sided signal here rather than
+ * only as the floor-level cap below - high ownership raises the prior, it does not bypass the
+ * observed evidence, which still updates from it.
+ */
+export function priorStartProbabilityFor(
+  ownership: number | null,
+  weights: ModelWeights,
+): number {
+  const { minutes } = weights;
+  if (ownership === null) return minutes.priorStartProbability;
+
+  const share = Math.min(1, Math.max(0, ownership / minutes.ownershipPriorPivot));
+  return (
+    minutes.priorStartProbability +
+    (minutes.ownershipPriorMax - minutes.priorStartProbability) * share
+  );
+}
+
+/**
  * How much football we expect the player to get.
  *
  * The start rate is shrunk toward a prior, so one appearance cannot produce a confident
@@ -166,9 +196,13 @@ export interface MinutesProjection {
  * injury-cover start, a dead-rubber cameo - the shrunk estimate can still land at "coin flip or
  * better" for a player who is obviously not first-choice. Ownership is the correction: every
  * other manager's team news and press-conference reading is more current and more complete than
- * a start count, and near-zero ownership is strong evidence the player is not nailed on. Below
- * lowOwnershipThreshold the start probability is capped, never raised - high ownership earns no
- * bonus here, it just fails to trigger the cap.
+ * a start count, and it works in both directions. It sets the prior itself (see
+ * priorStartProbabilityFor), and below lowOwnershipThreshold it applies a hard cap on top.
+ *
+ * Ownership only ever moves *minutes* here - how likely the player is to be on the pitch, which
+ * is exactly what the crowd has better information about than a one-match start count. It never
+ * touches the per-90 scoring rates, so this is not "popular players score more"; and the
+ * differential knob still nudges xPts the other way at selection time.
  */
 export function projectMinutes(
   input: PlayerModelInput,
@@ -178,9 +212,11 @@ export function projectMinutes(
   const observedStarts = input.starts;
   const observedMatches = input.matchesAvailable;
 
+  const priorStart = priorStartProbabilityFor(input.ownership, weights);
+
   // Bayesian shrinkage toward the prior start probability.
   const startProbability =
-    (observedStarts + minutes.priorStartProbability * minutes.priorWeightMatches) /
+    (observedStarts + priorStart * minutes.priorWeightMatches) /
     (observedMatches + minutes.priorWeightMatches || 1);
 
   let clampedStart = Math.min(1, Math.max(0, startProbability));
@@ -274,8 +310,18 @@ export function projectPlayer(
     input.xaPer90 === null;
 
   if (hasNoHistory && input.fallbackExpectedPoints != null) {
+    // Scaled by our own expected minutes, not taken at face value. ep_next already assumes the
+    // player features; for someone with zero minutes while their club has been playing, that
+    // assumption is exactly what the evidence contradicts. Leaving it unscaled was a real bug:
+    // a defender who had not played a single minute all season still projected at ep_next in
+    // full, got picked, started, and returned 0. Before a ball is kicked nothing is lost - with
+    // no matches played the start probability is just the prior, so this stays near full value.
+    const minutesShareOfStarter = Math.min(
+      1,
+      minutes.expectedMinutes / (weights.minutes.expectedMinutesIfStarting || 1),
+    );
     const perFixture = input.fallbackExpectedPoints;
-    const raw = perFixture * input.fixtures.length;
+    const raw = perFixture * input.fixtures.length * minutesShareOfStarter;
     return {
       playerId: input.playerId,
       xPts: round(Math.max(0, raw * input.availability.probability)),
@@ -285,7 +331,8 @@ export function projectPlayer(
       confidence: 'low',
       reasons: [
         `No season history yet, so this uses the FPL API's own expected-points figure ` +
-          `(${perFixture.toFixed(1)} per fixture) rather than form. Treat early-season ` +
+          `(${perFixture.toFixed(1)} per fixture) rather than form, scaled to the ` +
+          `${Math.round(minutes.expectedMinutes)} minutes we expect. Treat early-season ` +
           `projections as rough.`,
         ...input.fixtures.map(
           (fx) =>
