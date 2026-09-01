@@ -610,6 +610,36 @@ upgrades elsewhere would be actively misleading. If no single transfer can fix i
 (a player already at the position's price floor has nowhere cheaper to go), that's reported as
 an explicit note instead of a silent gap.
 
+### "Your team with every priority fix" answers a different question
+
+The transfer cards answer *"what is the best use of one transfer?"* That is the right question
+with one free transfer and one problem. It is the wrong one when the squad has three dead
+slots, because three cards each showing a gain quietly hide the fact that doing all three costs
+eight points in hits — each card is priced as though it were the only move of the week — and
+because reading three independent cards still leaves you guessing at what team you would end up
+with.
+
+So the priority fixes are also applied **together**, as one team you could actually field, with
+the cost stated in points at the top: *"3 transfers, 1 free — 2 hits at 4 points each, costing
+you 8 points"*, then the XI before, the XI after, the hit, and the net both for this gameweek
+alone and across the whole horizon.
+
+They are applied **in sequence**, not independently: each swap sees the bank and the club counts
+the previous one left behind. Chosen independently, two fixes could each spend the same money,
+or each be the third player from one club, and the result would be a "team" that cannot legally
+be entered. The worst dead slot is fixed first, so if the money runs out it runs out on the
+least broken slot rather than the most; anything left unfixable is named on the page rather than
+quietly dropped.
+
+The hit is charged against the plan as a whole and never against an individual swap — with two
+free transfers and three fixes, which of the three you call "the paid one" is meaningless. And
+when the net comes out negative the page says so plainly, in red, and tells you to spread the
+fixes across the next few gameweeks using your free transfer each week instead. Presenting the
+gains without netting the hits off them would be the easy thing to show and the wrong one; the
+whole reason this section exists is that the transfer cards, read as a bundle, do exactly that.
+
+This is an alternative to the single transfers, never something to do on top of them.
+
 ### Timing a transfer: information, not a verdict
 
 The top suggested transfer (skipping a **Priority fix** - there is never a case for delaying a

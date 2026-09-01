@@ -210,6 +210,40 @@ export interface TransferPlanSummary {
   bankRemaining: number;
 }
 
+/**
+ * Every priority fix applied at once, as one team you could actually field.
+ *
+ * The single-transfer cards each answer "what is the best use of one transfer?", costed as
+ * though nothing else changed. That is the right question when you have one free transfer and
+ * one problem. It is the wrong question when the squad has three dead slots: reading three
+ * independent cards and doing all three leaves you guessing at what the resulting team looks
+ * like and what the hits actually cost you.
+ *
+ * This applies them together, in sequence - each swap sees the bank and club counts the
+ * previous one left behind, which is what really happens when you make several transfers -
+ * and states the hit cost in full.
+ */
+export interface PriorityFixPlan {
+  moves: { out: ProjectedPlayer; in: ProjectedPlayer }[];
+  /** Dead slots left unfixed because nothing legal and affordable was available. */
+  unresolved: ProjectedPlayer[];
+  freeTransfers: number;
+  /** Transfers beyond the free ones, and what they cost in points. */
+  hitsTaken: number;
+  hitCost: number;
+  /** The XI as it stands now, and the XI after every fix - the honest before and after. */
+  elevenBefore: StartingEleven;
+  eleven: StartingEleven;
+  /** This gameweek's swing before the hit is deducted. */
+  gainBeforeHit: number;
+  /** The discounted value of the run of fixtures after this gameweek, in's minus out's. */
+  horizonGain: number;
+  /** gainBeforeHit + horizonGain - hitCost. Negative means the hits are not worth paying. */
+  netGain: number;
+  totalCost: number;
+  bankRemaining: number;
+}
+
 export interface Recommendation {
   mode: 'build-squad' | 'existing-squad';
   eventId: number;
@@ -231,6 +265,11 @@ export interface Recommendation {
    * option above, so this only ever appears when it adds something.
    */
   transferPlan: TransferPlanSummary | null;
+  /**
+   * The team you get by acting on every priority fix, with the hit cost stated. Null when the
+   * squad has no dead slots, or when none of them has an affordable fix.
+   */
+  priorityFixPlan: PriorityFixPlan | null;
   /** What changed since the last recommendation, one gameweek back - null the first time. */
   previousComparison: RecommendationDiff | null;
   notes: string[];
@@ -712,6 +751,128 @@ async function findTransfers(
 }
 
 /**
+ * Apply every priority fix to the squad at once and report the team that results.
+ *
+ * Sequential, not independent: each swap is chosen against the bank and club counts left by the
+ * previous one. Doing otherwise would let two fixes each spend the same pound, or each be the
+ * third player from the same club, and produce a "team" that cannot legally be entered.
+ *
+ * Replacements are ranked on this gameweek plus the discounted run of fixtures after it, the
+ * same basis as the single-transfer cards, so a fix is not chosen for one good week alone.
+ * The worst dead slot goes first, on the grounds that if the money runs out it should run out
+ * on the least broken slot rather than the most.
+ *
+ * The hit cost is charged against the whole plan at the end, never against an individual swap:
+ * with two free transfers, three fixes cost one hit, and which of the three you call "the paid
+ * one" is meaningless.
+ */
+async function buildPriorityFixPlan(
+  squad: readonly ProjectedPlayer[],
+  pool: readonly ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+  solver: Solver,
+  options: {
+    bank: number;
+    freeTransfers: number;
+    candidatesPerPosition: number;
+    horizon: Horizon;
+    captainConsistencyBonus: Map<number, number>;
+    elevenBefore: StartingEleven;
+  },
+): Promise<PriorityFixPlan | null> {
+  const threshold = weights.transfers.priorityFixXPtsThreshold;
+  const deadSlots = squad
+    .filter((player) => player.xPts < threshold)
+    .sort((a, b) => a.xPts - b.xPts);
+  if (deadSlots.length === 0) return null;
+
+  const selectionOptions = { captainConsistencyBonus: options.captainConsistencyBonus };
+  const future = (playerId: number) => horizonFor(options.horizon, playerId).futureXPts;
+
+  let current: ProjectedPlayer[] = [...squad];
+  let bank = options.bank;
+  const owned = new Set(squad.map((player) => player.playerId));
+  const clubCounts = new Map<number, number>();
+  for (const player of squad) clubCounts.set(player.clubId, (clubCounts.get(player.clubId) ?? 0) + 1);
+
+  const moves: { out: ProjectedPlayer; in: ProjectedPlayer }[] = [];
+  const unresolved: ProjectedPlayer[] = [];
+
+  for (const out of deadSlots) {
+    const budget = bank + out.price;
+    const candidates = pool
+      .filter(
+        (player) =>
+          player.position === out.position &&
+          !owned.has(player.playerId) &&
+          !player.availability.excluded &&
+          player.price <= budget &&
+          player.xPts >= threshold,
+      )
+      .sort((a, b) => b.xPts + future(b.playerId) - (a.xPts + future(a.playerId)))
+      .slice(0, options.candidatesPerPosition);
+
+    let chosen: ProjectedPlayer | null = null;
+    for (const incoming of candidates) {
+      const held = clubCounts.get(incoming.clubId) ?? 0;
+      const adjusted = incoming.clubId === out.clubId ? held - 1 : held;
+      if (adjusted >= rules.squad.maxPerClub) continue;
+      chosen = incoming;
+      break;
+    }
+
+    if (chosen === null) {
+      unresolved.push(out);
+      continue;
+    }
+
+    current = current.map((player) => (player.playerId === out.playerId ? chosen! : player));
+    bank = bank + out.price - chosen.price;
+    owned.delete(out.playerId);
+    owned.add(chosen.playerId);
+    clubCounts.set(out.clubId, (clubCounts.get(out.clubId) ?? 1) - 1);
+    clubCounts.set(chosen.clubId, (clubCounts.get(chosen.clubId) ?? 0) + 1);
+    moves.push({ out, in: chosen });
+  }
+
+  if (moves.length === 0) return null;
+
+  let eleven: StartingEleven;
+  try {
+    eleven = await selectBestEleven(current, rules, weights, solver, selectionOptions);
+  } catch {
+    // The fixed squad has no legal XI. Better to say nothing than to show an unfieldable team.
+    return null;
+  }
+
+  const hitsTaken = Math.max(0, moves.length - options.freeTransfers);
+  const hitCost = hitsTaken * rules.transfers.hitCost;
+  const gainBeforeHit =
+    Math.round((eleven.expectedPoints - options.elevenBefore.expectedPoints) * 100) / 100;
+  const horizonGain =
+    Math.round(
+      moves.reduce((sum, move) => sum + future(move.in.playerId) - future(move.out.playerId), 0) *
+        100,
+    ) / 100;
+
+  return {
+    moves,
+    unresolved,
+    freeTransfers: options.freeTransfers,
+    hitsTaken,
+    hitCost,
+    elevenBefore: options.elevenBefore,
+    eleven,
+    gainBeforeHit,
+    horizonGain,
+    netGain: Math.round((gainBeforeHit + horizonGain - hitCost) * 100) / 100,
+    totalCost: current.reduce((sum, player) => sum + player.price, 0),
+    bankRemaining: bank,
+  };
+}
+
+/**
  * Produce a full recommendation for a gameweek.
  *
  * With a squad loaded, this optimises the XI and suggests transfers. Without one - which is the
@@ -951,6 +1112,7 @@ export async function recommend(
       // No existing squad to rebuild from, or diff against, or an earlier recommendation to
       // compare with.
       transferPlan: null,
+      priorityFixPlan: null,
       previousComparison: null,
       notes,
       playersConsidered: projections.length,
@@ -1025,6 +1187,33 @@ export async function recommend(
   }
 
   const totalCost = owned.squad.reduce((sum, player) => sum + player.price, 0);
+
+  // Every priority fix applied together, as one fieldable team with its hit cost stated. The
+  // single-transfer cards above answer "what is the best use of one transfer?"; this answers
+  // "what does my team look like if I fix everything that is broken, and what does that cost?",
+  // which is a different question and not one you can answer by reading three cards at once.
+  const priorityFixPlan = await buildPriorityFixPlan(owned.squad, projections, rules, weights, solver, {
+    bank,
+    freeTransfers,
+    candidatesPerPosition: options.transferCandidates ?? 12,
+    horizon,
+    captainConsistencyBonus,
+    elevenBefore: eleven,
+  });
+
+  if (priorityFixPlan) {
+    notes.push(
+      `Fixing all ${priorityFixPlan.moves.length} dead squad slot(s) at once needs ` +
+        `${priorityFixPlan.moves.length} transfer(s) against ${freeTransfers} free, so it costs ` +
+        `${priorityFixPlan.hitCost} points in hits and nets ` +
+        `${priorityFixPlan.netGain >= 0 ? '+' : ''}${priorityFixPlan.netGain.toFixed(2)} after that. ` +
+        (priorityFixPlan.netGain < 0
+          ? 'That is negative: the hits cost more than the fixes gain over the horizon, so ' +
+            'spreading them across several gameweeks is the better play. The team is shown so ' +
+            'you can see exactly what you would be paying for.'
+          : 'See "Your team with every priority fix" below.'),
+    );
+  }
 
   // A whole-squad rebuild, considered together rather than one swap at a time - the only way
   // to find a player who is only affordable by trimming two or three others to fund them.
@@ -1118,6 +1307,7 @@ export async function recommend(
     bankRemaining: bank,
     transfers,
     transferPlan,
+    priorityFixPlan,
     previousComparison,
     notes,
     playersConsidered: projections.length,

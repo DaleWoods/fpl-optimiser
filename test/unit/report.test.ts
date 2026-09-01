@@ -5,9 +5,10 @@ import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } 
 import { nowSeconds, openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
 import { shouldPrimeOnBoot, startServer, type RunningServer } from '../../src/report/server.js';
-import { formatFixtures, renderAccuracy, renderDashboard } from '../../src/report/views.js';
+import { formatFixtures, renderAccuracy, renderDashboard, renderRecommendation } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
 import type { SeasonAccuracy } from '../../src/model/accuracy.js';
+import { player } from '../support/players.js';
 import {
   defaultPlayers,
   fakeBootstrap,
@@ -750,5 +751,125 @@ describe('accuracy page', () => {
     const page = renderAccuracy({ gameweeks: [], overall: null, notes: ['Nothing to grade yet.'] }, null);
     expect(page).toMatch(/Nothing to grade yet\./);
     expect(page).not.toMatch(/We projected/);
+  });
+});
+
+describe('priority-fix team on My Team', () => {
+  const pitchPlayer = (name: string, position: string, xPts: number, club: number, price: number) => ({
+    ...player({ name, position, xPts, clubId: club, price }),
+    fixtures: [{ opponentShort: 'AVL', isHome: true, difficulty: 3 }],
+  });
+
+  function recommendation(planOverrides: Record<string, unknown>) {
+    const starters = [
+      pitchPlayer('Keeper', 'GKP', 4.2, 1, 55),
+      pitchPlayer('Back One', 'DEF', 5.1, 1, 60),
+      pitchPlayer('Back Two', 'DEF', 4.8, 2, 60),
+      pitchPlayer('Back Three', 'DEF', 4.4, 3, 55),
+      pitchPlayer('Mid One', 'MID', 8.9, 4, 145),
+      pitchPlayer('Mid Two', 'MID', 6.7, 5, 100),
+      pitchPlayer('Mid Three', 'MID', 6.4, 6, 105),
+      pitchPlayer('Mid Four', 'MID', 5.2, 7, 75),
+      pitchPlayer('Mid Five', 'MID', 5.0, 8, 80),
+      pitchPlayer('Front One', 'FWD', 9.6, 2, 145),
+      pitchPlayer('Front Two', 'FWD', 5.4, 9, 75),
+    ];
+    const bench = [
+      pitchPlayer('Sub Keeper', 'GKP', 3.4, 9, 50),
+      pitchPlayer('Sub One', 'DEF', 3.1, 10, 45),
+      pitchPlayer('Sub Two', 'DEF', 2.9, 11, 40),
+      pitchPlayer('Sub Three', 'FWD', 2.6, 12, 55),
+    ];
+    const eleven = {
+      starters, bench, captain: starters[9]!, viceCaptain: starters[4]!,
+      formation: '3-5-2', expectedPoints: 75.3,
+    };
+    return {
+      mode: 'existing-squad', eventId: 3, eventName: 'Gameweek 3', deadlineIso: null,
+      modelVersion: 'heuristic-0.15.0', generatedAt: 0,
+      squad: [...starters, ...bench], eleven, totalCost: 1000, bankRemaining: 5,
+      transfers: [], transferPlan: null, previousComparison: null, notes: [],
+      playersConsidered: 640, lowConfidence: false,
+      evidence: {
+        intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
+        intelPriceMismatches: 0, contextNotes: [], eliteSampleSize: 0, usingPreviousSeason: 0,
+        horizonGameweeks: 5,
+      },
+      priorityFixPlan: {
+        moves: [
+          { out: pitchPlayer('Dead One', 'DEF', 0.42, 13, 45), in: pitchPlayer('Back Two', 'DEF', 4.8, 2, 60) },
+          { out: pitchPlayer('Dead Two', 'DEF', 0.61, 14, 40), in: pitchPlayer('Back Three', 'DEF', 4.4, 3, 55) },
+          { out: pitchPlayer('Dead Three', 'FWD', 0.88, 15, 55), in: pitchPlayer('Front Two', 'FWD', 5.4, 9, 75) },
+        ],
+        unresolved: [],
+        freeTransfers: 1, hitsTaken: 2, hitCost: 8,
+        elevenBefore: { ...eleven, expectedPoints: 66.1 }, eleven,
+        gainBeforeHit: 9.2, horizonGain: 6.4, netGain: 7.6,
+        totalCost: 1005, bankRemaining: 5,
+        ...planOverrides,
+      },
+    };
+  }
+
+  it('states the hit cost in plain points, not just a transfer count', () => {
+    // The thing a list of transfer cards cannot tell you: each is costed as the only move of
+    // the week, so three cards each showing a gain hide the eight points they cost together.
+    const page = renderRecommendation(recommendation({}) as never);
+    expect(page).toMatch(/3 transfers<\/strong>, 1 free/);
+    expect(page).toMatch(/2 hits at\s+4 points each, costing you\s+8 points/);
+  });
+
+  it('says plainly when the hits cost more than the fixes gain', () => {
+    const page = renderRecommendation(
+      recommendation({ gainBeforeHit: 3.1, horizonGain: 1.2, netGain: -3.7 }) as never,
+    );
+    expect(page).toMatch(/net loss of\s+3\.7/);
+    expect(page).toMatch(/not worth it/);
+    expect(page).toMatch(/Spread the fixes over the next few gameweeks/);
+    expect(page).not.toMatch(/worth doing/);
+  });
+
+  it('calls it worth doing when the gain clears the hit', () => {
+    const page = renderRecommendation(recommendation({}) as never);
+    expect(page).toMatch(/worth doing/);
+    expect(page).not.toMatch(/net loss of/);
+  });
+
+  it('does not talk about hits at all when the free transfers cover it', () => {
+    const page = renderRecommendation(
+      recommendation({
+        moves: [
+          { out: pitchPlayer('Dead One', 'DEF', 0.42, 13, 45), in: pitchPlayer('Back Two', 'DEF', 4.8, 2, 60) },
+        ],
+        freeTransfers: 2, hitsTaken: 0, hitCost: 0,
+      }) as never,
+    );
+    expect(page).toMatch(/all covered by your 2 free/);
+    expect(page).toMatch(/<strong>no hit<\/strong>/);
+  });
+
+  it('signs the price change, so a downgrade is not read as an upgrade', () => {
+    const page = renderRecommendation(
+      recommendation({
+        moves: [
+          { out: pitchPlayer('Dead One', 'DEF', 0.42, 13, 60), in: pitchPlayer('Cheap', 'DEF', 4.8, 2, 45) },
+        ],
+      }) as never,
+    );
+    expect(page).toMatch(/&minus;£1\.5m/);
+  });
+
+  it('names any dead slot it could not fix rather than quietly dropping it', () => {
+    const page = renderRecommendation(
+      recommendation({ unresolved: [pitchPlayer('Stuck Keeper', 'GKP', 0.3, 16, 40)] }) as never,
+    );
+    expect(page).toMatch(/Stuck Keeper could not be fixed/);
+  });
+
+  it('shows nothing at all when the squad has no dead slots', () => {
+    const rec = recommendation({}) as Record<string, unknown>;
+    rec.priorityFixPlan = null;
+    const page = renderRecommendation(rec as never);
+    expect(page).not.toMatch(/Your team with every priority fix/);
   });
 });

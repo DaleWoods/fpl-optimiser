@@ -3,7 +3,7 @@ import type { ChipAdvice } from '../optimise/chips.js';
 import type { PayloadKind } from '../ingest/import.js';
 import type { ResetScope } from '../ingest/reset.js';
 import { escapeHtml, renderShell } from './layout.js';
-import type { Readiness, Recommendation } from './recommend.js';
+import type { PriorityFixPlan, Readiness, Recommendation } from './recommend.js';
 import type { LeagueTableRow } from '../model/table.js';
 import { formatDuration, formatMoney, type StateOfPlay } from './state.js';
 
@@ -313,6 +313,103 @@ function playerRow(
   </td></tr>`;
 }
 
+/**
+ * The team you would have if you acted on every priority fix, with the hit cost stated up front.
+ *
+ * The point of showing the cost this prominently is that it is the part a list of transfer
+ * cards cannot tell you. Each card is costed as though it were the only move of the week, so
+ * three cards each showing "+2.4 pts" quietly hide the fact that doing all three costs eight
+ * points, and may well be a net loss. Netting it out here, once, is the honest presentation -
+ * including when the answer is that the plan is not worth it.
+ */
+function renderPriorityFixPlan(plan: PriorityFixPlan): string {
+  const worthIt = plan.netGain >= 0;
+  const paidFor = Math.min(plan.moves.length, plan.freeTransfers);
+
+  const costLine =
+    plan.hitCost > 0
+      ? `<strong>${plan.moves.length} transfers</strong>, ${paidFor} free &mdash;
+         <strong>${plan.hitsTaken} hit${plan.hitsTaken === 1 ? '' : 's'} at
+         ${plan.hitCost / plan.hitsTaken} points each, costing you
+         ${plan.hitCost} points</strong>.`
+      : `<strong>${plan.moves.length} transfer${plan.moves.length === 1 ? '' : 's'}</strong>,
+         all covered by your ${plan.freeTransfers} free &mdash; <strong>no hit</strong>.`;
+
+  const moves = plan.moves
+    .map(
+      (move) => `<tr>
+        <td>${escapeHtml(move.out.name)} <span class="muted">${escapeHtml(move.out.clubShort)}</span></td>
+        <td class="muted">${move.out.xPts.toFixed(2)}</td>
+        <td>&rarr;</td>
+        <td><strong>${escapeHtml(move.in.name)}</strong> <span class="muted">${escapeHtml(move.in.clubShort)}</span></td>
+        <td><strong>${move.in.xPts.toFixed(2)}</strong></td>
+        <td>${(() => {
+          // Signed, because a downgrade freeing money up reads as a very different move from
+          // an upgrade spending it, and an unsigned "£1.5m" cannot tell you which happened.
+          const change = move.in.price - move.out.price;
+          return change === 0
+            ? '<span class="muted">level</span>'
+            : `${change > 0 ? '+' : '&minus;'}${formatMoney(Math.abs(change))}`;
+        })()}</td>
+      </tr>`,
+    )
+    .join('');
+
+  return `<h2>Your team with every priority fix</h2>
+  <p class="muted" style="font-size:.88rem;margin:0 0 .6rem">Every squad member barely projected
+  to feature, replaced in one go &mdash; applied in sequence, so each move only spends money the
+  previous one left and the three-per-club limit still holds. This is a whole team, not a
+  shopping list: it is an alternative to the single transfers below, not something to do on top
+  of them.</p>
+
+  <div class="card" style="border-color:${worthIt ? 'var(--ok)' : 'var(--warn-fg)'}">
+    <h3 style="margin:0 0 .5rem">What it costs you</h3>
+    <p style="margin:.2rem 0">${costLine}</p>
+    <div class="gw-foot" style="grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));border-top:0;padding-top:.2rem">
+      <div><div class="k">XI now</div><div class="v">${plan.elevenBefore.expectedPoints.toFixed(1)}</div></div>
+      <div><div class="k">XI after</div><div class="v">${plan.eleven.expectedPoints.toFixed(1)}</div></div>
+      <div><div class="k">Hit</div><div class="v">${plan.hitCost > 0 ? `&minus;${plan.hitCost}` : '0'}</div></div>
+      <div><div class="k">Net, this week</div><div class="v">${
+        plan.gainBeforeHit - plan.hitCost >= 0 ? '+' : '&minus;'
+      }${Math.abs(plan.gainBeforeHit - plan.hitCost).toFixed(1)}</div></div>
+      <div><div class="k">Net, over the run</div><div class="v" style="color:${worthIt ? 'var(--ok)' : 'var(--danger)'}">${
+        plan.netGain >= 0 ? '+' : '&minus;'
+      }${Math.abs(plan.netGain).toFixed(1)}</div></div>
+    </div>
+    <p style="margin:.7rem 0 0">${
+      worthIt
+        ? `The fixes gain <strong>${(plan.gainBeforeHit + plan.horizonGain).toFixed(1)}</strong> points
+           across this gameweek and the run of fixtures after it, against
+           <strong>${plan.hitCost}</strong> paid in hits &mdash; <strong>worth doing</strong>, on
+           these projections.`
+        : `The fixes gain <strong>${(plan.gainBeforeHit + plan.horizonGain).toFixed(1)}</strong> points
+           across this gameweek and the run of fixtures after it, against
+           <strong>${plan.hitCost}</strong> paid in hits. That is a <strong>net loss of
+           ${Math.abs(plan.netGain).toFixed(1)}</strong>: doing all of it at once is not worth it.
+           Spread the fixes over the next few gameweeks, using your free transfer each week, and
+           you get the same team without paying for it.`
+    }</p>
+    ${
+      plan.unresolved.length > 0
+        ? `<p class="muted" style="margin:.5rem 0 0">${plan.unresolved
+            .map((p) => escapeHtml(p.name))
+            .join(', ')} could not be fixed &mdash; nothing legal and affordable was available at
+            that position once the other moves were paid for.</p>`
+        : ''
+    }
+  </div>
+
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Out</th><th>xPts</th><th></th><th>In</th><th>xPts</th><th>Price change</th></tr></thead>
+    <tbody>${moves}</tbody></table></div></div>
+
+  ${renderPitch(plan.eleven)}
+  <p class="muted" style="font-size:.88rem;margin:.5rem 0 0">Captain
+    <strong>${escapeHtml(plan.eleven.captain.name)}</strong>, vice
+    <strong>${escapeHtml(plan.eleven.viceCaptain.name)}</strong>. Squad cost
+    ${formatMoney(plan.totalCost)}, ${formatMoney(plan.bankRemaining)} left in the bank.</p>`;
+}
+
 export function renderRecommendation(rec: Recommendation): string {
   const head = `<thead><tr><th>Pos</th><th>Player</th><th>Club</th><th>Fixture</th><th>Price</th><th>xPts</th><th>Confidence</th></tr></thead>`;
 
@@ -425,6 +522,8 @@ export function renderRecommendation(rec: Recommendation): string {
     <h3 style="margin-top:1rem">Bench <span class="muted" style="font-weight:400">(auto-sub order)</span></h3>
     <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div></div>
   </details>
+
+  ${rec.priorityFixPlan ? renderPriorityFixPlan(rec.priorityFixPlan) : ''}
 
   ${
     rec.transfers.length > 0

@@ -837,6 +837,105 @@ describe('recommendation with a squad loaded', () => {
     expect(result.mode).toBe('existing-squad');
     expect(result.previousComparison).toBeNull();
   });
+
+  /**
+   * Re-seed the league with some players injured, so those squad slots project at zero and
+   * become priority fixes - the same situation as a squad carrying players who are not in
+   * their club's first XI, which is what this plan exists to answer.
+   */
+  async function injure(playerIds: number[]): Promise<void> {
+    const { teams, players } = bigLeague();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          teams,
+          players: players.map((p) =>
+            playerIds.includes(p.id) ? { ...p, status: 'i', chance_of_playing_next_round: 0 } : p,
+          ),
+          events: [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })],
+        }),
+      }),
+      rules,
+    );
+  }
+
+  it('is null when nothing in the squad is broken', async () => {
+    await loadSquad(pickLegalFifteen(db));
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(result.priorityFixPlan).toBeNull();
+  });
+
+  it('fixes every dead slot in one team and charges the hits once, over the whole plan', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 200);
+    await injure([fifteen[3]!, fifteen[7]!, fifteen[11]!]);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    const plan = result.priorityFixPlan!;
+
+    expect(plan).not.toBeNull();
+    expect(plan.moves.length + plan.unresolved.length).toBe(3);
+    // One free transfer is the default with no transfer history, so everything beyond the
+    // first is a hit - charged against the plan as a whole, never per swap.
+    expect(plan.freeTransfers).toBe(1);
+    expect(plan.hitsTaken).toBe(Math.max(0, plan.moves.length - 1));
+    expect(plan.hitCost).toBe(plan.hitsTaken * rules.transfers.hitCost);
+    // Every injured player is out, and nobody is brought in twice.
+    for (const move of plan.moves) {
+      expect(plan.eleven.starters.concat(plan.eleven.bench).map((p) => p.playerId)).not.toContain(
+        move.out.playerId,
+      );
+    }
+    const incoming = plan.moves.map((m) => m.in.playerId);
+    expect(new Set(incoming).size).toBe(incoming.length);
+  });
+
+  it('produces a squad that could actually be entered - budget and three-per-club both hold', async () => {
+    // Applying several fixes independently would let two of them each spend the same money, or
+    // each be the third player from one club. They are applied in sequence for exactly this
+    // reason, so the result has to survive the real squad rules.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 200);
+    // Three, not four: with four of the fifteen unavailable the *current* squad has no legal
+    // XI at all, which recommend() rejects before any of this is reached.
+    await injure([fifteen[2]!, fifteen[6]!, fifteen[9]!]);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    const plan = result.priorityFixPlan!;
+    const squad = [...plan.eleven.starters, ...plan.eleven.bench];
+
+    expect(squad).toHaveLength(15);
+    expect(validateSquad(squad, rules, { budget: plan.totalCost + plan.bankRemaining })).toEqual([]);
+    expect(plan.bankRemaining).toBeGreaterThanOrEqual(0);
+  });
+
+  it('nets the hit off the gain rather than reporting the gain alone', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 200);
+    await injure([fifteen[3]!, fifteen[7]!, fifteen[11]!]);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    const plan = result.priorityFixPlan!;
+
+    // The whole point of the section: three cards each showing a gain hide the fact that doing
+    // all three costs 8 points. netGain must carry that cost, not sit alongside it.
+    expect(plan.netGain).toBeCloseTo(plan.gainBeforeHit + plan.horizonGain - plan.hitCost, 2);
+    expect(plan.elevenBefore.expectedPoints).toBeLessThan(plan.eleven.expectedPoints);
+  });
+
+  it('says what the plan costs in the notes, whichever way it comes out', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 200);
+    await injure([fifteen[3]!, fifteen[7]!, fifteen[11]!]);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    const plan = result.priorityFixPlan!;
+
+    expect(result.notes.join(' ')).toMatch(
+      new RegExp(`costs ${plan.hitCost} points in hits`),
+    );
+  });
 });
 
 describe('multi-gameweek horizon', () => {
