@@ -377,6 +377,38 @@ describe('entry ingestion', () => {
     expect(picks.n).toBe(15);
   });
 
+  it('records what you actually scored each gameweek from the automatic refresh', async () => {
+    // The real score used to be written only by a hand-uploaded entry-history file, so for
+    // anyone using the normal automatic refresh the Accuracy page's "You scored" column stayed
+    // blank forever and the model's own advice could never be graded against the outcome.
+    const api = new StubFplApi({
+      entry: { [teamId]: fakeEntry(teamId, { current_event: 2 }) },
+      history: {
+        [teamId]: {
+          current: [
+            { event: 1, points: 61, total_points: 61, bank: 5, value: 1000, event_transfers: 0, event_transfers_cost: 0, points_on_bench: 7 },
+            { event: 2, points: 96, total_points: 157, bank: 3, value: 1002, event_transfers: 1, event_transfers_cost: 0, points_on_bench: 4 },
+          ],
+          chips: [],
+        },
+      },
+      picks: { [`${teamId}:2`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) },
+    });
+
+    await ingestEntry(db, api, teamId, rules);
+
+    const rows = db
+      .prepare(
+        `SELECT event_id AS event, actual_points AS points, bench_points AS bench
+         FROM gameweek_result WHERE entry_id = ? ORDER BY event_id`,
+      )
+      .all(teamId) as { event: number; points: number; bench: number }[];
+    expect(rows).toEqual([
+      { event: 1, points: 61, bench: 7 },
+      { event: 2, points: 96, bench: 4 },
+    ]);
+  });
+
   it('records captain and vice from the picks', async () => {
     const api = new StubFplApi({
       entry: { [teamId]: fakeEntry(teamId, { current_event: 1 }) },

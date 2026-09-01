@@ -132,23 +132,31 @@ function per90(total: number | null, minutes: number | null): number | null {
 }
 
 /**
- * Shrink a per-90 rate toward zero in proportion to how few minutes sit behind it.
+ * Blend a thin per-90 rate toward a prior rate, weighted by how many minutes sit behind each.
  *
- * One goal in 90 minutes is not a repeatable scoring threat, it is one good afternoon - and for
- * a rare, high-value, high-variance event like a goal, one match is nowhere near enough evidence
- * either way. With priorWeightMinutes at 900 (ten matches), a 90-minute sample keeps under a
- * tenth of its face-value rate while a full season keeps most of it. Without this, a single
- * early outlier game outscores genuine, sustained production in the projections - which is
- * exactly how a defender's one gameweek 1 goal briefly outranked Haaland for gameweek 2.
+ * Standard Bayesian shrinkage: (observed * minutes + prior * priorWeightMinutes) / (both). One
+ * goal in 90 minutes is not a repeatable scoring threat, it is one good afternoon, and for a
+ * rare high-variance event like a goal one match is nowhere near enough evidence either way.
+ *
+ * What matters just as much is *what it shrinks toward*. Shrinking toward zero says "with no
+ * evidence, we assume you score nothing" - fine for a defender, badly wrong for an elite
+ * forward, and it was making the model project a whole XI at 19.7 points against an actual 75.
+ * The right anchor is the player's own rate from last season: Haaland's early games then update
+ * a strong prior and stay strong, while a defender's one lucky goal updates a near-zero prior
+ * and stays near zero. Same mechanism, correct in both directions. priorRate falls back to 0
+ * for a player with no last-season history at all, where "assume nothing" genuinely is the
+ * honest starting point.
  */
 function shrinkRate(
   rate: number | null,
   minutes: number | null,
   priorWeightMinutes: number,
+  priorRate: number | null = 0,
 ): number | null {
   if (rate === null) return null;
   const mins = minutes ?? 0;
-  return rate * (mins / (mins + priorWeightMinutes));
+  const anchor = priorRate ?? 0;
+  return (rate * mins + anchor * priorWeightMinutes) / (mins + priorWeightMinutes);
 }
 
 /**
@@ -362,6 +370,17 @@ export function buildProjections(
     // toward its true rate, not that a one-game sample of it deserves any less caution early on.
     const priorMins = weights.attacking.priorWeightMinutes;
 
+    // What this season's thin rates shrink *toward*: the player's own last-season per-90, not
+    // zero. build.ts deliberately stops *replacing* this season's rates with last season's once
+    // the season is under way (see above) - that stays true. Anchoring is a different job: it is
+    // the baseline this season's evidence updates away from, and last season is by far the best
+    // player-specific estimate of it. Undefined for anyone with no last-season history, which
+    // shrinkRate reads as zero - honest for a genuinely unknown player.
+    const anchor = lastSeason.get(row.playerId);
+    const anchorMinutes = anchor?.minutes ?? 0;
+    const anchorRate = (total: number | null): number | null =>
+      anchor === undefined || anchorMinutes <= 0 ? null : per90(total, anchorMinutes);
+
     // Recent form, blended in on top of the season-long rate - but only while using this
     // season's own evidence (falling back to last season already has its own shrinkage, and
     // "recent form" would not mean anything there anyway). The blend weight scales down when
@@ -377,10 +396,13 @@ export function buildProjections(
       recentField: (r: RecentFixtureRow) => number | null,
       recentWeight: number,
       priorWeightMinutesOverride: number = priorMins,
+      anchorTotal?: number | null,
     ): number | null => {
       if (usingPrevious) {
+        // Already *using* last season's rate - there is nothing separate to anchor it to.
         return shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorWeightMinutesOverride);
       }
+      const priorRate = anchorTotal === undefined ? 0 : anchorRate(anchorTotal);
       // Same shrinkage as the previous-season branch above, and for the same reason: a
       // this-season rate from one big early game is exactly as thin a sample as a one-cameo
       // rate from last season, and deserves exactly as little confidence. Without this, a
@@ -388,7 +410,12 @@ export function buildProjections(
       // full face value from gameweek 2 onward - the "stops a lucky cameo outscoring genuine
       // starters" protection the comment above promises, but that this branch never actually
       // delivered for the season everyone actually cares about.
-      const seasonRate = shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorWeightMinutesOverride);
+      const seasonRate = shrinkRate(
+        per90(total, sourceMinutes),
+        sourceMinutes,
+        priorWeightMinutesOverride,
+        priorRate,
+      );
       if (recentAttackingMinutes <= 0) return seasonRate;
       const recentTotal = sumRecent(recentAttackingWindow, recentField);
       const recentRate = (recentTotal / recentAttackingMinutes) * 90;
@@ -452,13 +479,13 @@ export function buildProjections(
       minutesPlayed: row.minutes ?? 0,
       matchesAvailable: seasonMatches,
       starts: effectiveStarts,
-      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight, goalInvolvementPriorMins),
-      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight, goalInvolvementPriorMins),
-      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight, goalInvolvementPriorMins),
-      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight, goalInvolvementPriorMins),
-      savesPer90: rate(source.saves, (r) => r.saves, weights.saves.recentWeight),
-      defconPer90: rate(source.defensiveContribution, (r) => r.defensiveContribution, weights.defensiveContribution.recentWeight),
-      bonusPer90: rate(source.bonus, (r) => r.bonus, weights.bonus.recentWeight),
+      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.expectedGoals),
+      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.expectedAssists),
+      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.goals),
+      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.assists),
+      savesPer90: rate(source.saves, (r) => r.saves, weights.saves.recentWeight, priorMins, anchor?.saves),
+      defconPer90: rate(source.defensiveContribution, (r) => r.defensiveContribution, weights.defensiveContribution.recentWeight, priorMins, anchor?.defensiveContribution),
+      bonusPer90: rate(source.bonus, (r) => r.bonus, weights.bonus.recentWeight, priorMins, anchor?.bonus),
       fixtures: fixturesByTeam.get(row.teamId) ?? [],
       usingPreviousSeason: usingPrevious,
       previousSeasonName: usingPrevious ? previous.seasonName : null,

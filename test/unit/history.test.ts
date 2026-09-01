@@ -499,6 +499,60 @@ describe("this season's own rate is shrunk by sample size too, not just last sea
     expect(player.breakdown.goals).toBeLessThan(0.2);
   });
 
+  it('anchors a thin rate to the player\'s own last season, not to zero', async () => {
+    // Same identical thin line this season for both - one goal in 90 minutes. The only thing
+    // separating them is last season: player 13 (FWD) scored 15 in 3000 minutes, player 3 (DEF)
+    // scored 1. Shrinking toward zero treated those two as the same player and projected a whole
+    // XI at 19.7 points against an actual 75; shrinking toward each one's own history does not.
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers().map((p) =>
+            p.id === 3 || p.id === 13
+              ? { ...p, minutes: 90, starts: 1, goals_scored: 1, expected_goals: 0.9 }
+              : p,
+          ),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [fakeFixture(1, 1, 1, 2, { finished: true }), fakeFixture(2, 2, 1, 2)],
+      }),
+    );
+    await ingestPlayerSummaries(
+      db,
+      new StubFplApi({
+        elementSummary: {
+          3: {
+            ...fakeElementSummary(3, []),
+            history_past: [pastSeason({ element_code: 200003, goals_scored: 1, expected_goals: '1.0' })],
+          },
+          13: {
+            ...fakeElementSummary(13, []),
+            history_past: [pastSeason({ element_code: 200013 })],
+          },
+        },
+      }),
+      { playerIds: [3, 13] },
+    );
+
+    const projections = buildProjections(db, 2, rules, weights);
+    const provenScorer = projections.find((p) => p.playerId === 13)!;
+    const neverScores = projections.find((p) => p.playerId === 3)!;
+
+    // The forward keeps a real attacking projection off a strong prior; the defender's identical
+    // one-off goal stays near zero because that is what his own history says he does.
+    expect(provenScorer.breakdown.goals!).toBeGreaterThan(neverScores.breakdown.goals! * 3);
+  });
+
   it('shrinks a one-off goal harder for a defender than for a forward with the identical game', async () => {
     // Players 3 (DEF) and 13 (FWD) are both team 1's - same club, same fixture, same exact
     // gameweek 1 line: one goal in 90 minutes, xG 0.9. A forward's goal threat is genuinely

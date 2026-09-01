@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.14.0",
+  "modelVersion": "heuristic-0.15.0",
 
   "availability": {
     "$comment": [
@@ -203,10 +203,15 @@
       "How much a bench place is worth when choosing a squad. A benched player only scores",
       "through auto-subs, so they are worth far less than a starter - but not nothing, which is",
       "why a squad optimiser that ignored the bench would happily field four unplayable",
-      "reserves. The backup keeper is worth least of all."
+      "reserves. The backup keeper is worth least of all.",
+      "startRiskWeight: an extra discount for a player who may not be on the pitch at all, on top",
+      "of the expected minutes xPts already includes. Expected value alone is the wrong basis for",
+      "an XI slot - a 20%-to-start player is not a fifth of a player, he is overwhelmingly likely",
+      "to return nothing, and the slot cannot be recovered. 0 disables it, 1 applies it in full."
     ],
     "benchWeight": 0.12,
-    "benchGoalkeeperWeight": 0.03
+    "benchGoalkeeperWeight": 0.03,
+    "startRiskWeight": 1.0
   },
 
   "transfers": {

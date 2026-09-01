@@ -74,7 +74,27 @@ function benchWeightFor(
  * different number than the one it optimised on.
  */
 export function selectionValue(player: ProjectedPlayer, weights: ModelWeights): number {
-  return player.xPts * weights.confidence[player.confidence];
+  return player.xPts * weights.confidence[player.confidence] * startRiskFactor(player, weights);
+}
+
+/**
+ * An extra selection-time discount for a player who may well not be on the pitch at all.
+ *
+ * xPts already scales with expected minutes, so a player with a 20% chance of starting is
+ * already projected at roughly a fifth of a starter's total. That is the correct *expected
+ * value*, and it is still the wrong basis for filling a starting XI slot, because the outcomes
+ * are not symmetrical. A 20%-to-start player is not "a fifth of a player": he is overwhelmingly
+ * likely to return exactly nothing, and the slot spent on him cannot be recovered afterwards. A
+ * genuine starter projected at the same number is a far better use of it.
+ *
+ * A defender with zero minutes all season, whose club had already played twice, kept getting
+ * started on exactly this gap - his expected value looked survivable next to a weak squad's
+ * other options, and he returned 0. Display and accuracy grading still use raw xPts.
+ */
+function startRiskFactor(player: ProjectedPlayer, weights: ModelWeights): number {
+  const full = weights.minutes.expectedMinutesIfStarting || 1;
+  const share = Math.min(1, Math.max(0, player.expectedMinutes / full));
+  return share ** weights.optimiser.startRiskWeight;
 }
 
 /**

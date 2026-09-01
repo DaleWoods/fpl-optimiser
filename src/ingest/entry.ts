@@ -3,6 +3,7 @@ import { ApiError, type FplApi } from '../api/client.js';
 import type { Rules } from '../config/schema.js';
 import { deriveFreeTransfers, type GameweekTransferRecord } from '../domain/freeTransfers.js';
 import { nowSeconds, toSqliteBool } from '../db/index.js';
+import { recordGameweekResult } from '../model/accuracy.js';
 import { withIngestRun } from './run.js';
 
 export interface EntryIngestResult {
@@ -67,6 +68,21 @@ export async function ingestEntry(
         transfersCost: row.event_transfers_cost ?? 0,
         chip: chipUsage.get(row.event) ?? null,
       }));
+
+      // What you actually scored each gameweek, so the Accuracy page can put its own advice
+      // next to the real outcome. This was previously recorded only when an entry-history file
+      // was uploaded by hand, so for anyone relying on the automatic refresh - the normal case -
+      // the "You scored" column stayed permanently blank and the model's advice could never be
+      // compared against what really happened.
+      for (const row of historyResult.data.current) {
+        recordGameweekResult(db, teamId, row.event, {
+          actualPoints: row.points,
+          benchPoints: row.points_on_bench,
+          transfersMade: row.event_transfers,
+          transferCost: row.event_transfers_cost,
+          chip: chipUsage.get(row.event) ?? null,
+        });
+      }
     } catch (cause) {
       if (cause instanceof ApiError && cause.notFound) {
         notes.push(

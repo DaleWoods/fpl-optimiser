@@ -72,6 +72,20 @@ describe('selection value (confidence discount)', () => {
     selectionValue(p, weights);
     expect(p.xPts).toBe(6);
   });
+
+  it('discounts a player who may not be on the pitch, beyond the expected value already in xPts', () => {
+    // A defender with zero minutes all season, whose club had already played twice, kept being
+    // started: his expected value looked survivable next to a weak squad's other options and he
+    // returned 0. Expected value is the wrong basis for an XI slot - a 30%-to-start player is
+    // not "a third of a player", he is overwhelmingly likely to return nothing at all.
+    const nailedOn = player({ xPts: 2.5, confidence: 'medium', expectedMinutes: 80 });
+    const barelyPlays = player({ xPts: 2.5, confidence: 'medium', expectedMinutes: 24 });
+
+    // Same projected points, but the one who might not play is worth far less for a slot.
+    expect(selectionValue(barelyPlays, weights)).toBeLessThan(selectionValue(nailedOn, weights) / 2);
+    // The displayed projection is still untouched, as with the confidence discount.
+    expect(barelyPlays.xPts).toBe(2.5);
+  });
 });
 
 describe('best starting XI', () => {

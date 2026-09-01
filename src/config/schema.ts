@@ -238,6 +238,14 @@ export const modelWeightsSchema = z.strictObject({
   optimiser: z.strictObject({
     benchWeight: probability,
     benchGoalkeeperWeight: probability,
+    /**
+     * Extra selection-time discount for a player who might not be on the pitch at all, applied
+     * on top of the expected minutes already baked into xPts. See startRiskFactor() in
+     * src/optimise/squad.ts: a 20%-to-start player is not "a fifth of a player", he is
+     * overwhelmingly likely to return nothing, and an XI slot spent on him cannot be recovered.
+     * 0 disables it and goes back to pure expected value; 1 applies it in full.
+     */
+    startRiskWeight: probability,
   }),
   /**
    * A squad member projected below this many points this gameweek is effectively a dead

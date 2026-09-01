@@ -213,7 +213,10 @@ captain's double moves to the vice-captain if the captain blanked - rather than 
 11 names originally picked, which would understate it every time a starter blanked. It still
 doesn't account for transfer hits or chip multipliers, so it isn't quite your final live FPL
 score - that's the separate "You scored" figure alongside it, recorded from your own entry
-history.
+history. That figure used to be written only when an entry-history file was uploaded by hand,
+so for anyone relying on the normal automatic refresh the column stayed permanently blank and
+the model's advice could never actually be compared against the outcome; the automatic refresh
+now records it too.
 
 Alongside your own score, it also shows the whole game's **average** and **highest** score for
 each gameweek — the same numbers the official app shows on its home screen. There is nothing to
@@ -478,6 +481,38 @@ of real-world knowledge DefCon's own per-position threshold already encodes - no
 scale for any particular player. A goalkeeper's or defender's one early goal now needs a real,
 sustained run behind it before it counts for much; a midfielder's or forward's does not, because
 their underlying goal threat was never the surprising part.
+
+Those three fixes were all correct in direction and all wrong in one shared detail, which
+`heuristic-0.15.0` puts right: they shrank a thin rate **toward zero**. That is only the right
+anchor for a player we know nothing about. For a player with a full previous season behind him
+it is plainly wrong - and by gameweek 2 or 3, with the prior now set at 900 or 2700 minutes, it
+was the dominant term. A striker who scored 20-odd goals last season and one in his opening
+match was being projected as if his true rate were a tenth of a goal per 90, because 90 minutes
+of evidence against a 900-minute prior anchored at zero can produce nothing else. That is the
+mechanism behind the systematic under-projection visible on the Accuracy page (an XI projected
+at 19.7 that scored 75): every attacking rate in the squad was being pulled to near-zero at
+once, so the error was not noise, it was one-directional.
+
+The shrinkage is now properly Bayesian: a thin this-season rate is blended toward **that
+player's own previous-season per-90**, and only falls back to zero when there genuinely is no
+previous season to anchor to. The strong priors stay exactly as they were, and still do the job
+they were added for - one gameweek is still not evidence of a repeatable rate. What changes is
+what "not much evidence yet" resolves to: last season's established rate rather than an
+assertion that the player cannot score at all. This cuts symmetrically and is blind to
+reputation: a defender with one goal last season and one this season is anchored just as low as
+before, while a proven scorer is anchored high, purely on his own record.
+
+### A player who might not be on the pitch is worth less than his expected points say
+
+`optimiser.startRiskWeight` discounts a selection candidate by how likely he is to actually
+start, on top of the expected minutes already inside xPts. Expected value is the wrong basis for
+an XI slot: a player with a 25% chance to start is not "a quarter of a player", he is
+overwhelmingly likely to return nothing at all, and the slot he occupies cannot be recovered
+afterwards. Multiplying by expected minutes - which is all xPts does - treats those two as
+equivalent. This is why a squad player who is clearly out of his club's first XI could keep
+holding a starting place week after week on a respectable-looking projection. Like the
+confidence tiers, this only affects **which** players the solver picks; the xPts shown on the
+page, and the number graded on the Accuracy page, remain the undiscounted projection.
 
 ### Rotation risk, from fixture congestion rather than a guessed list of European clubs
 
