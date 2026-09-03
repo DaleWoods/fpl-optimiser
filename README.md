@@ -509,6 +509,20 @@ assertion that the player cannot score at all. This cuts symmetrically and is bl
 reputation: a defender with one goal last season and one this season is anchored just as low as
 before, while a proven scorer is anchored high, purely on his own record.
 
+That fix had a flaw of its own, closed in `heuristic-0.16.0`: it took the anchor at face value
+however few minutes produced it. An anchor is a rate with a sample size like any other, and
+`priorWeightMinutes` does not care where it came from — so two goals in 200 minutes last season
+anchored a player at 0.9 goals per 90, and that was then asserted with the weight of ten full
+matches. A player who had scored three goals in his career projected like an established striker.
+
+The anchor is now shrunk by its own minutes too (`attacking.anchorPriorWeightMinutes`, 900),
+toward what an ordinary player in that position does per 90
+(`attacking.positionBaselineRates`) rather than toward zero. Worked through: a forward with two
+goals in 200 minutes has a raw anchor of 0.90, which becomes `(0.90×200 + 0.35×900) / 1100` =
+0.46 — ordinary-for-a-forward, which is a far better guess than either his cameo or nothing at
+all. A forward with 15 in 3000 minutes has a raw 0.45 that barely moves, to 0.43, because three
+thousand minutes is a real sample and the shrinkage is only supposed to bite on thin ones.
+
 ### A player who might not be on the pitch is worth less than his expected points say
 
 `optimiser.startRiskWeight` discounts a selection candidate by how likely he is to actually

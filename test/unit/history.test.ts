@@ -553,6 +553,138 @@ describe("this season's own rate is shrunk by sample size too, not just last sea
     expect(provenScorer.breakdown.goals!).toBeGreaterThan(neverScores.breakdown.goals! * 3);
   });
 
+  /**
+   * Seed two gameweeks, an identical thin this-season line for the named players, and whatever
+   * last-season history each of them should carry. Shared by the anchor-shrinkage tests below,
+   * which all differ only in what last season says.
+   */
+  async function seedWithPastSeasons(
+    thisSeasonPlayers: number[],
+    pastBySeason: Record<number, Record<string, unknown> | null>,
+  ): Promise<void> {
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [
+            fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+            fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+          ],
+          players: defaultPlayers().map((p) =>
+            thisSeasonPlayers.includes(p.id)
+              ? { ...p, minutes: 90, starts: 1, goals_scored: 1, expected_goals: 0.9 }
+              : p,
+          ),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [fakeFixture(1, 1, 1, 2, { finished: true }), fakeFixture(2, 2, 1, 2)],
+      }),
+    );
+    const summaries: Record<number, unknown> = {};
+    for (const [id, past] of Object.entries(pastBySeason)) {
+      summaries[Number(id)] = {
+        ...fakeElementSummary(Number(id), []),
+        history_past: past === null ? [] : [past],
+      };
+    }
+    await ingestPlayerSummaries(db, new StubFplApi({ elementSummary: summaries as never }), {
+      playerIds: Object.keys(pastBySeason).map(Number),
+    });
+  }
+
+  it('does not treat a thin last season as a proven rate', async () => {
+    // Three goals in 100 minutes last season is a raw 2.7 per 90 - a rate no forward in the
+    // league sustains. Anchoring to last season was right, but taking that anchor at face value
+    // however few minutes produced it was not: priorWeightMinutes then asserted 2.7 with the
+    // weight of ten full matches, and a player who had scored three goals in his career
+    // projected like the best striker in the world.
+    //
+    // Compared against the same player with the anchor shrinkage switched off, because that is
+    // the mechanism under test. Comparing him to an established scorer instead would prove
+    // nothing: a real 15-in-3000 season is 0.45 per 90, which sits close to the ordinary-forward
+    // baseline anyway, so the two correctly converge rather than separating.
+    await seedWithPastSeasons([13], {
+      13: pastSeason({
+        element_code: 200013,
+        minutes: 100,
+        starts: 1,
+        goals_scored: 3,
+        expected_goals: '2.8',
+        assists: 0,
+        expected_assists: '0.2',
+        bonus: 3,
+        total_points: 20,
+      }),
+    });
+
+    const shrunk = buildProjections(db, 2, rules, weights).find((p) => p.playerId === 13)!;
+    const unshrunk = buildProjections(db, 2, rules, {
+      ...weights,
+      attacking: { ...weights.attacking, anchorPriorWeightMinutes: 0 },
+    }).find((p) => p.playerId === 13)!;
+
+    // anchorPriorWeightMinutes 0 reproduces the old behaviour exactly, so this is a direct
+    // before-and-after on the same player and fails outright without the fix.
+    expect(shrunk.breakdown.goals!).toBeLessThan(unshrunk.breakdown.goals! * 0.6);
+  });
+
+  it('shrinks a thin last season toward its position, not toward zero', async () => {
+    // The same 200-minute, 2-goal last season for a forward and for a defender. Falling back to
+    // zero would say both are incapable of scoring, which is wrong for the forward; falling back
+    // to the position's ordinary rate says "we know little about him, assume he is a normal
+    // forward", which is a far better guess and still nothing like a proven threat.
+    const thin = (code: number) => pastSeason({
+      element_code: code,
+      minutes: 200,
+      starts: 2,
+      goals_scored: 2,
+      expected_goals: '1.9',
+      assists: 0,
+      expected_assists: '0.3',
+      bonus: 1,
+      total_points: 14,
+    });
+    await seedWithPastSeasons([3, 13], { 3: thin(200003), 13: thin(200013) });
+
+    const projections = buildProjections(db, 2, rules, weights);
+    const forward = projections.find((p) => p.playerId === 13)!;
+    const defender = projections.find((p) => p.playerId === 3)!;
+
+    expect(forward.breakdown.goals!).toBeGreaterThan(defender.breakdown.goals!);
+  });
+
+  it('leaves a full last season almost untouched', async () => {
+    // The shrinkage must only bite on thin samples. A player with 3000 minutes behind his rate
+    // should keep essentially all of it - if this test fails, the anchor prior is set so high
+    // that it is overwriting real evidence rather than filling in for missing evidence.
+    await seedWithPastSeasons([13], { 13: pastSeason({ element_code: 200013 }) });
+
+    const shrunk = buildProjections(db, 2, rules, weights).find((p) => p.playerId === 13)!;
+    const barelyShrunk = buildProjections(db, 2, rules, {
+      ...weights,
+      attacking: { ...weights.attacking, anchorPriorWeightMinutes: 1 },
+    }).find((p) => p.playerId === 13)!;
+
+    expect(shrunk.breakdown.goals!).toBeGreaterThan(barelyShrunk.breakdown.goals! * 0.75);
+  });
+
+  it('projects a player with no last-season history at all without throwing', async () => {
+    // No history to anchor to is not the same as a thin history. It falls back to zero, which is
+    // the honest answer for a genuinely unknown player - and must not become NaN on the way.
+    await seedWithPastSeasons([13], { 13: null });
+
+    const player = buildProjections(db, 2, rules, weights).find((p) => p.playerId === 13)!;
+
+    expect(player.breakdown.goals).toBeTypeOf('number');
+    expect(Number.isFinite(player.breakdown.goals!)).toBe(true);
+    expect(Number.isFinite(player.xPts)).toBe(true);
+  });
+
   it('shrinks a one-off goal harder for a defender than for a forward with the identical game', async () => {
     // Players 3 (DEF) and 13 (FWD) are both team 1's - same club, same fixture, same exact
     // gameweek 1 line: one goal in 90 minutes, xG 0.9. A forward's goal threat is genuinely

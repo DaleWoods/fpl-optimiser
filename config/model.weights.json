@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.15.0",
+  "modelVersion": "heuristic-0.16.0",
 
   "availability": {
     "$comment": [
@@ -93,14 +93,30 @@
       "genuinely close to it) and a defender (whose true rate is close to zero) at once - even",
       "900 minutes was not enough to stop a defender's one gameweek 1 goal outranking Haaland's",
       "whole season-to-date output for gameweek 2's captaincy. 2700 (thirty matches) means a",
-      "defender needs a real, sustained run of goal involvement before it counts for much."
+      "defender needs a real, sustained run of goal involvement before it counts for much.",
+      "anchorPriorWeightMinutes/positionBaselineRates: the anchor a thin rate shrinks toward is",
+      "itself a rate with a sample size, and it has to earn its weight the same way everything",
+      "else here does. Anchoring to last season was right; taking that anchor at face value",
+      "however few minutes it came from was not - two goals in 200 minutes read as a proven",
+      "0.9-per-90 threat, and priorWeightMinutes then asserted it with the weight of ten full",
+      "matches. The anchor is now shrunk over 900 minutes toward what an ordinary player in that",
+      "position does per 90. An established scorer keeps almost all of his rate; a player with a",
+      "cameo season keeps almost none of it and falls back to ordinary-for-his-position, which is",
+      "a far better guess than either the cameo or zero."
     ],
     "recentMatches": 6,
     "recentWeight": 0.6,
     "xgWeight": 0.7,
     "fixtureScalingWeight": 1.0,
     "priorWeightMinutes": 900,
-    "lowThreatPriorWeightMinutes": 2700
+    "lowThreatPriorWeightMinutes": 2700,
+    "anchorPriorWeightMinutes": 900,
+    "positionBaselineRates": {
+      "GKP": { "goals": 0.0,  "assists": 0.01, "saves": 3.0, "defensiveContribution": 0.0, "bonus": 0.25 },
+      "DEF": { "goals": 0.05, "assists": 0.06, "saves": 0.0, "defensiveContribution": 9.0, "bonus": 0.20 },
+      "MID": { "goals": 0.15, "assists": 0.14, "saves": 0.0, "defensiveContribution": 7.0, "bonus": 0.25 },
+      "FWD": { "goals": 0.35, "assists": 0.12, "saves": 0.0, "defensiveContribution": 3.0, "bonus": 0.30 }
+    }
   },
 
   "cleanSheet": {

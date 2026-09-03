@@ -174,6 +174,33 @@ export const modelWeightsSchema = z.strictObject({
      * evidence behind it before it reads as a real, repeatable threat rather than a one-off.
      */
     lowThreatPriorWeightMinutes: z.number().min(0),
+    /**
+     * How many minutes of last-season evidence it takes to half-trust that season's own per-90
+     * as the anchor for this season. The anchor is a prior, and a prior built from a thin
+     * sample is not a strong prior - it is a guess wearing a prior's clothes. Without this, two
+     * goals in 200 minutes last season anchored a player at 0.9 goals per 90 and then asserted
+     * that with the weight of ten full matches, because priorWeightMinutes does not care where
+     * the anchor came from.
+     */
+    anchorPriorWeightMinutes: z.number().min(0),
+    /**
+     * What a thin last-season sample shrinks toward, per position: roughly what an ordinary
+     * player in that position does per 90. Not zero - "we know almost nothing about this
+     * player" should resolve to "assume he is ordinary for his position", not "assume he cannot
+     * play at all". Keys are position short names; a position absent here falls back to zero,
+     * which is the older behaviour and still the honest answer when there is nothing better to
+     * say.
+     */
+    positionBaselineRates: z.record(
+      z.string(),
+      z.strictObject({
+        goals: z.number().min(0),
+        assists: z.number().min(0),
+        saves: z.number().min(0),
+        defensiveContribution: z.number().min(0),
+        bonus: z.number().min(0),
+      }),
+    ),
   }),
   cleanSheet: z.strictObject({
     maxProbability: probability,

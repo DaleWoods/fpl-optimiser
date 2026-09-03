@@ -160,6 +160,29 @@ function shrinkRate(
 }
 
 /**
+ * Shrink a previous-season per-90 by the minutes behind it, toward the position's baseline.
+ *
+ * The anchor above is the prior this season's thin evidence updates away from, and it has to
+ * earn that status like any other rate. Two goals in 200 minutes is not evidence of a
+ * 0.9-per-90 threat, and handing that straight to shrinkRate at a weight of 900 minutes asserts
+ * it far more confidently than the sample it came from ever supported - the exact mistake
+ * shrinkRate exists to prevent, made one level up.
+ *
+ * It shrinks toward what an ordinary player in that position does per 90, not toward zero.
+ * "We know almost nothing about this player" should resolve to "assume he is ordinary", which
+ * is a much better guess than either his cameo or nothing at all.
+ */
+function shrinkAnchorRate(
+  rate: number | null,
+  minutes: number,
+  baseline: number,
+  priorWeightMinutes: number,
+): number | null {
+  if (rate === null) return null;
+  return (rate * minutes + baseline * priorWeightMinutes) / (minutes + priorWeightMinutes);
+}
+
+/**
  * Flag players trending toward a price rise or fall, purely as an informational note - never an
  * xPts adjustment, never a gate on selection. FPL's real price-change algorithm is unpublished,
  * so this ranks every player by net transfers this gameweek (in minus out) and flags the topN at
@@ -378,8 +401,24 @@ export function buildProjections(
     // shrinkRate reads as zero - honest for a genuinely unknown player.
     const anchor = lastSeason.get(row.playerId);
     const anchorMinutes = anchor?.minutes ?? 0;
-    const anchorRate = (total: number | null): number | null =>
-      anchor === undefined || anchorMinutes <= 0 ? null : per90(total, anchorMinutes);
+    const baselines = weights.attacking.positionBaselineRates[row.position] ?? null;
+
+    // baselineKey names which ordinary-for-this-position rate the anchor shrinks toward. A
+    // position the config does not list - possible, since positions are reconciled against
+    // whatever the live API declares rather than hardcoded - falls back to zero, which is the
+    // older behaviour and still honest when there is nothing better to say.
+    const anchorRate = (
+      total: number | null,
+      baselineKey: 'goals' | 'assists' | 'saves' | 'defensiveContribution' | 'bonus',
+    ): number | null => {
+      if (anchor === undefined || anchorMinutes <= 0) return null;
+      return shrinkAnchorRate(
+        per90(total, anchorMinutes),
+        anchorMinutes,
+        baselines?.[baselineKey] ?? 0,
+        weights.attacking.anchorPriorWeightMinutes,
+      );
+    };
 
     // Recent form, blended in on top of the season-long rate - but only while using this
     // season's own evidence (falling back to last season already has its own shrinkage, and
@@ -397,12 +436,16 @@ export function buildProjections(
       recentWeight: number,
       priorWeightMinutesOverride: number = priorMins,
       anchorTotal?: number | null,
+      anchorBaseline?: 'goals' | 'assists' | 'saves' | 'defensiveContribution' | 'bonus',
     ): number | null => {
       if (usingPrevious) {
         // Already *using* last season's rate - there is nothing separate to anchor it to.
         return shrinkRate(per90(total, sourceMinutes), sourceMinutes, priorWeightMinutesOverride);
       }
-      const priorRate = anchorTotal === undefined ? 0 : anchorRate(anchorTotal);
+      const priorRate =
+        anchorTotal === undefined || anchorBaseline === undefined
+          ? 0
+          : anchorRate(anchorTotal, anchorBaseline);
       // Same shrinkage as the previous-season branch above, and for the same reason: a
       // this-season rate from one big early game is exactly as thin a sample as a one-cameo
       // rate from last season, and deserves exactly as little confidence. Without this, a
@@ -479,13 +522,13 @@ export function buildProjections(
       minutesPlayed: row.minutes ?? 0,
       matchesAvailable: seasonMatches,
       starts: effectiveStarts,
-      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.expectedGoals),
-      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.expectedAssists),
-      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.goals),
-      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.assists),
-      savesPer90: rate(source.saves, (r) => r.saves, weights.saves.recentWeight, priorMins, anchor?.saves),
-      defconPer90: rate(source.defensiveContribution, (r) => r.defensiveContribution, weights.defensiveContribution.recentWeight, priorMins, anchor?.defensiveContribution),
-      bonusPer90: rate(source.bonus, (r) => r.bonus, weights.bonus.recentWeight, priorMins, anchor?.bonus),
+      xgPer90: rate(source.expectedGoals, (r) => r.expectedGoals, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.expectedGoals, 'goals'),
+      xaPer90: rate(source.expectedAssists, (r) => r.expectedAssists, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.expectedAssists, 'assists'),
+      goalsPer90: rate(source.goals, (r) => r.goals, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.goals, 'goals'),
+      assistsPer90: rate(source.assists, (r) => r.assists, weights.attacking.recentWeight, goalInvolvementPriorMins, anchor?.assists, 'assists'),
+      savesPer90: rate(source.saves, (r) => r.saves, weights.saves.recentWeight, priorMins, anchor?.saves, 'saves'),
+      defconPer90: rate(source.defensiveContribution, (r) => r.defensiveContribution, weights.defensiveContribution.recentWeight, priorMins, anchor?.defensiveContribution, 'defensiveContribution'),
+      bonusPer90: rate(source.bonus, (r) => r.bonus, weights.bonus.recentWeight, priorMins, anchor?.bonus, 'bonus'),
       fixtures: fixturesByTeam.get(row.teamId) ?? [],
       usingPreviousSeason: usingPrevious,
       previousSeasonName: usingPrevious ? previous.seasonName : null,
