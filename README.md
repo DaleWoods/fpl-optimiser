@@ -38,6 +38,9 @@ npm install
 npm test
 ```
 
+Pushes to `main` run the typecheck, the test suite and a production build in GitHub Actions
+before Render deploys them. `npm run ci` runs the same three checks locally.
+
 ## Commands
 
 ```bash

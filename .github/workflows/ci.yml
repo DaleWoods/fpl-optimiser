@@ -1,0 +1,38 @@
+# Runs the checks that already exist, at the one moment they matter: before a push to main
+# reaches Render, which auto-deploys it. The suite is fast and has no external dependencies -
+# no FPL API call, no network, no database beyond an in-memory SQLite - so this is cheap to run
+# on every push and there is no reason to run a subset.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      # ci, not install: the lockfile is the source of truth, and a build that quietly resolves
+      # a different dependency tree than the one that was tested is not the same build.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # The deployed artefact is what Render builds, so building it here is part of checking
+      # that the push is safe: tsconfig.build.json is a different config from the one
+      # tsc --noEmit uses, and can break independently of it.
+      - name: Build
+        run: npm run build
