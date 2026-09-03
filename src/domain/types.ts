@@ -33,6 +33,14 @@ export interface ProjectedPlayer extends PlayerCandidate {
   reasons: string[];
   /** This gameweek's fixture(s) for the player's club: empty for a blank, two for a double. */
   fixtures: FixtureSummary[];
+  /**
+   * xPts before the model's own measured-error correction was applied, and the factor that was
+   * applied. Both absent when no correction applied - "we have not measured this yet" and "we
+   * measured it and it was fine" look the same once applied but are different claims, and only
+   * the uncorrected figure is safe to measure the next correction against.
+   */
+  xPtsUncalibrated?: number;
+  calibrationFactor?: number;
 }
 
 export interface Squad {

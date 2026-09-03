@@ -4,6 +4,12 @@ import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
 import { latestEliteOwnership } from '../ingest/elite.js';
 import { buildProjections, saveProjections } from '../model/build.js';
 import {
+  computeCalibration,
+  loadCalibration,
+  saveCalibration,
+  type CalibrationFactor,
+} from '../model/calibration.js';
+import {
   benchBoostPull,
   bestBenchBoostGameweek,
   computeHorizon,
@@ -288,6 +294,11 @@ export interface Recommendation {
     usingPreviousSeason: number;
     /** How many gameweeks transfers and captaincy were actually judged over. */
     horizonGameweeks: number;
+    /**
+     * What the model has learned about its own lean, per position, and applied to these
+     * projections. Empty until enough gameweeks have been graded, or when calibration is off.
+     */
+    calibration: CalibrationFactor[];
   };
 }
 
@@ -895,6 +906,11 @@ export async function recommend(
     );
   }
 
+  // Refresh what the model has learned about its own error before projecting, so the numbers
+  // about to be produced carry every gameweek graded so far rather than whatever was current the
+  // last time someone happened to look at the Accuracy page. Cheap: one grouped query.
+  saveCalibration(db, weights.modelVersion, computeCalibration(db, weights));
+
   const rawProjections = buildProjections(db, event.id, rules, weights);
   if (rawProjections.length === 0) {
     throw new Error(
@@ -1029,6 +1045,11 @@ export async function recommend(
       p.reasons.some((r) => r.includes('Rates are from')),
     ).length,
     horizonGameweeks: horizon.gameweeks.length,
+    calibration: weights.calibration.enabled
+      ? [...loadCalibration(db, weights.modelVersion).values()].sort((a, b) =>
+          a.position.localeCompare(b.position),
+        )
+      : [],
   };
 
   if (elite.size === 0) {

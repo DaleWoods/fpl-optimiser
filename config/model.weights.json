@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.16.0",
+  "modelVersion": "heuristic-0.17.0",
 
   "availability": {
     "$comment": [
@@ -256,5 +256,26 @@
     ],
     "topN": 20,
     "netTransfersFloor": 5000
+  },
+
+  "calibration": {
+    "$comment": [
+      "Correcting the model with its own measured error, per position. The accuracy tables have",
+      "always computed bias per position and nothing has ever read it; this is what does.",
+      "priorWeightPlayers 400: bias over a single gameweek is mostly that week's own variance, so",
+      "a position needs a few hundred graded projections before its lean is believable.",
+      "minGameweeks 3: below that there is no lean to speak of, only noise.",
+      "minFactor/maxFactor 0.8/1.25: a model needing more correction than that has a bug to be",
+      "found, not a lean to be tuned out, and silently applying a bigger one would hide it.",
+      "The factor is always measured against the uncalibrated projection, never against already-",
+      "corrected output - see projection.xpts_uncalibrated. Measuring a working correction against",
+      "its own corrected output concludes it is no longer needed and reverts it.",
+      "Set enabled to false to project exactly as if none of this existed."
+    ],
+    "enabled": true,
+    "priorWeightPlayers": 400,
+    "minGameweeks": 3,
+    "minFactor": 0.8,
+    "maxFactor": 1.25
   }
 }

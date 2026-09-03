@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ModelWeights, Rules } from '../config/schema.js';
 import { classifyAvailability } from '../domain/availability.js';
 import type { ProjectedPlayer } from '../domain/types.js';
+import { loadCalibration } from './calibration.js';
 import { recentFixturesByPlayer, sumRecent, type RecentFixtureRow } from './recentForm.js';
 import { computeLeagueTable } from './table.js';
 import { projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
@@ -578,6 +579,47 @@ export function buildProjections(
     });
   }
 
+  return applyCalibration(db, projected, weights);
+}
+
+/**
+ * Correct finished projections with what the model has measured about its own lean.
+ *
+ * Applied last, to the completed projection, so every component in the breakdown still adds up
+ * to xPtsRaw and the explanation on the page stays literally true about the model that produced
+ * it. The uncorrected figure and the factor are both recorded on the player: the first because
+ * the next correction must be measured against it rather than against corrected output, and the
+ * second so the page can say a correction happened rather than silently shifting the numbers.
+ *
+ * xPtsRaw is deliberately untouched - it is the pre-availability figure used for explanation,
+ * not a thing that was graded.
+ */
+function applyCalibration(
+  db: Database,
+  projected: ProjectedPlayer[],
+  weights: ModelWeights,
+): ProjectedPlayer[] {
+  if (!weights.calibration.enabled) return projected;
+
+  const factors = loadCalibration(db, weights.modelVersion);
+  if (factors.size === 0) return projected;
+
+  for (const player of projected) {
+    const calibration = factors.get(player.position);
+    if (calibration === undefined || calibration.factor === 1) continue;
+
+    player.xPtsUncalibrated = player.xPts;
+    player.calibrationFactor = calibration.factor;
+    player.xPts = Math.round(player.xPts * calibration.factor * 1000) / 1000;
+    player.reasons = [
+      ...player.reasons,
+      `Corrected ×${calibration.factor.toFixed(3)} from ${calibration.gameweeks} graded ` +
+        `gameweek(s): ${player.position} projections have run ` +
+        `${calibration.observedBias > 0 ? 'high' : 'low'} by ` +
+        `${Math.abs(calibration.observedBias).toFixed(2)} points per player on average.`,
+    ];
+  }
+
   return projected;
 }
 
@@ -591,9 +633,9 @@ export function saveProjections(
   const createdAt = Math.floor(Date.now() / 1000);
   const insert = db.prepare(
     `INSERT OR REPLACE INTO projection (
-       player_id, event_id, model_version, created_at, xpts, xpts_raw,
+       player_id, event_id, model_version, created_at, xpts, xpts_raw, xpts_uncalibrated,
        availability_probability, expected_minutes, fixture_count, confidence, breakdown_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const write = db.transaction(() => {
@@ -605,6 +647,10 @@ export function saveProjections(
         createdAt,
         projection.xPts,
         projection.xPtsRaw,
+        // What the next correction is measured against. Falls back to xPts when nothing was
+        // corrected, which is the same number - grading the calibrated figure stays right,
+        // because that is what the page actually showed and what the advice actually was.
+        projection.xPtsUncalibrated ?? projection.xPts,
         projection.availability.probability,
         projection.expectedMinutes,
         1,

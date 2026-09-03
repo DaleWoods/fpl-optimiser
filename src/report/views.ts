@@ -1,4 +1,5 @@
 import type { GameweekAccuracy, SeasonAccuracy } from '../model/accuracy.js';
+import type { CalibrationFactor } from '../model/calibration.js';
 import type { ChipAdvice } from '../optimise/chips.js';
 import type { PayloadKind } from '../ingest/import.js';
 import type { ResetScope } from '../ingest/reset.js';
@@ -599,6 +600,16 @@ export function renderRecommendation(rec: Recommendation): string {
           'starts, which the FPL platform itself enforces. Once it is, top managers\' actual picks ' +
           'will boost those players\' projections directly, not just get mentioned.'
     }</li>
+    <li>${
+      rec.evidence.calibration.length > 0
+        ? `Corrected from ${rec.evidence.calibration[0]!.gameweeks} graded gameweek(s) of the
+           model's own error: ${rec.evidence.calibration
+             .filter((c) => c.factor !== 1)
+             .map((c) => `${escapeHtml(c.position)} ×${c.factor.toFixed(3)}`)
+             .join(', ') || 'no position needed one'}`
+        : 'No correction from past accuracy yet - that needs several graded gameweeks behind it, ' +
+          'and until then a measured lean is just one week&rsquo;s variance'
+    }</li>
     <li>Transfers and captaincy judged over ${rec.evidence.horizonGameweeks} gameweek(s) ahead,
       weighted most heavily toward this one &mdash; see "run of fixtures after this gameweek" on
       a transfer for what that changed</li>
@@ -1046,7 +1057,67 @@ function gameweekScorecard(gw: SeasonAccuracy['gameweeks'][number]): string {
   </div>`;
 }
 
-export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy | null): string {
+/**
+ * What the model has learned from grading itself, and what it did about it.
+ *
+ * Shown on the page rather than applied quietly, because a correction the reader cannot see is
+ * indistinguishable from the model just changing its mind. Renders a line saying so when there
+ * is not enough graded football yet, rather than an empty table - "not measured" and "measured
+ * and fine" are different claims and should not look the same.
+ */
+function renderCalibration(factors: readonly CalibrationFactor[]): string {
+  if (factors.length === 0) {
+    return `<h2>What the model has learned</h2>
+      <div class="banner info">Nothing yet. A correction needs several graded gameweeks behind
+      it &mdash; before that, what looks like a lean is just one week's variance.</div>`;
+  }
+
+  const rows = factors
+    .map((f) => {
+      const applied = f.factor === 1;
+      return `<tr>
+        <td><strong>${escapeHtml(f.position)}</strong></td>
+        <td>${f.samplePlayers}</td>
+        <td style="color:${Math.abs(f.observedBias) < 0.25 ? 'var(--ok)' : 'var(--warn-fg)'}">${
+          f.observedBias > 0 ? 'ran high by ' : 'ran low by '
+        }${Math.abs(f.observedBias).toFixed(2)}</td>
+        <td><strong>${applied ? '<span class="muted">none</span>' : `×${f.factor.toFixed(3)}`}</strong></td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<h2>What the model has learned</h2>
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Position</th><th>Graded projections</th><th>Measured lean</th>
+      <th>Correction applied</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>
+  <details class="explain">
+    <summary>How a correction gets made, and what stops it running away</summary>
+    <div class="inner">
+      <p>Every graded gameweek is compared, per position, against what was projected. The
+      correction is a <em>ratio</em> &mdash; what happened over what was said &mdash; not a flat
+      number of points, because half a point means something very different for a goalkeeper
+      projected at 3 than for a captain projected at 9.</p>
+      <p>It is then shrunk hard toward no correction at all by how much evidence is behind it,
+      the same caution every rate in this model gets, and clamped at both ends. A model needing
+      more correction than the clamp allows has a bug to be found, not a lean to be tuned out,
+      and quietly applying a larger one would hide it.</p>
+      <p>The correction is always measured against the projection <em>before</em> any previous
+      correction was applied. Measured against its own corrected output, a correction that was
+      working would look unnecessary and get thrown away, the error would come back the next
+      week, and the model would flip between corrected and uncorrected forever.</p>
+      <p>It moves which players get picked, and it is stated in the reasons on the My Team tab
+      wherever it applied. It never touches the per-component breakdown, which stays a true
+      description of the model that produced it.</p>
+    </div>
+  </details>`;
+}
+
+export function renderAccuracy(
+  season: SeasonAccuracy,
+  latest: GameweekAccuracy | null,
+  calibration: readonly CalibrationFactor[] = [],
+): string {
   const errHead = `<thead><tr><th>Player</th><th>Pos</th><th>Club</th><th>Predicted</th><th>Actual</th><th>Error</th></tr></thead>`;
 
   const scorecards = season.gameweeks.map(gameweekScorecard).join('');
@@ -1120,6 +1191,8 @@ export function renderAccuracy(season: SeasonAccuracy, latest: GameweekAccuracy 
          </details>`
       : ''
   }
+
+  ${renderCalibration(calibration)}
 
   ${
     season.overall

@@ -12,6 +12,7 @@ import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
+import { computeCalibration } from '../model/calibration.js';
 import { computeLeagueTable } from '../model/table.js';
 import {
   renderAccuracy,
@@ -212,13 +213,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         ? evaluateGameweek(db, lastGraded.eventId, config.rules, config.app.teamId)
         : null;
 
+      // Recompute rather than read, so the page shows what the model would learn from
+      // everything graded right now - not whatever was stored the last time a recommendation
+      // happened to be generated.
+      const calibration = config.weights.calibration.enabled
+        ? computeCalibration(db, config.weights)
+        : [];
+
       if (url.pathname === '/accuracy.json') {
         response.writeHead(200, JSON_HEADERS);
-        response.end(JSON.stringify({ season, latest }, null, 2));
+        response.end(JSON.stringify({ season, latest, calibration }, null, 2));
         return;
       }
       response.writeHead(200, HTML);
-      response.end(renderAccuracy(season, latest));
+      response.end(renderAccuracy(season, latest, calibration));
       return;
     }
 

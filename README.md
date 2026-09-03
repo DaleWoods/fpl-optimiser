@@ -238,6 +238,41 @@ the gameweek finishes. Only players with **both** a projection and a result are 
 counting a player who was never projected would flatter the model, and counting one with no
 result would slander it.
 
+### Learning from the model's own mistakes
+
+Measuring accuracy and doing nothing with it is a report card, not a mechanism. Once several
+gameweeks have been graded, the model derives a **correction per position** from its own error
+and applies it to future projections.
+
+The correction is a *ratio* — what actually happened over what was projected, for that position
+— not a flat number of points. Half a point means something very different for a goalkeeper
+projected at 3 than for a captain projected at 9, and one additive correction would be wrong for
+both. It is then shrunk hard toward no correction at all by how much evidence is behind it, the
+same caution every other rate in this model gets, and clamped at both ends
+(`calibration.minFactor`/`maxFactor`, 0.8 to 1.25). A model that needs a bigger correction than
+that has a bug to be found, not a lean to be tuned out, and silently applying one would hide it.
+
+Three things it deliberately does not do. It does not correct per player — there is nowhere near
+enough sample per player and it would be fitting noise. It does not retune the weights in
+`config/model.weights.json`, which are the model's structure and should change deliberately, with
+a version bump and a stated reason. And it does not carry across a `modelVersion` change: a
+factor describes the mistakes of the model that made them, so a scoring change resets the
+learning rather than correcting something that no longer exists.
+
+The subtle part is what the correction is measured *against*. It is always the projection
+**before** any previous correction was applied (`projection.xpts_uncalibrated`), never the
+corrected output. Measured against its own corrected output, a correction that was working would
+come back as a ratio of 1.0 — so it would be thrown away, the error would return the following
+week, and the model would flip between corrected and uncorrected forever with no way to tell
+which state any given week's advice was in. The Accuracy page still *grades* the calibrated
+figure, because that is the number the page actually showed and so the honest record of what was
+advised.
+
+It is visible everywhere it acts: a "What the model has learned" table on the Accuracy page, a
+line in the evidence list on My Team, and a reason on every player whose projection it moved.
+Set `calibration.enabled` to `false` to switch the whole thing off and project exactly as if it
+had never existed.
+
 ## Chip strategy
 
 `fpl chips` (or `/chips`) says when to play each remaining chip, valuing each one in expected

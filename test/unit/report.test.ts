@@ -793,7 +793,7 @@ describe('priority-fix team on My Team', () => {
       evidence: {
         intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
         intelPriceMismatches: 0, contextNotes: [], eliteSampleSize: 0, usingPreviousSeason: 0,
-        horizonGameweeks: 5,
+        horizonGameweeks: 5, calibration: [],
       },
       priorityFixPlan: {
         moves: [

@@ -191,8 +191,7 @@ export const modelWeightsSchema = z.strictObject({
      * which is the older behaviour and still the honest answer when there is nothing better to
      * say.
      */
-    positionBaselineRates: z.record(
-      z.string(),
+    positionBaselineRates: positionMap(
       z.strictObject({
         goals: z.number().min(0),
         assists: z.number().min(0),
@@ -304,6 +303,31 @@ export const modelWeightsSchema = z.strictObject({
     /** Net transfers this gameweek (in minus out) below which a top-N rank is not flagged at
      *  all - early season, or a quiet gameweek, produces a top 20 that is really just noise. */
     netTransfersFloor: nonNegativeInt,
+  }),
+  /**
+   * Correcting the model using its own measured error.
+   *
+   * The accuracy tables have always measured bias per position and nothing ever read it; this is
+   * what finally does. Deliberately conservative: one multiplicative factor per position, shrunk
+   * hard by sample size and clamped, so it can nudge a systematic lean out of the model but can
+   * never rewrite a projection. Set enabled to false to project exactly as if none of it existed.
+   */
+  calibration: z.strictObject({
+    enabled: z.boolean(),
+    /**
+     * Graded projections before a position's correction is half-trusted. Bias measured over a
+     * single gameweek is mostly that week's own variance - a striker drought and a defensive
+     * haul are not evidence that the model leans, they are evidence that football happened.
+     */
+    priorWeightPlayers: z.number().positive(),
+    /** Graded gameweeks below which no correction is applied at all. */
+    minGameweeks: positiveInt,
+    /**
+     * Hard bounds on the factor. A model that needs a 40% correction has a bug to be found, not
+     * a lean to be tuned out, and quietly applying one would hide it.
+     */
+    minFactor: z.number().positive(),
+    maxFactor: z.number().positive(),
   }),
 });
 
