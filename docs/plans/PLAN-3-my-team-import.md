@@ -1,3 +1,9 @@
+> **Executed.** Delivered in `2df6f5f` — "Use real selling prices and the true free-transfer count".
+>
+> Kept for the reasoning, not as outstanding work. Anything below written in the
+> present tense ("currently", "today", "does not exist yet") describes the codebase
+> *before* that commit. Executed as written. The endpoint shape came from the documented API rather than a live call, because this environment cannot reach fantasy.premierleague.com; a mismatch would surface as a Zod parse error on the first upload rather than as silently wrong prices.
+
 # PLAN 3 — Real selling prices and the true free-transfer count
 
 **Rank: 3 of 5.**

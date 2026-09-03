@@ -1,3 +1,9 @@
+> **Executed.** Delivered in `62f2e39` — "Learn from the model's own error, per position".
+>
+> Kept for the reasoning, not as outstanding work. Anything below written in the
+> present tense ("currently", "today", "does not exist yet") describes the codebase
+> *before* that commit. Executed as written. The plan's central warning - that the naive implementation fails by reverting rather than diverging - held up, and the xpts_uncalibrated column and its test are what prevent it.
+
 # PLAN 2 — Close the loop: learn from the model's own error
 
 **Rank: 2 of 5. Do this after Plan 1.**

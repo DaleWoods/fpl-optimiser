@@ -1,3 +1,9 @@
+> **Executed.** Delivered in `0c58c3a` — "Shrink the last-season anchor by its own sample size".
+>
+> Kept for the reasoning, not as outstanding work. Anything below written in the
+> present tense ("currently", "today", "does not exist yet") describes the codebase
+> *before* that commit. Executed as written. One test in the plan was wrong and was rewritten during execution: it compared a cameo scorer against an established one and expected them to separate, but they correctly converge, because a real 15-in-3000 season sits close to the ordinary-forward baseline the cameo shrinks toward. The mechanism is only visible comparing a player against himself with the shrinkage off.
+
 # PLAN 1 — Shrink the last-season anchor by its own sample size
 
 **Rank: 1 of 5. Do this first.**

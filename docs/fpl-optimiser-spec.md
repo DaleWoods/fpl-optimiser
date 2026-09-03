@@ -61,11 +61,16 @@ No tool can guarantee winning — FPL has irreducible variance. Success is defin
 - The app runs for Dale only (no multi-user auth needed).
 - Dale is comfortable with a TypeScript/Node stack (consistent with his other Claude Code builds).
 
-### Open decisions (Dale to confirm)
-- **D1 — Action mode:** Should the app only *recommend* moves (Dale executes manually on the FPL site), or also *execute* them via the FPL API after confirmation? Recommend-only is the safe MVP default.
-- **D2 — Interface:** Web dashboard, CLI, or a scheduled report (e.g. an email/summary each week before the deadline)? Default assumption: lightweight local web dashboard.
-- **D3 — News depth:** Is the FPL API's own availability data enough for MVP, or do we build external news scraping from day one? Default: API-only for MVP, external news as Phase 3.
-- **D4 — Risk appetite:** Should the optimiser favour safe "template" picks or chase differentials to gain rank on rivals? Default: expected-points-max with a tunable differential weighting.
+### Open decisions — all four resolved
+
+| # | Decision | Resolved as | Where it lives |
+|---|---|---|---|
+| **D1** | Action mode: recommend only, or execute transfers via the API? | **Recommend only.** An app that can spend your transfers and your money on a projection it might have got wrong is a different risk category from one that shows its working and lets you decide. Not revisited. | — |
+| **D2** | Interface: web, CLI, or scheduled report? | **Both web and CLI**, sharing one code path. The web report is deployed on Render and refreshes itself on a schedule; the CLI does everything the web does. Neither is a wrapper around the other — `src/report/recommend.ts` is the single source and both call it. | `src/report/cli.ts`, `src/report/server.ts` |
+| **D3** | News depth: API flags only, or external scraping? | **API flags, plus two structured substitutes.** Curated intel is a hand-maintained file with sources and dates, applied transparently and withheld on a price mismatch. Ownership acts as a proxy for the crowd's team-news reading. Neither is scraping, and both are visible in the output. | `src/model/intel.ts`, `minutes.ownershipPriorPivot` |
+| **D4** | Risk appetite: template or differential? | **Mostly maximise points, with a mild tiebreak toward rank.** `differential.weight` is 0.15, so the largest possible bonus is 0.15 xPts — enough to decide a genuinely close call, never enough to justify a meaningfully worse player. Set it to 0 for pure points maximisation. Separately, the *captaincy* now leans on the shape of the distribution rather than the mean, which is a different question from template-vs-differential. | `config/model.weights.json` → `differential`, `captain` |
+
+The original wording of each is preserved in git history.
 
 ---
 
@@ -249,9 +254,9 @@ Consistent with Dale's other Claude Code builds:
 
 ## 12. Build phases
 
-- **Phase 1 (MVP):** FPL API ingestion → storage → load Dale's squad → rules engine → heuristic xPts model → best XI + captain + single-transfer recommender → simple output.
-- **Phase 2:** ILP optimiser, multi-transfer + hit evaluation, chip advice, price-change tracking.
-- **Phase 3:** External news/predicted-lineup enrichment, multi-gameweek planning, mini-league / rival tracking, model tuning against actual results.
+- **Phase 1 (MVP):** FPL API ingestion → storage → load Dale's squad → rules engine → heuristic xPts model → best XI + captain + single-transfer recommender → simple output. — **done**
+- **Phase 2:** ILP optimiser, multi-transfer + hit evaluation, chip advice, price-change tracking. — **done**
+- **Phase 3:** External news/predicted-lineup enrichment, multi-gameweek planning, mini-league / rival tracking, model tuning against actual results. — **partly done.** Model tuning against actual results is built and automatic (`src/model/calibration.ts`). The other three were considered and deliberately not built; see "What's deliberately not built" in the README for the reasoning on each.
 
 ---
 
@@ -268,4 +273,7 @@ Consistent with Dale's other Claude Code builds:
 
 ---
 
-**Next step:** upload your FPL rules file so I can reconcile Section 7 (and add anything league-specific), then confirm the four open decisions (D1–D4) so the build has a clear target.
+**Status of this document.** It is the original specification, kept as the record of what was
+asked for. Section 7's rules were reconciled against the real FPL rules file and now live in
+`config/rules.json`, which is validated for self-consistency at load. D1-D4 are resolved above.
+For what actually got built and what deliberately did not, see the README.

@@ -4,29 +4,94 @@ Single-user Fantasy Premier League optimiser: ingests the official FPL API, appl
 league rules as hard constraints, projects expected points per player, and recommends a
 starting XI, captain, bench order and transfer — with a plain-English reason for each.
 
-Built to the requirements in `docs/fpl-optimiser-spec.md`. Phase 1 (MVP) only.
+Built to the requirements in [`docs/fpl-optimiser-spec.md`](docs/fpl-optimiser-spec.md). All
+three phases of that spec are now delivered except where noted under
+[What's deliberately not built](#whats-deliberately-not-built).
 
-## Status
+## Contents
 
-| Step | Area | State |
+- [What this is](#what-this-is) · [What's built](#whats-built) · [What's deliberately not built](#whats-deliberately-not-built) · [What's next](#whats-next)
+- [Requirements](#requirements) · [Commands](#commands) · [Configuration](#configuration) · [Deploying to Render](#deploying-to-render)
+- [Architecture](#architecture) — module map, data flow, the invariants that must hold
+- [Importing real data by hand](#importing-real-data-by-hand) · [What to upload, and how often](#what-to-upload-and-how-often)
+- [Measuring the model](#measuring-the-model) · [Chip strategy](#chip-strategy) · [Moving to the next gameweek](#moving-to-the-next-gameweek)
+- [Where the evidence comes from](#where-the-evidence-comes-from) — **the reasoning behind every modelling decision**
+- [What the public API cannot tell us](#what-the-public-api-cannot-tell-us)
+
+## What this is
+
+A single-user tool that answers one question each week: **given the squad I actually own, what
+should I field, who should I captain, and is a transfer worth it?**
+
+Two things shape every decision in it:
+
+1. **Nothing is a black box.** Every number in a projection is a named component in a breakdown,
+   every constant lives in a config file rather than in code, and every recommendation carries a
+   plain-English reason. If the app tells you to captain someone, you can find out why and
+   disagree with it on the evidence.
+2. **It is graded against reality.** Projections are stored before the deadline and compared with
+   what actually happened afterwards, and the model corrects itself from that comparison. A model
+   that is never scored is a model nobody should trust. (The correction needs three graded
+   gameweeks under the current `modelVersion` before it does anything, and bumping that version
+   deliberately resets it — so after any scoring change it is dormant for a few weeks. The
+   Accuracy page says which state it is in.)
+
+## What's built
+
+| Area | Where |
+|---|---|
+| Config loading, strict validation, self-consistent rules file | `src/config` |
+| SQLite storage, migrations | `src/db` |
+| FPL API client — throttled, cached, replayable | `src/api` |
+| Ingestion, snapshots, change detection | `src/ingest` |
+| Availability classification from status and news | `src/domain/availability.ts` |
+| Rules engine as hard constraints | `src/rules/validate.ts` |
+| Expected-points model | `src/model/xpts.ts`, `build.ts` |
+| ILP optimiser: best XI, best squad, captain, bench order | `src/optimise/squad.ts` |
+| Single-transfer recommender, with hits costed | `src/report/recommend.ts` |
+| Multi-transfer squad rebuild | `src/optimise/squad.ts` |
+| Priority-fix plan: every dead slot fixed at once, hits netted off | `src/report/recommend.ts` |
+| Multi-gameweek horizon for transfers and captaincy | `src/model/horizon.ts` |
+| Chip strategy — Wildcard, Free Hit, Bench Boost, Triple Captain | `src/optimise/chips.ts` |
+| Last-season stats, curated intel, elite ownership | `src/model/intel.ts`, `src/ingest/elite.ts` |
+| File import: saved API JSON, season CSV, per-gameweek CSV, my-team | `src/ingest/import.ts` |
+| Real selling prices and true free-transfer count | `src/ingest/import.ts` (`importMyTeam`) |
+| Accuracy tracking: projected vs actual, auto-subs replayed | `src/model/accuracy.ts` |
+| **Self-calibration from measured error** | `src/model/calibration.ts` |
+| **Score distribution: ceiling, haul chance, blank risk** | `src/model/distribution.ts` |
+| Web report, CLI, Render blueprint | `src/report` |
+| Reset scopes | `src/ingest/reset.ts` |
+| CI gate before deploy | `.github/workflows/ci.yml` |
+
+523 tests. `npm run ci` runs the typecheck, the suite and a production build.
+
+## What's deliberately not built
+
+These are decisions, not gaps. Each was considered and rejected for a stated reason.
+
+| Not built | Why |
+|---|---|
+| Executing transfers on the FPL site | Spec decision D1. This recommends; you act. An app that can spend your money and your transfers on a projection it might have got wrong is a different risk category. |
+| Per-player calibration | Nowhere near enough sample per player. It would be fitting noise and calling it learning. |
+| Automatic retuning of `model.weights.json` | Those numbers are the model's *structure*. They should change deliberately, with a version bump and a commit explaining the reasoning — not drift on their own. |
+| Multi-gameweek transfer planning (banking a free transfer for a bigger move) | A genuinely hard planning problem where a confident wrong answer is costly. The horizon informs single transfers instead, and a timing *note* states the trade-off without pretending to resolve it. |
+| News scraping beyond the API's flags | Spec D3, deferred. Ownership is used as a proxy for the crowd's team-news reading, which is honest about what it is. |
+| Predicting exact price changes | FPL's algorithm is unpublished. Net transfers are surfaced as an informational flag, never as an xPts adjustment. |
+| Mini-league rival tracking | Out of scope for now. Elite ownership covers the "what does the field own" question at a coarser grain. |
+
+## What's next
+
+No open GitHub issues; this is the working backlog, roughly in leverage order.
+
+| Next | Why it matters | Notes |
 |---|---|---|
-| 1 | Project scaffold, config loading + validation | done |
-| 2 | SQLite storage and migrations | done |
-| 3 | FPL API client (throttled, cached, replayable) | done |
-| 4 | Ingestion into storage + change detection | done |
-| 4b | CLI, report page and Render blueprint | done |
-| 5 | Availability classification | done |
-| 6 | Rules engine (hard constraints) | done |
-| 7 | Expected-points model | done |
-| 8 | ILP optimiser: best XI, best squad, captain, bench | done |
-| 9 | Single-transfer recommender | done |
-| 10 | CLI + web report | done |
-| 11 | Last-season stats, curated intel, elite ownership, justifications | done |
-| 12 | File import: saved API JSON and season CSV, CLI + web upload | done |
-| 13 | Chip strategy: when to play Wildcard, Free Hit, Bench Boost, Triple Captain | done |
-| 14 | Reset scopes, no-cache headers on dynamic pages | done |
-| 15 | Tabbed UI with FPL-inspired styling, per-slot import screen | done |
-| 16 | Per-gameweek stats CSV, and accuracy tracking against real results | done |
+| **Let calibration accumulate** | The correction needs three graded gameweeks under the *current* `modelVersion` before it does anything. Nothing to build — it just needs football to happen. | Watch the "What the model has learned" table on the Accuracy page. |
+| Fetch actuals from `event/{gw}/live/` | Actual points currently need ~700 throttled `element-summary` calls after each gameweek. The live endpoint returns the same thing in one request. `cacheTtlSeconds.live` already exists in config and nothing uses it. | Medium effort. Would make the calibration loop's input faster and more reliable. |
+| Surface `byConfidence` on the Accuracy page | `evaluateGameweek` computes error per confidence tier and nothing renders it. Would show whether the confidence labels mean anything. | Small. |
+| Calibrate the minutes model separately from the points model | Would separate "we were wrong about whether he plays" from "we were wrong about what he does when he plays" — different fixes. | Do it after the points calibration has a few gameweeks behind it, or you cannot tell which one helped. |
+| Correlate goals and assists in the distribution | Currently independent, which slightly understates the top tail. Affects every candidate the same way, so it does not change rankings much. | Low priority, documented as a known approximation. |
+
+Executed plans, kept for the reasoning rather than as pending work, are in [`docs/plans/`](docs/plans/).
 
 ## Requirements
 
@@ -64,6 +129,97 @@ npm run fpl -- help
 
 `ingest --replay <dir>` reads recorded API payloads from a directory instead of calling the
 FPL API — useful offline, and for reproducing a past recommendation exactly.
+
+## Architecture
+
+### Layers
+
+Nine directories, each with one job, and dependencies that only ever point downward. Nothing in
+`model` knows the API exists; nothing in `optimise` knows about HTTP; nothing in `report` reaches
+into SQL that `ingest` owns.
+
+```
+config/   Load and validate rules + weights. Strict: an unknown key is a typo and fails the load.
+   ↓
+api/      Talk to FPL. Throttled, cached, replayable. Zod schemas at the boundary.
+   ↓
+ingest/   API and files → SQLite. Snapshots, change detection, one run record per ingestion.
+   ↓
+db/       SQLite, migrations. Applied by filename, recorded, never re-run.
+   ↓
+domain/   Types shared everywhere. Availability and free-transfer rules — pure logic, no I/O.
+   ↓
+model/    Stored rows → a projected player. xPts, its breakdown, its distribution, its accuracy.
+   ↓
+rules/    The hard constraints, as a gate. Nothing is returned without passing them.
+   ↓
+optimise/ ILP: best XI, best squad, captain, bench order, multi-transfer plans.
+   ↓
+report/   CLI, HTTP server, HTML. Assembles a recommendation and explains it.
+```
+
+### The path a recommendation takes
+
+```
+bootstrap-static ─┐
+fixtures ─────────┤
+element-summary ──┼→ ingest → SQLite ─→ buildProjections()
+entry / my-team ──┤                        │
+uploaded files ───┘                        │  per player:
+                                           │   projectMinutes()  → will he be on the pitch?
+                                           │   projectPlayer()   → xPts + named breakdown
+                                           │   scoreDistribution()→ ceiling, haul chance
+                                           │   applyCalibration()→ correct for measured error
+                                           ↓
+                            applyIntel() + elite ownership
+                                           ↓
+                          computeHorizon() — the next 5 gameweeks
+                                           ↓
+             selectBestEleven() / findTransfers() / buildPriorityFixPlan()
+                                           ↓
+                        validate.ts — hard gate, independently
+                                           ↓
+                       saveProjections() ──→ graded later by accuracy.ts
+                                           ↓                      │
+                                    the web page                  │
+                                                                  ↓
+                                             computeCalibration() feeds the next projection
+```
+
+That last arrow is the only cycle in the system, and it is deliberate: the model learns from
+being graded. It is also the part most easily got wrong — see
+[Learning from the model's own mistakes](#learning-from-the-models-own-mistakes).
+
+### Key invariants
+
+Break any of these and something downstream is quietly wrong rather than loudly broken.
+
+| Invariant | Why | Enforced by |
+|---|---|---|
+| Money is integer tenths of a million | Matches the API's own units. No floating-point money anywhere. £100.0m is `1000`. | Convention; `formatMoney` is the only place it becomes a string |
+| An unknown config key fails the load | A rules file where a typo silently does nothing is the one failure this app cannot afford | `z.strictObject` throughout `config/schema.ts` |
+| The rules file must be self-consistent | Position counts sum to squad size, formations fit, bench composition follows. A contradiction is caught at load, not in a recommendation | `validateRulesConsistency()` |
+| Nothing is returned without passing the rules engine | The solver is trusted to optimise, never to be correct | `assertLegalSquad` / `validateStartingEleven`, called on every path |
+| Positions are never hardcoded | `rules.json` declares the *rules* for a position; the live API declares which positions *exist*, and the two are reconciled each run | `reconcilePositions()` |
+| A rate is never trusted beyond its sample | Every per-90 is shrunk by the minutes behind it — and so is the anchor it shrinks toward | `shrinkRate`, `shrinkAnchorRate` |
+| `modelVersion` is bumped on any scoring change | Stored projections carry the version that made them; accuracy and calibration group by it | Manual, stated in `model.weights.json` |
+| Calibration is measured against *uncalibrated* projections | Measuring a working correction against its own corrected output reverts it | `projection.xpts_uncalibrated`, and a test |
+| Selling price applies to the player leaving, current price to the one arriving | Inverting it makes advice worse than the proxy it replaced | Separate calls in both transfer paths, plus a test |
+| `xPts` is what gets graded | Confidence, start risk and ceiling change *selection* only. Grading an adjusted number would make the model look wrong when it was not | `selectionValue()` is separate from `xPts` |
+
+### Testing approach
+
+523 tests. No network and no fixtures read from disk — every input is constructed in code, so
+there is no stale-recording problem. Three things worth knowing:
+
+- **`StubFplApi`** replays canned API responses through the same Zod schemas as the live client,
+  so a recording that no longer parses is a real signal rather than a stale fixture.
+- **The optimiser is checked against a brute-force oracle.** Choosing 11 from 15 is 1365
+  combinations, so `test/unit/optimise.test.ts` computes the exhaustively best XI directly and
+  checks the ILP against it — not against itself.
+- **Tests are written to fail before the fix.** Where a commit claims to fix something, the test
+  was verified to fail against the previous behaviour. A test that passes either way is not
+  testing the change.
 
 ## Importing real data by hand
 
@@ -790,14 +946,15 @@ player positions are always read from the API, never assumed.
 
 ## Design notes
 
-**Money is in tenths of a million**, as integers, matching the API's `now_cost` units. £100.0m
-is `1000`. No floating-point money anywhere.
+The invariants that hold this together are tabulated under
+[Architecture → Key invariants](#key-invariants). Two details that live nowhere else:
 
-**Config is strict.** An unrecognised key in a config file is treated as a typo and fails the
-load. A rules file where a mistake silently does nothing is the one failure mode this app
-cannot afford. Human notes go in `$comment` keys, which are stripped before validation.
+**Human notes go in `$comment` keys** in the config files, and are stripped before validation.
+That is what lets a strict schema and a heavily annotated config file coexist — every constant
+in `config/model.weights.json` carries the reasoning for its value next to it, and the loader
+still rejects a genuine typo.
 
-**The rules file validates against itself.** Position counts must sum to the squad size, the
-XI and bench must add up, formation minimums must fit and maximums must fill, the bench
-composition must follow from the squad and formation. A contradiction is caught at load time,
-not discovered in a recommendation.
+**Repository layout.** `src/` is the app and `test/unit` mirrors it. `config/` holds the three
+files that shape every decision (`rules.json`, `model.weights.json`, `intel.json`);
+`config/local.*.json` is gitignored for local overrides. `docs/` holds the original spec, the
+executed plans, and two sample API payloads kept as import fixtures.

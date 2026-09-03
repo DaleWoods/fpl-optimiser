@@ -1,3 +1,9 @@
+> **Executed.** Delivered in `894265b` — "Run the existing checks before a push reaches production".
+>
+> Kept for the reasoning, not as outstanding work. Anything below written in the
+> present tense ("currently", "today", "does not exist yet") describes the codebase
+> *before* that commit. Executed as written. The first run on GitHub passed all four steps. The Render "wait for CI before deploying" setting remains a manual follow-up, as the plan notes.
+
 # PLAN 4 — Stop broken code reaching production
 
 **Rank: 4 of 5.**

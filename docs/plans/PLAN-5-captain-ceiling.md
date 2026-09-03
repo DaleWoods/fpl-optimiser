@@ -1,3 +1,9 @@
+> **Executed.** Delivered in `e95f23d` — "Captaincy and Triple Captain on the distribution, not the mean".
+>
+> Kept for the reasoning, not as outstanding work. Anything below written in the
+> present tense ("currently", "today", "does not exist yet") describes the codebase
+> *before* that commit. Executed as written. The mean-reconciliation test caught a real bug on its first run: the expected counts handed over are already averaged over whether the player features, so enumerating a separate "did not play" outcome discounted the same thing twice. Fixed by converting the inputs to conditional-on-playing rather than by loosening the tolerance. The plan's page-timing criterion was also mis-read during execution - see the commit.
+
 # PLAN 5 — Captaincy and Triple Captain on the distribution, not the mean
 
 **Rank: 5 of 5.**
