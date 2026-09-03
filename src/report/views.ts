@@ -1086,14 +1086,14 @@ function renderCalibration(factors: readonly CalibrationFactor[]): string {
 
   const rows = factors
     .map((f) => {
-      const applied = f.factor === 1;
+      const uncorrected = f.factor === 1;
       return `<tr>
         <td><strong>${escapeHtml(f.position)}</strong></td>
         <td>${f.samplePlayers}</td>
         <td style="color:${Math.abs(f.observedBias) < 0.25 ? 'var(--ok)' : 'var(--warn-fg)'}">${
           f.observedBias > 0 ? 'ran high by ' : 'ran low by '
         }${Math.abs(f.observedBias).toFixed(2)}</td>
-        <td><strong>${applied ? '<span class="muted">none</span>' : `×${f.factor.toFixed(3)}`}</strong></td>
+        <td><strong>${uncorrected ? '<span class="muted">none</span>' : `×${f.factor.toFixed(3)}`}</strong></td>
       </tr>`;
     })
     .join('');
