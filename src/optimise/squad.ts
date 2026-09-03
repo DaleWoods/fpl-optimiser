@@ -50,6 +50,27 @@ function captainBonusFor(player: ProjectedPlayer, options: SelectionOptions): nu
   return options.captainConsistencyBonus?.get(player.playerId) ?? 0;
 }
 
+/**
+ * A small, bounded, upward-only nudge toward a captain with a higher ceiling.
+ *
+ * The captaincy doubles one player's score, which makes it the one slot where the shape of the
+ * distribution matters and not just its mean - two players projected at 9.0 are not the same bet
+ * when one has a real chance of fifteen and the other reliably returns 8-10.
+ *
+ * Deliberately shaped like the consistency bonus above it: additive, capped, never negative, so
+ * it can separate two candidates the expected-points term already rates as near-equal without
+ * ever overturning a clear difference between them. A ceiling is a reason to prefer one of two
+ * similar bets, never a reason to take a worse one.
+ *
+ * Driven by how much upside the player carries beyond his own mean, not by the raw ceiling. The
+ * raw ceiling correlates strongly with expected points, so using it directly would just be a
+ * second, noisier vote for what the first term already said.
+ */
+function captainCeilingBonusFor(player: ProjectedPlayer, weights: ModelWeights): number {
+  const excess = Math.max(0, (player.ceiling ?? 0) - player.xPts);
+  return Math.min(weights.captain.maxCeilingBonus, excess * weights.captain.ceilingWeight);
+}
+
 function futureValueBonusFor(player: ProjectedPlayer, options: SelectionOptions): number {
   return options.futureValueBonus?.get(player.playerId) ?? 0;
 }
@@ -116,6 +137,29 @@ export function orderBench(
   return [...goalkeepers, ...outfield];
 }
 
+/**
+ * Rank vice-captain candidates by risk-adjusted value, with ceiling separating anyone within
+ * tiebreakEpsilon of each other.
+ *
+ * The previous version chained the ceiling comparison after `||`, which short-circuits only on
+ * exactly zero - and two independently computed floats essentially never are - so the ceiling
+ * term was unreachable and captain.ceilingWeight affected nothing at all, anywhere. An explicit
+ * epsilon is what "near-equal" was always meant to mean here.
+ *
+ * The vice deliberately leans on ceiling less than the captain does. The armband only falls to
+ * him when the captain does not play at all, which is an unlikely branch you would rather was
+ * safe than spectacular - so ceiling breaks a tie here but carries no weighted bonus.
+ */
+function compareViceCandidates(
+  a: ProjectedPlayer,
+  b: ProjectedPlayer,
+  weights: ModelWeights,
+): number {
+  const difference = selectionValue(b, weights) - selectionValue(a, weights);
+  if (Math.abs(difference) > weights.captain.tiebreakEpsilon) return difference;
+  return (b.ceiling ?? 0) - (a.ceiling ?? 0);
+}
+
 function buildEleven(
   starters: ProjectedPlayer[],
   bench: ProjectedPlayer[],
@@ -128,12 +172,7 @@ function buildEleven(
   // xPts edges out a safer starter's. Ceiling is used only as a tiebreak, per D4.
   const viceCaptain = starters
     .filter((player) => player.playerId !== captain.playerId)
-    .sort(
-      (a, b) =>
-        selectionValue(b, weights) - selectionValue(a, weights) ||
-        (b.breakdown.goals ?? 0) * weights.captain.ceilingWeight -
-          (a.breakdown.goals ?? 0) * weights.captain.ceilingWeight,
-    )[0];
+    .sort((a, b) => compareViceCandidates(a, b, weights))[0];
 
   if (!viceCaptain) {
     throw new InfeasibleError('Cannot choose a vice-captain: fewer than two players in the XI');
@@ -240,7 +279,8 @@ export async function selectBestEleven(
         variable: IS_CAPTAIN(player.playerId),
         coefficient:
           selectionValue(player, weights) * (rules.captain.multiplier - 1) +
-          captainBonusFor(player, options),
+          captainBonusFor(player, options) +
+          captainCeilingBonusFor(player, weights),
       })),
     ],
     constraints: [...elevenConstraints(selectable, rules), ...captaincyConstraints(selectable)],
@@ -388,7 +428,8 @@ export async function selectBestSquad(
         variable: IS_CAPTAIN(player.playerId),
         coefficient:
           selectionValue(player, weights) * (rules.captain.multiplier - 1) +
-          captainBonusFor(player, options),
+          captainBonusFor(player, options) +
+          captainCeilingBonusFor(player, weights),
       })),
     ],
     constraints: [
@@ -561,7 +602,8 @@ export async function selectBestTransferPlan(
         variable: IS_CAPTAIN(player.playerId),
         coefficient:
           selectionValue(player, weights) * (rules.captain.multiplier - 1) +
-          captainBonusFor(player, options),
+          captainBonusFor(player, options) +
+          captainCeilingBonusFor(player, weights),
       })),
       { variable: 'hits', coefficient: -options.hitCost },
     ],

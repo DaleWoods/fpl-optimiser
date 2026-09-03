@@ -259,7 +259,30 @@ export const modelWeightsSchema = z.strictObject({
     benchBoostRelief: probability,
   }),
   captain: z.strictObject({
+    /**
+     * How much a captain candidate's upside beyond his own mean is worth, per point of it.
+     * Applied to (ceiling - xPts), not to the raw ceiling: the raw ceiling correlates strongly
+     * with expected points, so using it directly would just be a second, noisier vote for what
+     * the expected-points term already said.
+     */
     ceilingWeight: z.number().min(0),
+    /** Hard cap on that nudge. A ceiling breaks a tie; it never justifies a worse captain. */
+    maxCeilingBonus: z.number().min(0),
+    /** Score at or above which a gameweek counts as a haul, for haulProbability. */
+    haulThreshold: z.number().positive(),
+    /**
+     * How close two vice-captain candidates' risk-adjusted values have to be before ceiling
+     * separates them. Previously this comparison sat behind a `||`, which short-circuits only on
+     * exactly zero - and two independently computed floats never are - so ceilingWeight was dead
+     * config that affected nothing anywhere. An explicit epsilon is what "near-equal" means.
+     */
+    tiebreakEpsilon: z.number().min(0),
+    /**
+     * Rank Triple Captain gameweeks by the captain's ceiling rather than his expected score. A
+     * chip you play once a season is not an expected-value bet: you want the week with the best
+     * chance of a haul, not the best average.
+     */
+    tripleCaptainUsesCeiling: z.boolean(),
   }),
   optimiser: z.strictObject({
     benchWeight: probability,

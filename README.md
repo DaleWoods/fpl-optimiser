@@ -573,6 +573,43 @@ holding a starting place week after week on a respectable-looking projection. Li
 confidence tiers, this only affects **which** players the solver picks; the xPts shown on the
 page, and the number graded on the Accuracy page, remain the undiscounted projection.
 
+### The captaincy is not an expected-value decision
+
+Expected points is the right basis for ten of the eleven slots, where errors average out across a
+season. It is the wrong basis for the one that scores **double**, and badly wrong for the Triple
+Captain chip, which trebles one pick **once a season**. Two players projected at 9.0 are not the
+same bet when one is a striker with a real chance of fifteen and the other is a midfielder who
+reliably returns eight to ten.
+
+So each player gets a **distribution**, not just a mean: goal and assist counts enumerated as
+Poissons around exactly the rates the points model already used, clean sheets as a coin flip,
+and everything else at its expected value. From that come a **ceiling** (the 90th percentile —
+a realistic good week, not a theoretical maximum), a **haul chance** (P of ten or more) and a
+**blank risk**. Enumerated rather than simulated, so regenerating the page gives the same numbers
+back rather than numbers that wobble.
+
+Two honest caveats. Goals and assists are treated as independent; in reality they are mildly
+positively correlated, so the top tail is slightly understated — equally, for every candidate,
+which is what matters when the figure is used to rank them against each other. And the mean of
+the distribution is asserted in a test to reconcile with the model's own projection, because a
+distribution describing a different player from the one being recommended would make every
+number derived from it decorative.
+
+The captaincy then gets a small, bounded, upward-only nudge toward the higher ceiling
+(`captain.ceilingWeight`, capped by `maxCeilingBonus`), applied to how much upside a player
+carries *beyond his own mean* rather than to the raw ceiling — the raw ceiling correlates so
+strongly with expected points that using it directly would just be a second, noisier vote for
+what the first term already said. It can separate two near-equal candidates; it can never
+justify captaining a materially worse player, and there is a test for each of those.
+
+Triple Captain is ranked on ceiling outright (`captain.tripleCaptainUsesCeiling`), and the chip
+advice reports **both** figures — "12.4 expected, 27.0 if it goes well, 31% chance of a
+double-figure haul" — because a reader shown only the ceiling would reasonably read it as a
+promise.
+
+None of this touches `xPts`, which remains what the Accuracy page grades. Ceiling informs *who
+gets the armband and when a chip is played*, nothing else.
+
 ### Rotation risk, from fixture congestion rather than a guessed list of European clubs
 
 A club playing again within `minutes.rotationRiskRestDaysThreshold` days (default 4) of its

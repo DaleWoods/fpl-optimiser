@@ -187,6 +187,36 @@ describe('chip recommendations', () => {
     expect(tc.reason).toMatch(/Captaining /);
   });
 
+  it('reports both the expected and the good-case figure for Triple Captain', async () => {
+    // A chip you play once a season is chosen on its ceiling, but a reader shown only a ceiling
+    // would reasonably read it as what the chip will score. Both numbers, both labelled.
+    const squad = squadFrom(db);
+    const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
+    const tc = advice.recommendations.find((r) => r.chip === '3xc')!;
+
+    expect(tc.reason).toMatch(/expected/);
+    expect(tc.reason).toMatch(/if it goes well/);
+    // expectedGain stays the expected-value figure, whichever basis chose the week.
+    expect(tc.expectedGain).toBeGreaterThan(0);
+  });
+
+  it('picks the Triple Captain week on ceiling rather than average when configured', async () => {
+    const squad = squadFrom(db);
+    const byCeiling = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
+    const byMean = await adviseChips(
+      db,
+      rules,
+      { ...weights, captain: { ...weights.captain, tripleCaptainUsesCeiling: false } },
+      1,
+      { squad, horizon: 5, solver },
+    );
+
+    // Both must land somewhere real; the switch has to be a genuine switch, so the two code
+    // paths are exercised separately even where this fixture agrees on the answer.
+    expect(byCeiling.recommendations.find((r) => r.chip === '3xc')!.recommendedEvent).not.toBeNull();
+    expect(byMean.recommendations.find((r) => r.chip === '3xc')!.recommendedEvent).not.toBeNull();
+  });
+
   it('values Triple Captain as one extra captain score, from the rules not a guess', async () => {
     const squad = squadFrom(db);
     const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });

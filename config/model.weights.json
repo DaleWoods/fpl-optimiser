@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.17.0",
+  "modelVersion": "heuristic-0.18.0",
 
   "availability": {
     "$comment": [
@@ -210,8 +210,25 @@
   },
 
   "captain": {
-    "$comment": "Tiebreak between near-equal captain candidates: reward ceiling, not just mean.",
-    "ceilingWeight": 0.1
+    "$comment": [
+      "The captain scores double and the Triple Captain chip trebles once a season, which makes",
+      "both the wrong decisions to take on an average alone. Two players projected at 9.0 are not",
+      "the same bet when one has a real chance of fifteen and the other reliably returns 8-10.",
+      "ceilingWeight 0.1 with maxCeilingBonus 0.6, applied to how much upside a player carries",
+      "beyond his own mean rather than to the raw ceiling - the raw ceiling correlates so strongly",
+      "with expected points that using it directly would just be a second, noisier vote for the",
+      "same thing. Capped deliberately: a ceiling breaks a tie between similar bets, it never",
+      "justifies taking a worse one.",
+      "tiebreakEpsilon is the vice-captain sort's definition of near-equal. That comparison used",
+      "to sit behind a || that short-circuits only on exactly zero, so ceilingWeight was dead",
+      "config affecting nothing at all.",
+      "haulThreshold 10: a double-figure return is what a captaincy is actually trying to catch."
+    ],
+    "ceilingWeight": 0.1,
+    "maxCeilingBonus": 0.6,
+    "haulThreshold": 10,
+    "tiebreakEpsilon": 0.35,
+    "tripleCaptainUsesCeiling": true
   },
 
   "optimiser": {

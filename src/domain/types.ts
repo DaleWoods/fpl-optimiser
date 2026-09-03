@@ -41,6 +41,14 @@ export interface ProjectedPlayer extends PlayerCandidate {
    */
   xPtsUncalibrated?: number;
   calibrationFactor?: number;
+  /**
+   * The shape of the score, not just its mean: a 90th-percentile good week and the chance of a
+   * haul. Used for captaincy and Triple Captain timing, where doubling or trebling one pick
+   * makes the distribution matter - never for xPts itself, which stays the thing the Accuracy
+   * page grades. Absent for a blank gameweek or a player with no modelled distribution.
+   */
+  ceiling?: number;
+  haulProbability?: number;
 }
 
 export interface Squad {

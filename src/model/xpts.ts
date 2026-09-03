@@ -89,6 +89,25 @@ export interface Projection {
   breakdown: Record<string, number>;
   confidence: 'high' | 'medium' | 'low';
   reasons: string[];
+  /**
+   * The parameters behind the mean, so the score *distribution* can be built without recomputing
+   * any of it. The points model only ever needs the expected value; captaincy needs the shape,
+   * and two implementations of the same quantity would drift apart. Absent on the blank and
+   * no-history paths, where there is no modelled distribution to speak of.
+   */
+  distributionInput?: {
+    /** Expected goal and assist counts for the gameweek - counts, not the points they are worth. */
+    expectedGoalCount: number;
+    expectedAssistCount: number;
+    /** Probability of a clean sheet actually being paid: needs 60 minutes on the pitch. */
+    cleanSheetProbability: number;
+    playProbability: number;
+    goalPoints: number;
+    assistPoints: number;
+    cleanSheetPoints: number;
+    /** Appearance, bonus, DefCon and conceding, at their expected values. */
+    fixedPoints: number;
+  };
 }
 
 /** Poisson probability of exactly k events given mean lambda. */
@@ -357,6 +376,12 @@ export function projectPlayer(
   let appearance = 0;
   let goals = 0;
   let assists = 0;
+  // The same quantities the points above are computed from, kept as counts for the
+  // distribution. Accumulated here rather than recovered by dividing the points back out,
+  // which would silently break the moment a scoring rule changed.
+  let expectedGoalCount = 0;
+  let expectedAssistCount = 0;
+  let cleanSheetPaidProbability = 0;
   let cleanSheets = 0;
   let conceding = 0;
   let saves = 0;
@@ -385,18 +410,19 @@ export function projectPlayer(
       Math.max(0, minutes.playProbability - minutes.sixtyPlusProbability) * scoring.appearance.anyMinutes;
 
     if (goalRate !== null) {
+      expectedGoalCount += goalRate * minutesShare * attackScale;
       goals += goalRate * minutesShare * attackScale * goalPoints;
     }
     if (assistRate !== null) {
+      expectedAssistCount += assistRate * minutesShare * attackScale;
       assists += assistRate * minutesShare * attackScale * scoring.assist;
     }
 
     if (cleanSheetPoints > 0) {
       // A clean sheet only pays if the player is on the pitch for 60 minutes.
-      cleanSheets +=
-        cleanSheetProbability(teamConceded, weights) *
-        cleanSheetPoints *
-        minutes.sixtyPlusProbability;
+      const paid = cleanSheetProbability(teamConceded, weights) * minutes.sixtyPlusProbability;
+      cleanSheetPaidProbability = Math.max(cleanSheetPaidProbability, paid);
+      cleanSheets += paid * cleanSheetPoints;
     }
 
     if (concedingApplies) {
@@ -505,6 +531,19 @@ export function projectPlayer(
     breakdown,
     confidence: assessConfidence(input, weights, minutes),
     reasons,
+    distributionInput: {
+      expectedGoalCount,
+      expectedAssistCount,
+      cleanSheetProbability: cleanSheetPaidProbability,
+      playProbability: minutes.playProbability,
+      goalPoints,
+      assistPoints: scoring.assist,
+      cleanSheetPoints,
+      // Everything that is not a goal, an assist or a clean sheet, at its expected value.
+      // These are either near-deterministic given minutes (appearance) or low-variance enough
+      // that enumerating them would add noise to the model rather than realism.
+      fixedPoints: appearance + conceding + saves + defcon + bonus,
+    },
   };
 }
 

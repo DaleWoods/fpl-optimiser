@@ -137,6 +137,14 @@ interface GameweekValue {
   shape: GameweekShape;
   benchBoostGain: number;
   tripleCaptainGain: number;
+  /**
+   * The same gain computed from the captain's ceiling rather than his expected score. A chip you
+   * play once a season is not an expected-value bet - you want the week with the best chance of
+   * a haul - but both figures are carried and both are reported, because a reader shown only the
+   * ceiling would reasonably read it as a promise.
+   */
+  tripleCaptainCeilingGain: number;
+  captainHaulProbability: number | null;
   freeHitGain: number;
   captainName: string | null;
 }
@@ -184,6 +192,8 @@ export async function adviseChips(
     const projections = buildProjections(db, shape.eventId, rules, weights);
     let benchBoostGain = 0;
     let tripleCaptainGain = 0;
+    let tripleCaptainCeilingGain = 0;
+    let captainHaulProbability: number | null = null;
     let freeHitGain = 0;
     let captainName: string | null = null;
 
@@ -200,10 +210,14 @@ export async function adviseChips(
           // Bench Boost: the bench simply scores as well.
           benchBoostGain = eleven.bench.reduce((total, player) => total + player.xPts, 0);
 
-          // Triple Captain: one further multiple of the captain's projection.
-          tripleCaptainGain =
-            eleven.captain.xPts *
-            (rules.captain.tripleCaptainMultiplier - rules.captain.multiplier);
+          // Triple Captain: one further multiple of the captain's score. Valued both ways -
+          // on his expected score, and on his ceiling, which is what a once-a-season chip is
+          // actually chasing.
+          const extraMultiple =
+            rules.captain.tripleCaptainMultiplier - rules.captain.multiplier;
+          tripleCaptainGain = eleven.captain.xPts * extraMultiple;
+          tripleCaptainCeilingGain = (eleven.captain.ceiling ?? eleven.captain.xPts) * extraMultiple;
+          captainHaulProbability = eleven.captain.haulProbability ?? null;
           captainName = eleven.captain.name;
 
           if (options.evaluateRebuilds) {
@@ -217,7 +231,15 @@ export async function adviseChips(
       }
     }
 
-    values.push({ shape, benchBoostGain, tripleCaptainGain, freeHitGain, captainName });
+    values.push({
+      shape,
+      benchBoostGain,
+      tripleCaptainGain,
+      tripleCaptainCeilingGain,
+      captainHaulProbability,
+      freeHitGain,
+      captainName,
+    });
   }
 
   const recommendations: ChipRecommendation[] = [];
@@ -251,8 +273,15 @@ export async function adviseChips(
       gainOf = (value) => value.benchBoostGain;
       ranked = bestBy(gainOf);
     } else if (effect?.captainMultiplier) {
+      // Ranked on the ceiling when configured, reported on the expected gain either way. Playing
+      // a once-a-season chip in the week with the highest average, rather than the week with the
+      // best chance of a haul, is optimising the wrong thing.
       gainOf = (value) => value.tripleCaptainGain;
-      ranked = bestBy(gainOf);
+      ranked = bestBy(
+        weights.captain.tripleCaptainUsesCeiling
+          ? (value) => value.tripleCaptainCeilingGain
+          : gainOf,
+      );
     } else if (effect?.unlimitedTransfers) {
       gainOf = (value) => value.freeHitGain;
       ranked = bestBy(gainOf);
@@ -299,9 +328,16 @@ export async function adviseChips(
     } else {
       recommendedEvent = best.shape.eventId;
       confident = true;
+      // Both figures, always, and labelled. The week is chosen on the ceiling, but a reader
+      // shown only a ceiling would reasonably read it as what the chip will score.
       const extras =
         effect?.captainMultiplier && best.captainName
-          ? ` Captaining ${best.captainName} that week.`
+          ? ` Captaining ${best.captainName} that week: ${gain.toFixed(1)} expected, ` +
+            `${best.tripleCaptainCeilingGain.toFixed(1)} if it goes well` +
+            (best.captainHaulProbability !== null
+              ? ` (${Math.round(best.captainHaulProbability * 100)}% chance of a double-figure haul)`
+              : '') +
+            '.'
           : '';
       reason =
         `GW${best.shape.eventId} is worth about ${gain.toFixed(1)} extra points: ` +

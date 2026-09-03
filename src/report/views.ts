@@ -466,7 +466,19 @@ export function renderRecommendation(rec: Recommendation): string {
   </div>
 
   <p style="margin-top:1rem">Captain <strong>${escapeHtml(rec.eleven.captain.name)}</strong>,
-     vice <strong>${escapeHtml(rec.eleven.viceCaptain.name)}</strong>.</p>
+     vice <strong>${escapeHtml(rec.eleven.viceCaptain.name)}</strong>.${
+       rec.eleven.captain.ceiling !== undefined
+         ? ` <span class="muted">${escapeHtml(rec.eleven.captain.name)} projects
+            ${rec.eleven.captain.xPts.toFixed(1)} with a good week around
+            ${rec.eleven.captain.ceiling.toFixed(1)}${
+              rec.eleven.captain.haulProbability !== undefined
+                ? `, and a ${Math.round(rec.eleven.captain.haulProbability * 100)}% chance of a
+                   double-figure haul`
+                : ''
+            } &mdash; the armband doubles one score, so the shape of it matters, not just the
+            average.</span>`
+         : ''
+     }</p>
 
   ${
     rec.previousComparison

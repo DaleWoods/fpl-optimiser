@@ -506,3 +506,59 @@ describe('best transfer plan (whole-squad rebuild within budget)', () => {
     expect(plan.transfersOut).toEqual([]);
   });
 });
+
+describe('captaincy on the shape of the score, not just its mean', () => {
+  /**
+   * Two candidates the expected-points term rates as near-equal, one carrying far more upside
+   * beyond his own mean. Everyone else is well below both so the only live question is which of
+   * the two gets the armband.
+   */
+  const twoCandidates = (steadyXPts: number, explosiveXPts: number): ProjectedPlayer[] =>
+    legalSquad((index) => {
+      if (index === 10) return { xPts: steadyXPts, ceiling: steadyXPts + 0.5, name: 'Steady' };
+      if (index === 11) return { xPts: explosiveXPts, ceiling: explosiveXPts + 9, name: 'Explosive' };
+      return { xPts: 3 };
+    });
+
+  it('prefers the higher-ceiling captain between two near-equal candidates', () => {
+    // The captain doubles, so the shape matters and not just the average. Note this is decided
+    // inside the ILP objective, not by the vice-captain sort in buildEleven - a change made in
+    // the wrong place here looks like it did nothing.
+    return selectBestEleven(twoCandidates(8.0, 7.9), rules, weights, solver).then((eleven) => {
+      expect(eleven.captain.name).toBe('Explosive');
+    });
+  });
+
+  it('does not let ceiling overturn a clear difference in expected points', () => {
+    // maxCeilingBonus exists for exactly this. A ceiling breaks a tie between similar bets; it
+    // never justifies captaining a materially worse player.
+    return selectBestEleven(twoCandidates(10.0, 7.9), rules, weights, solver).then((eleven) => {
+      expect(eleven.captain.name).toBe('Steady');
+    });
+  });
+
+  it('separates two near-equal vice-captains by ceiling', () => {
+    // The buildEleven path. This comparison used to sit behind a `||` that short-circuits only
+    // on exactly zero, so it never ran and captain.ceilingWeight was dead config.
+    const squad = legalSquad((index) => {
+      if (index === 9) return { xPts: 20, name: 'Captain' };
+      if (index === 10) return { xPts: 8.0, ceiling: 8.2, name: 'Steady' };
+      if (index === 11) return { xPts: 7.95, ceiling: 18, name: 'Explosive' };
+      return { xPts: 3 };
+    });
+
+    return selectBestEleven(squad, rules, weights, solver).then((eleven) => {
+      expect(eleven.captain.name).toBe('Captain');
+      expect(eleven.viceCaptain.name).toBe('Explosive');
+    });
+  });
+
+  it('ignores ceiling entirely when its weight is zero', () => {
+    // The switch has to be real: a knob that cannot be turned off cannot be checked. Before this
+    // change ceilingWeight was already inert, which is precisely the bug.
+    const off = { ...weights, captain: { ...weights.captain, ceilingWeight: 0, maxCeilingBonus: 0 } };
+    return selectBestEleven(twoCandidates(8.0, 7.9), rules, off, solver).then((eleven) => {
+      expect(eleven.captain.name).toBe('Steady');
+    });
+  });
+});

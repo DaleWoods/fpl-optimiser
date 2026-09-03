@@ -3,6 +3,7 @@ import type { ModelWeights, Rules } from '../config/schema.js';
 import { classifyAvailability } from '../domain/availability.js';
 import type { ProjectedPlayer } from '../domain/types.js';
 import { loadCalibration } from './calibration.js';
+import { scoreDistribution } from './distribution.js';
 import { recentFixturesByPlayer, sumRecent, type RecentFixtureRow } from './recentForm.js';
 import { computeLeagueTable } from './table.js';
 import { projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
@@ -541,6 +542,11 @@ export function buildProjections(
 
     const projection = projectPlayer(input, weights, rules);
 
+    // The shape of the score alongside its mean. Computed once, here, rather than inside the
+    // optimiser: selectBestEleven is re-solved once per candidate transfer, which is hundreds of
+    // solves, and recomputing distributions inside that loop would turn a fast page into a slow one.
+    const distribution = scoreDistribution(projection, weights);
+
     const priceTrend = priceTrends.get(row.playerId);
     const reasons =
       priceTrend === 'rising'
@@ -576,6 +582,8 @@ export function buildProjections(
         isHome: fixture.isHome,
         difficulty: fixture.difficulty,
       })),
+      ceiling: distribution?.ceiling,
+      haulProbability: distribution?.haulProbability,
     });
   }
 

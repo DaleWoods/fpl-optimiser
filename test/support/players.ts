@@ -17,6 +17,8 @@ export interface PlayerOverrides {
   chance?: number | null;
   confidence?: 'high' | 'medium' | 'low';
   expectedMinutes?: number;
+  ceiling?: number;
+  haulProbability?: number;
 }
 
 /** Build a projected player for optimiser and rules tests. */
@@ -44,6 +46,8 @@ export function player(overrides: PlayerOverrides = {}): ProjectedPlayer {
     xPtsRaw: xPts,
     breakdown: {},
     expectedMinutes: overrides.expectedMinutes ?? 80,
+    ceiling: overrides.ceiling,
+    haulProbability: overrides.haulProbability,
     confidence: overrides.confidence ?? 'high',
     reasons: [],
     fixtures: [{ opponentShort: 'OPP', isHome: true, difficulty: 3 }],
