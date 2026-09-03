@@ -24,6 +24,7 @@ import {
   fakeEntry,
   fakeEvent,
   fakeFixture,
+  fakeMyTeam,
   fakePicks,
   type FakePlayerSpec,
 } from '../support/fakeApi.js';
@@ -859,6 +860,94 @@ describe('recommendation with a squad loaded', () => {
       rules,
     );
   }
+
+  /** Import a my-team file for the currently-loaded 15, with chosen selling prices. */
+  async function importSellingPrices(
+    playerIds: number[],
+    sellingPrices: Record<number, number>,
+    options: { freeTransfers?: number | null } = {},
+  ): Promise<void> {
+    await importPayload(
+      db,
+      rules,
+      JSON.stringify(
+        fakeMyTeam(playerIds, {
+          sellingPrices,
+          defaultSellingPrice: 45,
+          freeTransfers: options.freeTransfers ?? 1,
+        }),
+      ),
+      { teamId },
+    );
+  }
+
+  it('will not suggest a transfer the real selling price cannot fund', async () => {
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 0);
+
+    // With no my-team file the engine falls back to current price, which is what it has always
+    // done. Establish what it suggests on that basis first, so the second half is a comparison
+    // and not just an assertion that some list happened to be empty.
+    const onProxy = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(onProxy.transfers.length).toBeGreaterThan(0);
+    expect(onProxy.notes.join(' ')).toMatch(/current price as a proxy/);
+
+    // Now say every one of those players would really sell for almost nothing. Nothing the
+    // engine wanted to buy is affordable any more.
+    const priced = Object.fromEntries(fifteen.map((id) => [id, 40]));
+    await importSellingPrices(fifteen, priced);
+
+    const onRealPrices = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(onRealPrices.notes.join(' ')).toMatch(/real selling prices/);
+    for (const transfer of onRealPrices.transfers) {
+      // Whatever survives must be fundable from the real proceeds, not the current price.
+      expect(transfer.in.price).toBeLessThanOrEqual(40 + (onRealPrices.bankRemaining ?? 0) + 1);
+    }
+    expect(onRealPrices.transfers.length).toBeLessThan(onProxy.transfers.length);
+  });
+
+  it('sells at the selling price and buys at the current price, never the reverse', async () => {
+    // The single easiest thing to invert, and inverting it makes the advice worse than the proxy
+    // it replaced. Giving one player a selling price far above his current price must widen what
+    // he can be swapped for, not narrow it.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 0);
+
+    const generous = Object.fromEntries(fifteen.map((id) => [id, 45]));
+    generous[fifteen[0]!] = 140;
+    await importSellingPrices(fifteen, generous);
+    const rich = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    const stingy = Object.fromEntries(fifteen.map((id) => [id, 45]));
+    await importSellingPrices(fifteen, stingy);
+    const poor = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    const bestFor = (rec: typeof rich, playerId: number) =>
+      Math.max(0, ...rec.transfers.filter((t) => t.out.playerId === playerId).map((t) => t.in.price));
+
+    expect(bestFor(rich, fifteen[0]!)).toBeGreaterThanOrEqual(bestFor(poor, fifteen[0]!));
+  });
+
+  it('keeps using imported selling prices after a later refresh that has none', async () => {
+    // The automatic refresh writes a fresh manager_state on every run with no prices on it. If
+    // only the newest state were read, an imported price would apply for exactly as long as it
+    // took the next background refresh to run - which is to say, almost never.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 0);
+    await importSellingPrices(fifteen, Object.fromEntries(fifteen.map((id) => [id, 40])));
+
+    const beforeRefresh = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(beforeRefresh.notes.join(' ')).toMatch(/real selling prices/);
+
+    // A background refresh: same squad, new state row, no selling prices on it.
+    await loadSquad(fifteen, 0);
+
+    const afterRefresh = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(afterRefresh.notes.join(' ')).toMatch(/real selling prices/);
+    expect(afterRefresh.transfers.map((t) => t.in.playerId).sort()).toEqual(
+      beforeRefresh.transfers.map((t) => t.in.playerId).sort(),
+    );
+  });
 
   it('is null when nothing in the squad is broken', async () => {
     await loadSquad(pickLegalFifteen(db));

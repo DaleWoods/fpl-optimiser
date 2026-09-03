@@ -527,6 +527,10 @@ function loadOwnedSquad(
   bank: number | null;
   unresolved: UnresolvedPick[];
   asOfEventId: number | null;
+  /** What each owned player would really sell for. Empty when none has ever been imported. */
+  sellingPrices: Map<number, number>;
+  /** 'api' only when every owned player has one - a half-known squad cannot be reasoned about. */
+  priceSource: 'api' | 'unknown';
 } | null {
   // The latest manager_state row with at least one squad_pick - not just the latest row full
   // stop. ingestEntry() writes a manager_state snapshot on every refresh even when that
@@ -548,8 +552,11 @@ function loadOwnedSquad(
   if (!state) return null;
 
   const picks = db
-    .prepare('SELECT player_id AS playerId FROM squad_pick WHERE manager_state_id = ? ORDER BY slot')
-    .all(state.id) as { playerId: number }[];
+    .prepare(
+      `SELECT player_id AS playerId, selling_price AS sellingPrice
+       FROM squad_pick WHERE manager_state_id = ? ORDER BY slot`,
+    )
+    .all(state.id) as { playerId: number; sellingPrice: number | null }[];
 
   if (picks.length === 0) return null;
 
@@ -575,7 +582,54 @@ function loadOwnedSquad(
   // of - counts as "no squad loaded".
   if (squad.length === 0) return null;
 
-  return { squad, bank: state.bank, unresolved, asOfEventId: state.eventId };
+  const sellingPrices = sellingPricesFor(db, teamId, state.id, picks);
+  const priceSource =
+    squad.length > 0 && squad.every((player) => sellingPrices.has(player.playerId))
+      ? ('api' as const)
+      : ('unknown' as const);
+
+  return { squad, bank: state.bank, unresolved, asOfEventId: state.eventId, sellingPrices, priceSource };
+}
+
+/**
+ * Real selling prices for the current squad, carried forward from the last import that had them.
+ *
+ * Selling prices only ever arrive by hand, from a my-team file. The automatic refresh writes a
+ * fresh manager_state on every run with no prices on it, so reading only the latest state would
+ * mean an imported price applied for exactly as long as it took the next background refresh to
+ * run - which is to say, almost never. Prices only change when you transfer, so the last import
+ * that knew a player's price still knows it as long as you still own him.
+ */
+function sellingPricesFor(
+  db: Database,
+  teamId: number,
+  stateId: number,
+  picks: readonly { playerId: number; sellingPrice: number | null }[],
+): Map<number, number> {
+  const prices = new Map<number, number>();
+  for (const pick of picks) {
+    if (pick.sellingPrice !== null) prices.set(pick.playerId, pick.sellingPrice);
+  }
+  if (prices.size === picks.length) return prices;
+
+  const carried = db
+    .prepare(
+      `SELECT sp.player_id AS playerId, sp.selling_price AS sellingPrice
+       FROM squad_pick sp
+       JOIN manager_state ms ON ms.id = sp.manager_state_id
+       WHERE ms.entry_id = ? AND ms.id != ? AND sp.selling_price IS NOT NULL
+       ORDER BY ms.captured_at DESC`,
+    )
+    .all(teamId, stateId) as { playerId: number; sellingPrice: number }[];
+
+  const owned = new Set(picks.map((pick) => pick.playerId));
+  for (const row of carried) {
+    // Ordered newest first, so the first price seen for a player is the freshest one known.
+    if (owned.has(row.playerId) && !prices.has(row.playerId)) {
+      prices.set(row.playerId, row.sellingPrice);
+    }
+  }
+  return prices;
 }
 
 /**
@@ -642,6 +696,13 @@ async function findTransfers(
     candidatesPerPosition: number;
     horizon: Horizon;
     captainConsistencyBonus: Map<number, number>;
+    /**
+     * What selling this player really frees up. FPL pays purchase price plus half of any rise,
+     * so for anyone who has gone up the current price overstates it - which is how a suggested
+     * transfer turns out to be one you cannot afford. Falls back to current price when no
+     * my-team file has ever been imported.
+     */
+    sellingPrice: (player: ProjectedPlayer) => number;
   },
 ): Promise<{ options: TransferOption[]; unresolvedPriority: ProjectedPlayer[] }> {
   const selectionOptions = { captainConsistencyBonus: options.captainConsistencyBonus };
@@ -677,8 +738,9 @@ async function findTransfers(
 
   for (const out of squad) {
     const candidates = byPosition.get(out.position) ?? [];
-    // Selling price is unknown from the public API, so current price is used as a proxy.
-    const budgetForReplacement = options.bank + out.price;
+    // Sell at the selling price, buy at the current price. Inverting these makes the advice
+    // worse than the proxy it replaced, so they are deliberately separate calls.
+    const budgetForReplacement = options.bank + options.sellingPrice(out);
 
     for (const incoming of candidates) {
       if (incoming.price > budgetForReplacement) continue;
@@ -790,6 +852,8 @@ async function buildPriorityFixPlan(
     horizon: Horizon;
     captainConsistencyBonus: Map<number, number>;
     elevenBefore: StartingEleven;
+    /** See findTransfers: what selling this player really frees up. */
+    sellingPrice: (player: ProjectedPlayer) => number;
   },
 ): Promise<PriorityFixPlan | null> {
   const threshold = weights.transfers.priorityFixXPtsThreshold;
@@ -811,7 +875,7 @@ async function buildPriorityFixPlan(
   const unresolved: ProjectedPlayer[] = [];
 
   for (const out of deadSlots) {
-    const budget = bank + out.price;
+    const budget = bank + options.sellingPrice(out);
     const candidates = pool
       .filter(
         (player) =>
@@ -839,7 +903,8 @@ async function buildPriorityFixPlan(
     }
 
     current = current.map((player) => (player.playerId === out.playerId ? chosen! : player));
-    bank = bank + out.price - chosen.price;
+    // Sold at his selling price, replacement bought at his current price - never the reverse.
+    bank = bank + options.sellingPrice(out) - chosen.price;
     owned.delete(out.playerId);
     owned.add(chosen.playerId);
     clubCounts.set(out.clubId, (clubCounts.get(out.clubId) ?? 1) - 1);
@@ -1150,10 +1215,24 @@ export async function recommend(
   if (owned.bank === null) {
     notes.push('Bank balance is unknown, so transfer suggestions assume nothing spare is available.');
   }
-  notes.push(
-    'Selling prices are not published by the FPL API, so transfer affordability uses current ' +
-      'price as a proxy. Check the real selling price on the FPL site before acting.',
-  );
+  // What a player really sells for, when a my-team file has supplied it. FPL pays purchase price
+  // plus half of any rise, so current price overstates it for anyone who has gone up - and a
+  // transfer costed on the overstatement is one you cannot actually make.
+  const sellingPrice = (player: ProjectedPlayer): number =>
+    owned.sellingPrices.get(player.playerId) ?? player.price;
+
+  if (owned.priceSource === 'api') {
+    notes.push(
+      'Transfer affordability uses your real selling prices, imported from a my-team file - ' +
+        'what FPL would actually pay you, not what the player currently costs.',
+    );
+  } else {
+    notes.push(
+      'Selling prices are not published by the public FPL API, so transfer affordability uses ' +
+        'current price as a proxy. That overstates what selling a player who has risen frees ' +
+        'up. Upload a my-team file on the Import Data tab for the real figures.',
+    );
+  }
 
   const freeTransfers =
     (db
@@ -1174,6 +1253,7 @@ export async function recommend(
       candidatesPerPosition: options.transferCandidates ?? 12,
       horizon,
       captainConsistencyBonus,
+      sellingPrice,
     },
   );
 
@@ -1220,6 +1300,7 @@ export async function recommend(
     horizon,
     captainConsistencyBonus,
     elevenBefore: eleven,
+    sellingPrice,
   });
 
   if (priorityFixPlan) {

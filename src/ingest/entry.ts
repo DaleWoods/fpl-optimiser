@@ -15,7 +15,7 @@ export interface EntryIngestResult {
   picksEvent: number | null;
   picksLoaded: boolean;
   freeTransfers: number | null;
-  freeTransfersSource: 'derived' | 'manual' | 'unknown';
+  freeTransfersSource: 'api' | 'derived' | 'manual' | 'unknown';
   notes: string[];
 }
 

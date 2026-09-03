@@ -13,6 +13,7 @@ import {
   fakeEntry,
   fakeEvent,
   fakeFixture,
+  fakeMyTeam,
   fakePicks,
 } from '../support/fakeApi.js';
 
@@ -214,6 +215,94 @@ describe('importing saved API files', () => {
   it('refuses a file it cannot identify rather than importing nonsense', async () => {
     await expect(importPayload(db, rules, '{"unexpected":true}', { sourceLabel: 'mystery.json' }))
       .rejects.toThrow(/Could not tell what kind of file/);
+  });
+});
+
+describe('importing a my-team file', () => {
+  let db: Database;
+  const teamId = 2651633;
+  const fifteen = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await importPayload(db, rules, JSON.stringify(fakeBootstrap()));
+  });
+
+  it('detects a my-team payload, and does not mistake it for a picks file', () => {
+    // Both carry a `picks` array. Only my-team's entries carry selling_price, and the whole
+    // point of importing one is those prices - detecting it as a picks file would discard them
+    // and look like a successful import.
+    expect(detectPayloadKind(JSON.stringify(fakeMyTeam(fifteen)))).toBe('my-team');
+    expect(detectPayloadKind(JSON.stringify(fakePicks(fifteen)))).toBe('picks');
+  });
+
+  it('records the real selling price for every pick', async () => {
+    const summary = await importPayload(
+      db,
+      rules,
+      JSON.stringify(fakeMyTeam(fifteen, { sellingPrices: { 13: 128, 8: 71 } })),
+      { teamId },
+    );
+
+    expect(summary.kind).toBe('my-team');
+    const rows = db
+      .prepare(
+        `SELECT player_id AS id, selling_price AS selling, price_source AS source
+         FROM squad_pick ORDER BY player_id`,
+      )
+      .all() as { id: number; selling: number; source: string }[];
+
+    expect(rows).toHaveLength(15);
+    expect(rows.every((row) => row.source === 'api')).toBe(true);
+    expect(rows.find((row) => row.id === 13)!.selling).toBe(128);
+    expect(rows.find((row) => row.id === 8)!.selling).toBe(71);
+  });
+
+  it('takes the free transfer count from the file rather than deriving it', async () => {
+    await importPayload(db, rules, JSON.stringify(fakeMyTeam(fifteen, { freeTransfers: 2 })), {
+      teamId,
+    });
+
+    const state = db
+      .prepare(
+        `SELECT free_transfers AS ft, free_transfers_source AS source
+         FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
+      )
+      .get(teamId) as { ft: number; source: string };
+
+    expect(state.ft).toBe(2);
+    expect(state.source).toBe('api');
+  });
+
+  it('falls back to the derived count when the file states no limit', async () => {
+    // limit is null during a wildcard, where the concept does not apply. Recording a zero would
+    // look like a real constraint and stop every transfer being suggested.
+    const summary = await importPayload(
+      db,
+      rules,
+      JSON.stringify(fakeMyTeam(fifteen, { freeTransfers: null })),
+      { teamId },
+    );
+
+    const state = db
+      .prepare(
+        `SELECT free_transfers AS ft, free_transfers_source AS source
+         FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1`,
+      )
+      .get(teamId) as { ft: number | null; source: string };
+
+    expect(state.ft).toBeNull();
+    expect(state.source).toBe('unknown');
+    expect(summary.warnings.join(' ')).toMatch(/wildcard/);
+  });
+
+  it('refuses to import without a team ID, and says why', async () => {
+    await expect(
+      importPayload(db, rules, JSON.stringify(fakeMyTeam(fifteen))),
+    ).rejects.toThrow(/teamId/);
+
+    const rows = db.prepare('SELECT COUNT(*) AS n FROM squad_pick').get() as { n: number };
+    expect(rows.n).toBe(0);
   });
 });
 

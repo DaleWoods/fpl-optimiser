@@ -629,9 +629,26 @@ says what it assumed:
 
 | Value | Why it is missing | What we do |
 |---|---|---|
-| Free transfers | Only on the authenticated `my-team` endpoint | Derived from transfer history under the rollover rules, with the workings kept and any drift from the hits the API actually charged flagged as a caveat |
-| Purchase / selling price | Not public at all | Left null with `price_source = 'unknown'`; the transfer engine declines to reason about budget rather than invent one |
+| Free transfers | Only on the authenticated `my-team` endpoint | Derived from transfer history under the rollover rules, with the workings kept and any drift from the hits the API actually charged flagged as a caveat — or taken exactly, from an imported `my-team` file |
+| Purchase / selling price | Not public at all | Current price as a proxy, said so in the notes — or the real figure, from an imported `my-team` file |
 | Live bank balance | Public API gives the value as at the last deadline | Used as stated, labelled as such |
+
+The first two now have a route, though a manual one. `https://fantasy.premierleague.com/api/my-team/<your team id>/` returns
+both, and it is the one FPL endpoint that needs you to be logged in — so it is a file you save
+from the browser and upload on the Import Data tab, exactly like the others there. It is
+deliberately **not** wired into the automatic refresh: without a session cookie every scheduled
+attempt would 401 and put a permanent error on the dashboard for no gain.
+
+Why it is worth the upload: FPL sells a player for what you paid plus **half** of any rise. For
+anyone who has gone up, current price overstates what selling them frees up — so a transfer
+costed on it can be one you cannot actually make. The engine sells at the selling price and buys
+at the current price, and the two are deliberately separate calls in the code, because inverting
+them would make the advice worse than the proxy it replaced.
+
+Prices only change when you transfer, so an imported file keeps applying: the automatic refresh
+writes a new squad snapshot every run with no prices on it, and the last snapshot that knew a
+player's price is used for as long as you still own him. Otherwise an import would last exactly
+until the next background refresh, which is to say almost no time at all.
 
 Before the season's first deadline there is no squad to load at all — the picks endpoint has
 nothing to return. That is handled as an expected state, not an error: manager state is still

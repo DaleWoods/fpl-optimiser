@@ -114,6 +114,26 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
     acceptAttr: '.json',
     runSources: ['import:picks', 'import:entry', 'import:entry-history', 'entry'],
   },
+  {
+    id: 'my-team-prices',
+    title: 'Your real selling prices and free transfers',
+    cadence: 'When you make transfers',
+    cadenceTone: 'occasional',
+    what:
+      'Two numbers the public API does not publish, and which this app otherwise has to infer. ' +
+      'FPL sells a player for what you paid plus half of any rise, so for anyone who has gone ' +
+      'up in price the current price overstates what selling them frees up - which is how a ' +
+      'suggested transfer turns out to be one you cannot actually afford. This file has the ' +
+      'real figure for each of your 15, and the true free-transfer count that the hit ' +
+      'arithmetic depends on. You must be logged in to fantasy.premierleague.com in the same ' +
+      'browser for the link to return anything; it cannot be fetched automatically for exactly ' +
+      'that reason. Re-upload whenever you make a transfer - prices only change when you do.',
+    source: `${FPL}/my-team/2651633/`,
+    sourceLabel: 'my-team',
+    accepts: ['my-team'],
+    acceptAttr: '.json',
+    runSources: ['import:my-team'],
+  },
 ];
 
 /** Attach "last imported" to each slot, so the screen shows what is already in. */

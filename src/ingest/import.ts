@@ -5,6 +5,7 @@ import {
   entryHistorySchema,
   entrySchema,
   fixturesSchema,
+  myTeamSchema,
   picksSchema,
 } from '../api/schemas.js';
 import { deriveFreeTransfers } from '../domain/freeTransfers.js';
@@ -38,6 +39,7 @@ export type PayloadKind =
   | 'picks'
   | 'entry'
   | 'entry-history'
+  | 'my-team'
   | 'season-csv'
   | 'unknown';
 
@@ -75,7 +77,14 @@ export function detectPayloadKind(text: string): PayloadKind {
   if (typeof parsed === 'object' && parsed !== null) {
     const record = parsed as Record<string, unknown>;
     if ('elements' in record && 'teams' in record && 'element_types' in record) return 'bootstrap';
-    if ('picks' in record) return 'picks';
+    // my-team before picks: both carry a `picks` array, but only my-team's entries carry a
+    // selling_price, which is the entire reason to import one. Testing picks first would swallow
+    // every my-team upload and silently discard the prices.
+    if (Array.isArray(record.picks)) {
+      const first = record.picks[0] as Record<string, unknown> | undefined;
+      if (first && 'selling_price' in first) return 'my-team';
+      return 'picks';
+    }
     // entry history has `current` (per-gameweek rows) and `chips`; a player summary has
     // `history`/`history_past`. Check the manager shape first, it is more specific.
     if ('current' in record && 'chips' in record) return 'entry-history';
@@ -117,6 +126,7 @@ export const KIND_LABELS: Record<PayloadKind, string> = {
   picks: 'a saved squad (picks)',
   entry: 'a manager summary',
   'entry-history': 'a manager history',
+  'my-team': 'your squad with real selling prices (my-team)',
   'season-csv': 'a season stats spreadsheet',
   unknown: 'an unrecognised file',
 };
@@ -235,6 +245,9 @@ export async function importPayload(
 
     case 'picks':
       return importPicks(db, rules, text, options);
+
+    case 'my-team':
+      return importMyTeam(db, rules, text, options);
 
     case 'entry':
       return withIngestRun(db, 'import:entry', async () => {
@@ -432,6 +445,137 @@ export function importPicks(
         `squad loaded for entry ${teamId}` +
         (eventId !== null ? `, gameweek ${eventId}` : '') +
         `: ${storable.length} players`,
+      warnings,
+    };
+  });
+}
+
+/**
+ * Import a saved my-team file: the squad, with real selling prices and the true free-transfer
+ * count.
+ *
+ * Two numbers this app otherwise has to guess. Selling price is what FPL would actually give you
+ * for a player - purchase price plus half of any rise - so for anyone who has gone up, the
+ * current price the transfer engine falls back on overstates what selling them frees up, and
+ * that is how a suggested transfer turns out to be one you cannot afford. Free transfers are
+ * currently derived from transfer history under the rollover rules, which is careful but is
+ * still inference, and it drives the hit arithmetic on every transfer shown.
+ *
+ * my-team needs the session cookie of a logged-in browser, so this is import-only and is
+ * deliberately never added to the API client or the automatic refresh - a scheduled ingest that
+ * always 401s would put a permanent error on the dashboard for no gain.
+ */
+export function importMyTeam(
+  db: Database,
+  rules: Rules,
+  text: string,
+  options: ImportOptions,
+): Promise<ImportSummary> {
+  return withIngestRun(db, 'import:my-team', async () => {
+    const parsed = myTeamSchema.parse(JSON.parse(text));
+    const teamId = options.teamId;
+
+    if (!teamId) {
+      throw new Error(
+        'A my-team file does not say which manager it belongs to. Set "teamId" in ' +
+          'config/app.json before importing one.',
+      );
+    }
+
+    const knownPlayers = new Set(
+      (db.prepare('SELECT id FROM player').all() as { id: number }[]).map((row) => row.id),
+    );
+    const storable = parsed.picks.filter((pick) => knownPlayers.has(pick.element));
+    const missing = parsed.picks.length - storable.length;
+
+    if (storable.length === 0) {
+      throw new Error(
+        'None of the players in this my-team file are in the database. Import bootstrap-static first.',
+      );
+    }
+
+    // my-team carries no gameweek of its own - it describes the squad as it stands right now.
+    // The current event is the honest label; failing that, whatever gameweek this entry was last
+    // recorded against.
+    const currentEvent = db.prepare('SELECT id FROM event WHERE is_current = 1').get() as
+      | { id: number }
+      | undefined;
+    const lastKnown = db
+      .prepare(
+        'SELECT event_id AS id FROM manager_state WHERE entry_id = ? AND event_id IS NOT NULL ' +
+          'ORDER BY captured_at DESC LIMIT 1',
+      )
+      .get(teamId) as { id: number } | undefined;
+    const eventId = currentEvent?.id ?? lastKnown?.id ?? null;
+
+    // limit is authoritative when present. It is null during a wildcard, where the concept does
+    // not apply - fall back rather than recording a zero that would look like a real constraint.
+    const freeTransfers = parsed.transfers.limit;
+
+    const write = db.transaction((): number => {
+      const info = db
+        .prepare(
+          `INSERT INTO manager_state (entry_id, captured_at, event_id, bank, team_value,
+                                      free_transfers, free_transfers_source,
+                                      chips_available_json, raw_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          teamId,
+          nowSeconds(),
+          eventId,
+          parsed.transfers.bank,
+          parsed.transfers.value,
+          freeTransfers,
+          freeTransfers === null ? 'unknown' : 'api',
+          JSON.stringify(rules.chips.available),
+          JSON.stringify({ source: 'my-team', transfersMade: parsed.transfers.made }),
+        );
+      const stateId = Number(info.lastInsertRowid);
+
+      const insert = db.prepare(
+        `INSERT INTO squad_pick (manager_state_id, player_id, slot, multiplier, is_captain,
+                                 is_vice_captain, purchase_price, selling_price, price_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'api')`,
+      );
+      for (const pick of storable) {
+        insert.run(
+          stateId,
+          pick.element,
+          pick.position,
+          pick.multiplier,
+          toSqliteBool(pick.is_captain),
+          toSqliteBool(pick.is_vice_captain),
+          pick.purchase_price,
+          pick.selling_price,
+        );
+      }
+      return stateId;
+    });
+
+    write();
+
+    const warnings: string[] = [];
+    if (missing > 0) {
+      warnings.push(
+        `${missing} pick(s) are not in the database and were skipped. Import a fresh ` +
+          'bootstrap-static, then re-import this file.',
+      );
+    }
+    if (freeTransfers === null) {
+      warnings.push(
+        'This file states no free-transfer limit, which is normal during a wildcard. The ' +
+          'derived count is still used.',
+      );
+    }
+
+    return {
+      kind: 'my-team' as const,
+      rowsWritten: storable.length,
+      fromCache: false,
+      detail:
+        `squad loaded for entry ${teamId} with real selling prices` +
+        (freeTransfers !== null ? `, ${freeTransfers} free transfer(s)` : ''),
       warnings,
     };
   });

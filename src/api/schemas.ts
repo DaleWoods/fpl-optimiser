@@ -297,6 +297,37 @@ export const picksSchema = z.looseObject({
     .optional(),
 });
 
+/**
+ * The authenticated my-team endpoint.
+ *
+ * Not reachable by the automatic refresh - it needs the session cookie of a logged-in browser -
+ * so it arrives only by hand through the import screen, the same way every other file this app
+ * cannot fetch for itself does. It is the only source of two numbers the app otherwise has to
+ * infer: what each player would actually sell for, and how many free transfers you really have.
+ */
+export const myTeamPickSchema = z.looseObject({
+  element: z.number().int(),
+  position: z.number().int(),
+  /** Tenths of a million. What FPL would actually give you for this player right now. */
+  selling_price: numeric(),
+  /** Tenths of a million. What you paid. */
+  purchase_price: numeric(),
+  multiplier: z.number().int(),
+  is_captain: boolish,
+  is_vice_captain: boolish,
+});
+
+export const myTeamSchema = z.looseObject({
+  picks: z.array(myTeamPickSchema),
+  transfers: z.looseObject({
+    /** The real free-transfer count. Null during a wildcard, where the concept does not apply. */
+    limit: numeric(),
+    made: numeric(),
+    bank: numeric(),
+    value: numeric(),
+  }),
+});
+
 export const entryHistorySchema = z.looseObject({
   current: z.array(
     z.looseObject({
@@ -335,5 +366,6 @@ export type ApiEntry = z.infer<typeof entrySchema>;
 export type ApiPicks = z.infer<typeof picksSchema>;
 export type ApiPick = z.infer<typeof pickSchema>;
 export type ApiEntryHistory = z.infer<typeof entryHistorySchema>;
+export type ApiMyTeam = z.infer<typeof myTeamSchema>;
 export type ApiPastSeason = z.infer<typeof pastSeasonSchema>;
 export type ApiLeagueStandings = z.infer<typeof leagueStandingsSchema>;

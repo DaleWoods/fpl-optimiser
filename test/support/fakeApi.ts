@@ -254,6 +254,44 @@ export function fakeEntry(teamId: number, overrides: Record<string, unknown> = {
   };
 }
 
+/**
+ * A my-team payload: the same 15, plus the two things only the authenticated endpoint knows.
+ * `sellingPrices` maps a player id to what he would really sell for; anyone not listed sells for
+ * `defaultSellingPrice`.
+ */
+export function fakeMyTeam(
+  playerIds: number[],
+  options: {
+    sellingPrices?: Record<number, number>;
+    defaultSellingPrice?: number;
+    freeTransfers?: number | null;
+    bank?: number;
+    value?: number;
+  } = {},
+) {
+  const fallback = options.defaultSellingPrice ?? 50;
+  return {
+    picks: playerIds.map((element, index) => {
+      const selling = options.sellingPrices?.[element] ?? fallback;
+      return {
+        element,
+        position: index + 1,
+        selling_price: selling,
+        purchase_price: selling,
+        multiplier: index === 0 ? 2 : index < 11 ? 1 : 0,
+        is_captain: index === 0,
+        is_vice_captain: index === 1,
+      };
+    }),
+    transfers: {
+      limit: options.freeTransfers === undefined ? 1 : options.freeTransfers,
+      made: 0,
+      bank: options.bank ?? 5,
+      value: options.value ?? 1000,
+    },
+  };
+}
+
 export function fakePicks(playerIds: number[], overrides: Record<string, unknown> = {}) {
   return {
     active_chip: null,

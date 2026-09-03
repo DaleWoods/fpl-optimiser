@@ -255,7 +255,7 @@ CREATE TABLE manager_state (
   -- Free transfers are not exposed by the public API; this is either derived from history or
   -- supplied manually. free_transfers_source records which, so advice can say how it knows.
   free_transfers         INTEGER,
-  free_transfers_source  TEXT,                  -- 'derived' | 'manual' | 'unknown'
+  free_transfers_source  TEXT,                  -- 'api' | 'derived' | 'manual' | 'unknown'
   chips_available_json   TEXT,
   chips_used_json        TEXT,
   raw_json               TEXT
