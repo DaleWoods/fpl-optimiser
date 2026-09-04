@@ -859,8 +859,19 @@ export function renderImport(slots: ImportSlot[]): string {
       <input type="file" id="file-${escapeHtml(slot.id)}" accept="${escapeHtml(slot.acceptAttr)}" multiple hidden>
       <p style="margin:.6rem 0 0">
         <button class="btn" data-choose="${escapeHtml(slot.id)}">Choose file</button>
+        <button class="btn ghost" data-paste="${escapeHtml(slot.id)}" style="margin-left:.4rem">Paste instead</button>
         <span class="muted" style="margin-left:.5rem;font-size:.88rem">or drop it on this card</span>
       </p>
+      <div id="paste-${escapeHtml(slot.id)}" hidden style="margin-top:.6rem">
+        <textarea id="text-${escapeHtml(slot.id)}" rows="6" spellcheck="false"
+          placeholder="Paste the JSON here, then press Import."
+          style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;
+                 padding:.6rem;border-radius:8px;border:1px solid var(--line);
+                 background:var(--bg);color:var(--fg)"></textarea>
+        <p style="margin:.4rem 0 0">
+          <button class="btn" data-paste-go="${escapeHtml(slot.id)}">Import pasted text</button>
+        </p>
+      </div>
       <div class="log" id="log-${escapeHtml(slot.id)}"></div>
     </div>`,
     )
@@ -879,6 +890,37 @@ function line(logEl, cls, html) {
   el.innerHTML = html;
   logEl.appendChild(el);
   return el;
+}
+
+/**
+ * Import text that did not come from a file.
+ *
+ * The my-team endpoint cannot be opened in the address bar - it wants a bearer token the browser
+ * does not send on a plain navigation - so the only way to get that file is to copy the response
+ * out of developer tools. That leaves you holding text on a clipboard, and requiring it be saved
+ * to disk first is a step for the app's convenience rather than yours.
+ */
+async function sendText(slotId, text, label) {
+  const logEl = document.getElementById('log-' + slotId);
+  const row = line(logEl, 'pending', 'Importing ' + esc(label) + '…');
+  try {
+    const res = await fetch('/import?slot=' + encodeURIComponent(slotId) +
+                            '&name=' + encodeURIComponent(label), {
+      method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: text,
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      row.className = 'result bad';
+      row.innerHTML = '<strong>' + esc(label) + '</strong><br>' + esc(body.error || res.statusText);
+      return;
+    }
+    row.className = 'result good';
+    row.innerHTML = '<strong>' + esc(label) + '</strong><br>' + esc(body.detail) +
+      (body.warnings || []).map((w) => '<div class="warn">! ' + esc(w) + '</div>').join('');
+  } catch (err) {
+    row.className = 'result bad';
+    row.innerHTML = '<strong>' + esc(label) + '</strong><br>' + esc(err.message);
+  }
 }
 
 async function send(slotId, files) {
@@ -915,6 +957,22 @@ for (const slotId of slots) {
   const card = document.querySelector('[data-slot="' + slotId + '"]');
   const input = document.getElementById('file-' + slotId);
   document.querySelector('[data-choose="' + slotId + '"]').onclick = () => input.click();
+  const pasteBtn = document.querySelector('[data-paste="' + slotId + '"]');
+  const pasteBox = document.getElementById('paste-' + slotId);
+  const textArea = document.getElementById('text-' + slotId);
+  if (pasteBtn && pasteBox && textArea) {
+    pasteBtn.onclick = () => {
+      pasteBox.hidden = !pasteBox.hidden;
+      if (!pasteBox.hidden) textArea.focus();
+    };
+    document.querySelector('[data-paste-go="' + slotId + '"]').onclick = () => {
+      const text = textArea.value.trim();
+      if (!text) return;
+      sendText(slotId, text, 'pasted text');
+      textArea.value = '';
+      pasteBox.hidden = true;
+    };
+  }
   input.onchange = () => send(slotId, input.files);
   card.addEventListener('dragover', (e) => { e.preventDefault(); card.classList.add('over'); });
   card.addEventListener('dragleave', () => card.classList.remove('over'));

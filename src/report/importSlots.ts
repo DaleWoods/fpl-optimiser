@@ -126,14 +126,17 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
       'true free-transfer count. Without this the app uses current price as a proxy and says so ' +
       'in the notes; the only cost is that a suggested transfer can turn out to be slightly ' +
       'beyond what selling really frees up. ' +
-      'Opening the link below usually returns "Authentication credentials were not provided" ' +
-      'even when you are logged in: this endpoint wants a bearer token, not just the session ' +
-      'cookie your browser sends. To get the file, open fantasy.premierleague.com, press F12 ' +
-      'for developer tools, go to the Network tab, then load the Transfers page - find the ' +
-      'my-team request in the list, right-click it and copy or save the response. That is the ' +
-      'file this slot wants. Re-upload whenever you make a transfer; prices only change then.',
+      'The link below will NOT work in the address bar, however logged in you are - it returns ' +
+      '"Authentication credentials were not provided" because this endpoint wants a bearer ' +
+      'token, and a browser only sends one from the site\'s own JavaScript, never on a plain ' +
+      'navigation. There is no setting that changes that. ' +
+      'The route that does work, about 30 seconds: open fantasy.premierleague.com and log in, ' +
+      'press F12, click the Network tab, type my-team in its filter box, then click Transfers ' +
+      'in the site\'s own menu. A my-team row appears - click it, open Response, select all and ' +
+      'copy. Then press "Paste instead" on this card and paste it in; no need to save a file. ' +
+      'Re-do it whenever you make a transfer, since that is the only time prices change.',
     source: `${FPL}/my-team/2651633/`,
-    sourceLabel: 'my-team (usually needs the developer-tools route above)',
+    sourceLabel: 'my-team (will not open directly - see above)',
     accepts: ['my-team'],
     acceptAttr: '.json',
     runSources: ['import:my-team'],

@@ -855,11 +855,22 @@ says what it assumed:
 The first two have a route, though a genuinely awkward one, and it is **optional** — the app
 works without it and says which basis it used.
 
-`https://fantasy.premierleague.com/api/my-team/<your team id>/` returns both. Opening that URL in
-a logged-in browser returns `{"detail": "Authentication credentials were not provided."}` — the
-endpoint wants a bearer token, not the session cookie the browser sends on a plain navigation.
-The working route is developer tools: open the site, F12 → Network, load the Transfers page, find
-the `my-team` request, and save its response. That file imports.
+`https://fantasy.premierleague.com/api/my-team/<your team id>/` returns both, but **opening that
+URL directly never works**, however logged in you are — it returns
+`{"detail": "Authentication credentials were not provided."}`. The endpoint wants a bearer token,
+and a browser only sends one from the site's own JavaScript, never on a plain navigation. No
+setting changes that.
+
+The route that does work:
+
+1. Open `fantasy.premierleague.com` and log in.
+2. Press **F12**, click the **Network** tab, type `my-team` in its filter box.
+3. Click **Transfers** in the site's own menu. A `my-team` row appears.
+4. Click it → **Response** → select all → copy.
+5. On the Import Data tab, press **Paste instead** on that card and paste it in.
+
+Every import slot takes pasted text as well as a file, for exactly this reason: the one thing
+you cannot download is the one thing you most need to paste.
 
 It is deliberately **not** wired into the automatic refresh, for the same reason: every scheduled
 attempt would 401 and leave a permanent error on the dashboard for no gain.

@@ -5,7 +5,13 @@ import { applyEnvOverrides, loadAppConfig, loadConfig, loadRules, ConfigError } 
 import { nowSeconds, openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestEntry } from '../../src/ingest/index.js';
 import { shouldPrimeOnBoot, startServer, type RunningServer } from '../../src/report/server.js';
-import { formatFixtures, renderAccuracy, renderDashboard, renderRecommendation } from '../../src/report/views.js';
+import {
+  formatFixtures,
+  renderAccuracy,
+  renderDashboard,
+  renderImport,
+  renderRecommendation,
+} from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
 import type { SeasonAccuracy } from '../../src/model/accuracy.js';
 import { player } from '../support/players.js';
@@ -751,6 +757,40 @@ describe('accuracy page', () => {
     const page = renderAccuracy({ gameweeks: [], overall: null, notes: ['Nothing to grade yet.'] }, null);
     expect(page).toMatch(/Nothing to grade yet\./);
     expect(page).not.toMatch(/We projected/);
+  });
+});
+
+describe('import page', () => {
+  const slot = (overrides: Record<string, unknown> = {}) => ({
+    id: 'my-team-prices',
+    title: 'Your real selling prices and free transfers',
+    cadence: 'When you make transfers',
+    cadenceTone: 'occasional' as const,
+    what: 'Two numbers the public API does not publish.',
+    source: 'https://fantasy.premierleague.com/api/my-team/1/',
+    sourceLabel: 'my-team',
+    accepts: ['my-team'],
+    acceptAttr: '.json',
+    lastImported: null,
+    lastImportedAgo: null,
+    ...overrides,
+  });
+
+  it('offers a paste box as well as a file picker', () => {
+    // The my-team response cannot be reached from the address bar - the endpoint wants a bearer
+    // token a plain navigation does not send - so the only way to get it is to copy it out of
+    // developer tools. That leaves you holding text, and making you save it to a file first is a
+    // step for the app's convenience rather than the reader's.
+    const page = renderImport([slot()] as never);
+    expect(page).toMatch(/data-paste="my-team-prices"/);
+    expect(page).toMatch(/<textarea id="text-my-team-prices"/);
+    expect(page).toMatch(/data-paste-go="my-team-prices"/);
+  });
+
+  it('posts pasted text to the same import endpoint as a file', () => {
+    const page = renderImport([slot()] as never);
+    expect(page).toMatch(/async function sendText\(/);
+    expect(page).toMatch(/slot=' \+ encodeURIComponent\(slotId\)/);
   });
 });
 
