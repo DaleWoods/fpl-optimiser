@@ -278,6 +278,20 @@ export const modelWeightsSchema = z.strictObject({
      * is exactly the previous behaviour.
      */
     futureDiscountPerGameweek: probability,
+    /**
+     * How far ahead of the next-best gameweek a chip has to score before the model claims it has
+     * actually found the right week.
+     *
+     * A chip is worth one play a season, and playing it on a week the model cannot separate from
+     * three others is throwing it away for nothing. Below this margin the advice says the weeks
+     * are indistinguishable and names the earliest of them - if they are all the same, the only
+     * thing left to prefer is the one you can actually see - rather than presenting an arbitrary
+     * pick as a finding.
+     *
+     * 0.75 points: comfortably inside the noise on a projection of this kind, and well below any
+     * gap a genuine standout week would open up.
+     */
+    indistinguishableMargin: z.number().min(0),
   }),
   captain: z.strictObject({
     /**

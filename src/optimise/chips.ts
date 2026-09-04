@@ -304,9 +304,13 @@ export async function adviseChips(
 
     let ranked: GameweekValue[];
     let gainOf: (value: GameweekValue) => number;
+    // The basis the weeks were ranked on, kept so "how far clear is the winner?" is measured the
+    // same way the winner was chosen, rather than on a different number.
+    let rankScore: (value: GameweekValue) => number;
 
     if (effect?.benchScores) {
       gainOf = (value) => value.benchBoostGain;
+      rankScore = gainOf;
       ranked = bestBy(gainOf);
     } else if (effect?.captainMultiplier) {
       // Expected gain, with upside as a *bounded* bonus - the same shape as the captain
@@ -322,11 +326,11 @@ export async function adviseChips(
       // good average - but as a nudge that separates near-equal weeks, never as the criterion
       // that overturns a clearly better one.
       gainOf = (value) => value.tripleCaptainGain;
-      ranked = bestBy((value) =>
-        value.tripleCaptainGain + tripleCaptainUpsideBonus(value, weights),
-      );
+      rankScore = (value) => value.tripleCaptainGain + tripleCaptainUpsideBonus(value, weights);
+      ranked = bestBy(rankScore);
     } else if (effect?.unlimitedTransfers) {
       gainOf = (value) => value.freeHitGain;
+      rankScore = gainOf;
       ranked = bestBy(gainOf);
     } else {
       continue;
@@ -401,6 +405,45 @@ export async function adviseChips(
       reason =
         `GW${best.shape.eventId} is worth about ${gain.toFixed(1)} extra points: ` +
         `${describeShape(best.shape)}.${extras}${waitingNote}`;
+
+      // Has it actually found a week, or just sorted four equal ones?
+      //
+      // A chip is worth one play a season. Playing it on a gameweek the model cannot separate
+      // from three others throws it away for nothing, and presenting an arbitrary pick from that
+      // set as a recommendation is the most misleading thing this page could do - it reads as a
+      // finding when it is a coin toss. So when the winner is not clear of the field, say so, and
+      // name the earliest of the tied weeks: if they really are all the same, the only thing left
+      // to prefer is the one you can actually see, where the fixture and the player are known
+      // rather than projected.
+      const bestScore = rankScore(best);
+      const tied = ranked.filter(
+        (value) => bestScore - rankScore(value) <= weights.chips.indistinguishableMargin,
+      );
+
+      if (tied.length > 1) {
+        const earliest = tied.reduce((a, b) => (a.shape.eventId <= b.shape.eventId ? a : b));
+        recommendedEvent = earliest.shape.eventId;
+        confident = false;
+        reason =
+          `No standout week. ${tied.length} gameweeks are within ` +
+          `${weights.chips.indistinguishableMargin} point(s) of each other ` +
+          `(${tied
+            .map((value) => `GW${value.shape.eventId}`)
+            .slice(0, 5)
+            .join(', ')}), so the model has not really found the right week for ${chipName} - it ` +
+          `has sorted a tie. A chip is worth one play a season and is wasted on a week that ` +
+          `cannot be told apart from the others.` +
+          (earliest.shape.eventId === best.shape.eventId
+            ? ` If you play it anyway, GW${earliest.shape.eventId} is the one to take: when the ` +
+              'weeks are level the only thing left to prefer is the one you can actually see, ' +
+              'where the fixture and the player are known rather than projected.'
+            : ` If you play it anyway, take GW${earliest.shape.eventId} rather than ` +
+              `GW${best.shape.eventId} - they score the same, and the earlier one is the one ` +
+              'you can actually see, with no chance to be injured, rotated or sold in between.') +
+          (effect?.captainMultiplier && earliest.captainName
+            ? ` That would be ${earliest.captainName}, ${gainOf(earliest).toFixed(1)} expected.`
+            : '');
+      }
     }
 
     let warning: string | null = null;

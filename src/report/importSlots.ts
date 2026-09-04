@@ -120,16 +120,20 @@ export const IMPORT_SLOTS: SlotDefinition[] = [
     cadence: 'When you make transfers',
     cadenceTone: 'occasional',
     what:
-      'Two numbers the public API does not publish, and which this app otherwise has to infer. ' +
-      'FPL sells a player for what you paid plus half of any rise, so for anyone who has gone ' +
-      'up in price the current price overstates what selling them frees up - which is how a ' +
-      'suggested transfer turns out to be one you cannot actually afford. This file has the ' +
-      'real figure for each of your 15, and the true free-transfer count that the hit ' +
-      'arithmetic depends on. You must be logged in to fantasy.premierleague.com in the same ' +
-      'browser for the link to return anything; it cannot be fetched automatically for exactly ' +
-      'that reason. Re-upload whenever you make a transfer - prices only change when you do.',
+      'Optional, and fiddly - the app works without it. Two numbers the public API does not ' +
+      'publish: what each of your players would really sell for (FPL pays what you paid plus ' +
+      'half of any rise, so current price overstates it for anyone who has gone up), and your ' +
+      'true free-transfer count. Without this the app uses current price as a proxy and says so ' +
+      'in the notes; the only cost is that a suggested transfer can turn out to be slightly ' +
+      'beyond what selling really frees up. ' +
+      'Opening the link below usually returns "Authentication credentials were not provided" ' +
+      'even when you are logged in: this endpoint wants a bearer token, not just the session ' +
+      'cookie your browser sends. To get the file, open fantasy.premierleague.com, press F12 ' +
+      'for developer tools, go to the Network tab, then load the Transfers page - find the ' +
+      'my-team request in the list, right-click it and copy or save the response. That is the ' +
+      'file this slot wants. Re-upload whenever you make a transfer; prices only change then.',
     source: `${FPL}/my-team/2651633/`,
-    sourceLabel: 'my-team',
+    sourceLabel: 'my-team (usually needs the developer-tools route above)',
     accepts: ['my-team'],
     acceptAttr: '.json',
     runSources: ['import:my-team'],

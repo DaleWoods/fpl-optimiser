@@ -852,11 +852,17 @@ says what it assumed:
 | Purchase / selling price | Not public at all | Current price as a proxy, said so in the notes — or the real figure, from an imported `my-team` file |
 | Live bank balance | Public API gives the value as at the last deadline | Used as stated, labelled as such |
 
-The first two now have a route, though a manual one. `https://fantasy.premierleague.com/api/my-team/<your team id>/` returns
-both, and it is the one FPL endpoint that needs you to be logged in — so it is a file you save
-from the browser and upload on the Import Data tab, exactly like the others there. It is
-deliberately **not** wired into the automatic refresh: without a session cookie every scheduled
-attempt would 401 and put a permanent error on the dashboard for no gain.
+The first two have a route, though a genuinely awkward one, and it is **optional** — the app
+works without it and says which basis it used.
+
+`https://fantasy.premierleague.com/api/my-team/<your team id>/` returns both. Opening that URL in
+a logged-in browser returns `{"detail": "Authentication credentials were not provided."}` — the
+endpoint wants a bearer token, not the session cookie the browser sends on a plain navigation.
+The working route is developer tools: open the site, F12 → Network, load the Transfers page, find
+the `my-team` request, and save its response. That file imports.
+
+It is deliberately **not** wired into the automatic refresh, for the same reason: every scheduled
+attempt would 401 and leave a permanent error on the dashboard for no gain.
 
 Why it is worth the upload: FPL sells a player for what you paid plus **half** of any rise. For
 anyone who has gone up, current price overstates what selling them frees up — so a transfer

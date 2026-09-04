@@ -288,6 +288,39 @@ describe('chip recommendations', () => {
     expect(off.recommendations.find((r) => r.chip === 'bboost')!.recommendedEvent).toBe(3);
   });
 
+  it('says when it has only sorted a tie, rather than presenting the winner as a finding', async () => {
+    // A run of ordinary gameweeks with no double and no standout fixture: the chip gains come out
+    // within noise of each other. Naming one of them confidently reads as a finding when it is a
+    // coin toss, and a chip is worth one play a season - wasting it on a week indistinguishable
+    // from three others is the most expensive kind of false precision this page could produce.
+    // GW1 and GW2 are identical in this season: everybody plays once, same opponents' strengths.
+    // A horizon of exactly those two therefore contains no week worth choosing over the other.
+    const squad = squadFrom(db);
+    const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 2, solver });
+    const tc = advice.recommendations.find((r) => r.chip === '3xc')!;
+
+    expect(tc.confident).toBe(false);
+    expect(tc.reason).toMatch(/No standout week/);
+    expect(tc.reason).toMatch(/GW1, GW2/);
+    // And it must still name the earliest, not refuse to answer.
+    expect(tc.recommendedEvent).toBe(1);
+  });
+
+  it('takes the earliest of a set of tied gameweeks, and says why', async () => {
+    // When the weeks really are level, the only thing left to prefer is the one you can see: the
+    // fixture and the player are known now and merely projected later, and a chip banked for a
+    // distant week can be lost to an injury, a rotation or a transfer in between.
+    const squad = squadFrom(db);
+    const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
+    const bb = advice.recommendations.find((r) => r.chip === 'bboost')!;
+
+    // GW3 is a genuine double here, so Bench Boost must stay a confident, specific call - the
+    // tie handling must not fire on a week that is actually clear of the field.
+    expect(bb.recommendedEvent).toBe(3);
+    expect(bb.confident).toBe(true);
+    expect(bb.reason).not.toMatch(/No standout week/);
+  });
+
   it('values Triple Captain as one extra captain score, from the rules not a guess', async () => {
     const squad = squadFrom(db);
     const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
