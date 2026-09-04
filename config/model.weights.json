@@ -5,7 +5,7 @@
     "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
     "you change these numbers, or past advice can no longer be explained."
   ],
-  "modelVersion": "heuristic-0.18.0",
+  "modelVersion": "heuristic-0.19.0",
 
   "availability": {
     "$comment": [
@@ -209,6 +209,23 @@
     "benchBoostRelief": 0.4
   },
 
+  "chips": {
+    "$comment": [
+      "futureDiscountPerGameweek: how much less a chip's value counts for in a future gameweek",
+      "than in this one, when deciding when to play it. Ranking purely on projected gain treats a",
+      "projection thirteen weeks out as exactly as trustworthy as one for this week, and it is",
+      "not: fixtures move, strength ratings drift, and the player may be injured, rotated, or no",
+      "longer in your squad. A banked chip is worth its projection multiplied by the chance the",
+      "plan survives that long.",
+      "This is not horizon.decay. That discounts future points because sooner is better; this",
+      "discounts future *claims* because distant ones are weaker evidence.",
+      "0.97: four weeks out keeps 89%, thirteen weeks keeps 67%. Gentle on purpose - it breaks a",
+      "near-tie toward acting on what you can see, and a genuinely better future week still wins.",
+      "Set to 1.0 to rank purely on gain, which is exactly the older behaviour."
+    ],
+    "futureDiscountPerGameweek": 0.97
+  },
+
   "captain": {
     "$comment": [
       "The captain scores double and the Triple Captain chip trebles once a season, which makes",
@@ -222,7 +239,13 @@
       "tiebreakEpsilon is the vice-captain sort's definition of near-equal. That comparison used",
       "to sit behind a || that short-circuits only on exactly zero, so ceilingWeight was dead",
       "config affecting nothing at all.",
-      "haulThreshold 10: a double-figure return is what a captaincy is actually trying to catch."
+      "haulThreshold 10: a double-figure return is what a captaincy is actually trying to catch.",
+      "tripleCaptainUsesCeiling applies that same bounded bonus to Triple Captain timing. It used",
+      "to rank gameweeks on the raw ceiling, which was wrong: a 90th percentile of a discrete",
+      "distribution saturates, so a double gameweek raised the captain's expected gain far more",
+      "than it raised his ceiling, and ranking on the ceiling discarded most of the reason a",
+      "double gameweek is the week you want. Same rule as the captaincy now - upside separates",
+      "near-equal weeks, it never overturns a clearly better one."
     ],
     "ceilingWeight": 0.1,
     "maxCeilingBonus": 0.6,

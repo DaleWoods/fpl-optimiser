@@ -258,6 +258,27 @@ export const modelWeightsSchema = z.strictObject({
      *  horizon - 0 leaves the bench discount untouched, 1 would treat bench like starters. */
     benchBoostRelief: probability,
   }),
+  chips: z.strictObject({
+    /**
+     * Per-gameweek discount on a chip's value in a *future* week, when deciding when to play it.
+     *
+     * A chip advisor that ranks purely on projected gain treats a projection thirteen weeks out
+     * as exactly as trustworthy as one for this week. It is not. The fixture may be rearranged,
+     * the opponent's strength rating will have moved, the player may be injured or out of the
+     * side, and you may not even own him by then - a banked chip is only worth its projection
+     * multiplied by the chance the whole plan survives to that week.
+     *
+     * This is a different thing from horizon.decay, which discounts future gameweeks for
+     * transfers because points now are worth more than points later. This one is about
+     * *confidence*, not timing: it says a distant projection is a weaker claim.
+     *
+     * 0.97 per gameweek: four weeks out keeps 89%, thirteen weeks out keeps 67%. Deliberately
+     * gentle - it breaks a near-tie in favour of acting on what you can actually see, and a
+     * genuinely better future week still wins. Set to 1.0 to rank purely on projected gain, which
+     * is exactly the previous behaviour.
+     */
+    futureDiscountPerGameweek: probability,
+  }),
   captain: z.strictObject({
     /**
      * How much a captain candidate's upside beyond his own mean is worth, per point of it.
@@ -278,9 +299,13 @@ export const modelWeightsSchema = z.strictObject({
      */
     tiebreakEpsilon: z.number().min(0),
     /**
-     * Rank Triple Captain gameweeks by the captain's ceiling rather than his expected score. A
-     * chip you play once a season is not an expected-value bet: you want the week with the best
-     * chance of a haul, not the best average.
+     * Include the same bounded upside bonus when timing the Triple Captain chip.
+     *
+     * This used to rank gameweeks by the raw ceiling, which was wrong and a failing
+     * double-gameweek test is what exposed it: the ceiling is a 90th percentile of a discrete
+     * distribution and saturates, so a double gameweek raised the captain's expected gain far
+     * more than it raised his ceiling. Ranking on it discarded most of the reason a double
+     * gameweek is the week a Triple Captain wants.
      */
     tripleCaptainUsesCeiling: z.boolean(),
   }),

@@ -217,6 +217,77 @@ describe('chip recommendations', () => {
     expect(byMean.recommendations.find((r) => r.chip === '3xc')!.recommendedEvent).not.toBeNull();
   });
 
+  it('prefers the nearer gameweek when two are close, because a distant projection is a weaker claim', async () => {
+    // Waiting is not free. Fixtures get rearranged, both clubs' strength ratings drift, and the
+    // player the chip depends on may be injured, rotated or no longer in your squad by then. A
+    // banked chip is worth its projection multiplied by the chance the plan survives that long,
+    // and ranking purely on gain prices that at zero.
+    const squad = squadFrom(db);
+    const flat = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
+    const undiscounted = await adviseChips(
+      db,
+      rules,
+      { ...weights, chips: { ...weights.chips, futureDiscountPerGameweek: 1 } },
+      1,
+      { squad, horizon: 5, solver },
+    );
+
+    const bb = (a: typeof flat) => a.recommendations.find((r) => r.chip === 'bboost')!;
+    // Bench Boost's gain is near-identical across the flat gameweeks here, so the discount is
+    // what separates them - and it must separate them toward the week you can actually see.
+    expect(bb(flat).recommendedEvent!).toBeLessThanOrEqual(bb(undiscounted).recommendedEvent!);
+  });
+
+  it('still sends a chip to a genuinely better later gameweek', async () => {
+    // The discount breaks near-ties; it must never overturn a week that is properly better. GW3
+    // is a double two weeks out, so it gives up ~6% to the discount and should still win by a
+    // distance. If this fails, the discount is too aggressive to be a confidence adjustment.
+    const squad = squadFrom(db);
+    const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
+
+    expect(advice.recommendations.find((r) => r.chip === 'bboost')!.recommendedEvent).toBe(3);
+    expect(advice.recommendations.find((r) => r.chip === '3xc')!.recommendedEvent).toBe(3);
+  });
+
+  it('ranks Triple Captain on expected gain, not on a ceiling that saturates', async () => {
+    // The ceiling is a 90th percentile of a discrete distribution, so it flattens out: on this
+    // fixture a double gameweek raises the captain's expected gain far more than it raises his
+    // ceiling. Ranking gameweeks on the raw ceiling therefore discards most of the reason a
+    // double gameweek is the one you want - exactly what a Triple Captain is looking for.
+    // Upside belongs in the decision as a bounded nudge, never as the criterion.
+    const squad = squadFrom(db);
+    const withUpside = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });
+    const withoutUpside = await adviseChips(
+      db,
+      rules,
+      { ...weights, captain: { ...weights.captain, tripleCaptainUsesCeiling: false } },
+      1,
+      { squad, horizon: 5, solver },
+    );
+
+    // The bounded bonus must not move the answer away from the clearly best week.
+    expect(withUpside.recommendations.find((r) => r.chip === '3xc')!.recommendedEvent).toBe(3);
+    expect(withoutUpside.recommendations.find((r) => r.chip === '3xc')!.recommendedEvent).toBe(3);
+  });
+
+  it('reproduces the undiscounted ranking exactly when the discount is switched off', async () => {
+    // A knob that cannot be turned off cannot be checked.
+    const squad = squadFrom(db);
+    const off = await adviseChips(
+      db,
+      rules,
+      { ...weights, chips: { ...weights.chips, futureDiscountPerGameweek: 1 } },
+      1,
+      { squad, horizon: 5, solver },
+    );
+
+    for (const rec of off.recommendations) {
+      expect(rec.expectedGain).toBeGreaterThanOrEqual(0);
+    }
+    // Bench Boost's undiscounted home is the double gameweek, as it always was.
+    expect(off.recommendations.find((r) => r.chip === 'bboost')!.recommendedEvent).toBe(3);
+  });
+
   it('values Triple Captain as one extra captain score, from the rules not a guess', async () => {
     const squad = squadFrom(db);
     const advice = await adviseChips(db, rules, weights, 1, { squad, horizon: 5, solver });

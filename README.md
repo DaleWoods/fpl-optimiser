@@ -758,10 +758,36 @@ strongly with expected points that using it directly would just be a second, noi
 what the first term already said. It can separate two near-equal candidates; it can never
 justify captaining a materially worse player, and there is a test for each of those.
 
-Triple Captain is ranked on ceiling outright (`captain.tripleCaptainUsesCeiling`), and the chip
-advice reports **both** figures — "12.4 expected, 27.0 if it goes well, 31% chance of a
+Triple Captain gets the same treatment — expected gain with a bounded upside bonus
+(`captain.tripleCaptainUsesCeiling`), not the ceiling outright. Ranking *gameweeks* on the raw
+ceiling was a mistake, caught by a failing double-gameweek test: the ceiling is a 90th percentile
+of a discrete distribution, so it saturates. On the test fixture a double gameweek raised the
+captain's expected gain by 93% and his ceiling by only 54%, so ranking on ceiling discarded most
+of the reason a double gameweek is the one you want. Upside is a nudge that separates near-equal
+weeks, never the criterion that overturns a clearly better one — the same rule as the captaincy.
+
+The chip advice reports **both** figures — "12.4 expected, 27.0 if it goes well, 31% chance of a
 double-figure haul" — because a reader shown only the ceiling would reasonably read it as a
 promise.
+
+### Waiting for a better gameweek is not free
+
+Chip timing used to rank purely on projected gain, which treats a projection thirteen weeks out
+as exactly as trustworthy as one for this week. It is not. The fixture may be rearranged, both
+clubs' strength ratings will have moved, and the player the chip hinges on may be injured,
+rotated or no longer in your squad. A banked chip is worth its projection multiplied by the
+chance the whole plan survives to that week.
+
+`chips.futureDiscountPerGameweek` (0.97) is that chance, crudely but honestly: four weeks out
+keeps 89%, thirteen weeks keeps 67%. It is deliberately gentle — it breaks a near-tie toward
+acting on what you can actually see, and a genuinely better future week still wins comfortably,
+which there is a test for. Set it to 1.0 to rank purely on gain, exactly as before.
+
+This is a different thing from `horizon.decay`, which discounts future gameweeks for transfers
+because points sooner are worth more than points later. This one is about *confidence*: a
+distant projection is a weaker claim. And when a later gameweek projects higher but loses on the
+discount, the advice says so outright rather than silently preferring the near one — that
+trade-off is the entire decision, and hiding it in a ranking would hide the reasoning.
 
 None of this touches `xPts`, which remains what the Accuracy page grades. Ceiling informs *who
 gets the armband and when a chip is played*, nothing else.

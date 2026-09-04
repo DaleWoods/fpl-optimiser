@@ -150,6 +150,20 @@ interface GameweekValue {
 }
 
 /**
+ * A small, capped bonus for a gameweek where the captain has real upside beyond his own mean.
+ *
+ * Deliberately identical in shape to captainCeilingBonusFor in the optimiser: driven by the
+ * excess of the ceiling over the expected value rather than by the raw ceiling, and clamped. The
+ * raw ceiling correlates strongly with the expected gain, so using it directly is a second,
+ * noisier vote for what the first term already said - and, because it saturates, a worse one.
+ */
+function tripleCaptainUpsideBonus(value: GameweekValue, weights: ModelWeights): number {
+  if (!weights.captain.tripleCaptainUsesCeiling) return 0;
+  const excess = Math.max(0, value.tripleCaptainCeilingGain - value.tripleCaptainGain);
+  return Math.min(weights.captain.maxCeilingBonus, excess * weights.captain.ceilingWeight);
+}
+
+/**
  * Recommend when to play each remaining chip.
  *
  * Every figure is an expected-points gain computed from the projections, not a rule of thumb.
@@ -245,8 +259,30 @@ export async function adviseChips(
   const recommendations: ChipRecommendation[] = [];
   const expiry = rules.chips.firstSetExpiresAfterGameweek;
 
+  /**
+   * How much of a chip's projected value in that gameweek is still a believable claim today.
+   *
+   * A chip advisor that ranks purely on projected gain treats a projection thirteen weeks out as
+   * exactly as trustworthy as one for this week. It is not: the fixture may be rearranged, both
+   * clubs' strength ratings will have moved, and the player it hinges on may be injured, rotated
+   * or no longer in your squad. A banked chip is worth its projection multiplied by the chance
+   * the whole plan survives to that week, and this is that chance, crudely but honestly.
+   *
+   * Distinct from horizon.decay, which discounts future gameweeks because points sooner are worth
+   * more than points later. This is about confidence in the projection, not the timing of points.
+   */
+  const survival = (eventId: number): number =>
+    weights.chips.futureDiscountPerGameweek ** Math.max(0, eventId - fromEvent);
+
+  /**
+   * Rank on the discounted value, but always report the undiscounted gain.
+   *
+   * Same rule as everywhere else in this app: a number shown to a reader is the model's actual
+   * projection, never one that has been adjusted for a decision and then presented as if it were
+   * the raw figure.
+   */
   const bestBy = (score: (value: GameweekValue) => number) =>
-    [...values].sort((a, b) => score(b) - score(a));
+    [...values].sort((a, b) => score(b) * survival(b.shape.eventId) - score(a) * survival(a.shape.eventId));
 
   const describeShape = (shape: GameweekShape): string => {
     const parts: string[] = [];
@@ -273,14 +309,21 @@ export async function adviseChips(
       gainOf = (value) => value.benchBoostGain;
       ranked = bestBy(gainOf);
     } else if (effect?.captainMultiplier) {
-      // Ranked on the ceiling when configured, reported on the expected gain either way. Playing
-      // a once-a-season chip in the week with the highest average, rather than the week with the
-      // best chance of a haul, is optimising the wrong thing.
+      // Expected gain, with upside as a *bounded* bonus - the same shape as the captain
+      // objective, and for the same reason.
+      //
+      // Ranking on the raw ceiling was wrong, and a failing double-gameweek test is what showed
+      // it. The ceiling is a 90th percentile of a discrete distribution, so it saturates: on the
+      // test fixture a double gameweek raised the captain's expected gain by 93% and his ceiling
+      // by only 54%. Ranking gameweeks on it therefore throws away most of the reason a double
+      // gameweek is the week you want, which is precisely what a Triple Captain is looking for.
+      //
+      // Upside still belongs in the decision - a chip played once a season wants a haul, not a
+      // good average - but as a nudge that separates near-equal weeks, never as the criterion
+      // that overturns a clearly better one.
       gainOf = (value) => value.tripleCaptainGain;
-      ranked = bestBy(
-        weights.captain.tripleCaptainUsesCeiling
-          ? (value) => value.tripleCaptainCeilingGain
-          : gainOf,
+      ranked = bestBy((value) =>
+        value.tripleCaptainGain + tripleCaptainUpsideBonus(value, weights),
       );
     } else if (effect?.unlimitedTransfers) {
       gainOf = (value) => value.freeHitGain;
@@ -339,9 +382,25 @@ export async function adviseChips(
               : '') +
             '.'
           : '';
+      // When a later gameweek projects higher but loses on the discount, say so outright. That
+      // is the whole decision - "wait for a better week" against "a distant projection is a
+      // weaker claim, and the player may not still be there" - and burying it in the ranking
+      // would hide the reasoning behind the advice.
+      const nominallyBetter = [...values]
+        .filter((value) => gainOf(value) > gain && value.shape.eventId > best.shape.eventId)
+        .sort((a, b) => gainOf(b) - gainOf(a))[0];
+      const waitingNote = nominallyBetter
+        ? ` GW${nominallyBetter.shape.eventId} projects higher on paper ` +
+          `(${gainOf(nominallyBetter).toFixed(1)}), but it is ` +
+          `${nominallyBetter.shape.eventId - best.shape.eventId} gameweek(s) further out, and a ` +
+          'projection that far ahead is a weaker claim - fixtures move, form moves, and the ' +
+          'player it depends on may be injured, rotated or sold by then. Acting on what you can ' +
+          'actually see wins here.'
+        : '';
+
       reason =
         `GW${best.shape.eventId} is worth about ${gain.toFixed(1)} extra points: ` +
-        `${describeShape(best.shape)}.${extras}`;
+        `${describeShape(best.shape)}.${extras}${waitingNote}`;
     }
 
     let warning: string | null = null;
