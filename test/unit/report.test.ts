@@ -860,6 +860,7 @@ describe('priority-fix team on My Team', () => {
       modelVersion: 'heuristic-0.15.0', generatedAt: 0,
       squad: [...starters, ...bench], eleven, totalCost: 1000, bankRemaining: 5,
       transfers: [], transferPlan: null, previousComparison: null, notes: [],
+      confirmedTransfers: [],
       playersConsidered: 640, lowConfidence: false,
       evidence: {
         intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
@@ -881,6 +882,51 @@ describe('priority-fix team on My Team', () => {
       },
     };
   }
+
+  it('offers a tick box against each suggested transfer', () => {
+    // FPL publishes your picks only for a gameweek that has already started, so for the whole
+    // week spent planning the app is looking at last week's team. Without a way to say what you
+    // actually did, every number on the page quietly assumes you still own players you sold.
+    const rec = recommendation({}) as Record<string, unknown>;
+    rec.transfers = [
+      {
+        out: { playerId: 101, name: 'Out Man', clubShort: 'EVE', xPts: 0.4, price: 45 },
+        in: { playerId: 202, name: 'In Man', clubShort: 'MCI', xPts: 5.1, price: 60 },
+        netGain: 4.7,
+        gainBeforeHit: 4.7,
+        horizonGain: 0,
+        hitCost: 0,
+        priority: false,
+        reason: 'because',
+      },
+    ];
+    const page = renderRecommendation(rec as never);
+
+    expect(page).toMatch(/data-done-out="101"/);
+    expect(page).toMatch(/data-done-in="202"/);
+    expect(page).toMatch(/I made this transfer/);
+  });
+
+  it('shows a transfer already ticked as done, and says it is applied', () => {
+    const rec = recommendation({}) as Record<string, unknown>;
+    rec.transfers = [
+      {
+        out: { playerId: 101, name: 'Out Man', clubShort: 'EVE', xPts: 0.4, price: 45 },
+        in: { playerId: 202, name: 'In Man', clubShort: 'MCI', xPts: 5.1, price: 60 },
+        netGain: 4.7,
+        gainBeforeHit: 4.7,
+        horizonGain: 0,
+        hitCost: 0,
+        priority: false,
+        reason: 'because',
+      },
+    ];
+    rec.confirmedTransfers = [{ eventId: 3, outPlayerId: 101, inPlayerId: 202 }];
+    const page = renderRecommendation(rec as never);
+
+    expect(page).toMatch(/data-done-out="101"[^>]*checked|checked[^>]*data-done-out="101"/);
+    expect(page).toMatch(/applied to your squad/);
+  });
 
   it('states the hit cost in plain points, not just a transfer count', () => {
     // The thing a list of transfer cards cannot tell you: each is costed as the only move of

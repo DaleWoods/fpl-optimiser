@@ -945,6 +945,32 @@ whole reason this section exists is that the transfer cards, read as a bundle, d
 
 This is an alternative to the single transfers, never something to do on top of them.
 
+### Telling the app what you actually did
+
+FPL publishes your picks only for a gameweek that has **already started**
+(`entry.current_event`). So from the moment one gameweek ends until the next kicks off — which is
+most of the week, and all of the time anyone spends planning — the app can only see last week's
+team. Every projection, transfer suggestion and hit calculation in that window silently assumes
+you still own players you may have sold days ago, and there is no way for it to find out.
+
+Each suggested transfer therefore carries a tick box. Ticking it records the move against the
+gameweek being planned and applies it on top of the last real squad, so everything below it is
+rebuilt on the team you actually have. Untick to undo.
+
+It is an **overlay, never a replacement**. The API is always the truth about a gameweek it can
+see, and a confirmed transfer is applied only when the outgoing player is still in the squad and
+the incoming one is not. That makes it idempotent by construction: once the gameweek starts and
+the real picks arrive already containing the new player, the swap no longer matches and is
+skipped rather than applied a second time. There is a test for exactly that sequence.
+
+A confirmation that cannot be applied — the incoming player is missing from the latest player
+data — is reported in the notes rather than dropped. A transfer that quietly did nothing would
+leave every number built on it wrong with no sign on the page that anything had gone astray.
+
+Substitutions deliberately have no tick box. The optimiser re-solves the XI from your fifteen
+every time, so which eleven you fielded last week does not change what it advises this week — and
+the "changed since gameweek N" comparison already reads your real picks once the gameweek starts.
+
 ### Timing a transfer: information, not a verdict
 
 The top suggested transfer (skipping a **Priority fix** - there is never a case for delaying a

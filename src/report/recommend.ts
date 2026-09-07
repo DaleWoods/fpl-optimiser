@@ -23,6 +23,11 @@ import {
   saveRecommendation,
   type StoredRecommendationDetail,
 } from '../model/accuracy.js';
+import {
+  applyConfirmedTransfers,
+  loadConfirmedTransfers,
+  type ConfirmedTransfer,
+} from '../model/confirmedTransfers.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
 import { selectBestEleven, selectBestSquad, selectBestTransferPlan } from '../optimise/squad.js';
@@ -277,6 +282,11 @@ export interface Recommendation {
    * squad has no dead slots, or when none of them has an affordable fix.
    */
   priorityFixPlan: PriorityFixPlan | null;
+  /**
+   * Transfers already ticked as done for this gameweek, so the page can show them ticked and
+   * the squad above already reflects them.
+   */
+  confirmedTransfers: ConfirmedTransfer[];
   /** What changed since the last recommendation, one gameweek back - null the first time. */
   previousComparison: RecommendationDiff | null;
   notes: string[];
@@ -523,6 +533,8 @@ function loadOwnedSquad(
   db: Database,
   teamId: number,
   projections: readonly ProjectedPlayer[],
+  /** The gameweek being advised on - confirmed transfers are recorded against it. */
+  forEventId?: number,
 ): {
   squad: ProjectedPlayer[];
   bank: number | null;
@@ -532,6 +544,9 @@ function loadOwnedSquad(
   sellingPrices: Map<number, number>;
   /** 'api' only when every owned player has one - a half-known squad cannot be reasoned about. */
   priceSource: 'api' | 'unknown';
+  /** Transfers you ticked as done that the API cannot see yet, and which were applied here. */
+  confirmedApplied: ConfirmedTransfer[];
+  confirmedUnresolved: ConfirmedTransfer[];
 } | null {
   // The latest manager_state row with at least one squad_pick - not just the latest row full
   // stop. ingestEntry() writes a manager_state snapshot on every refresh even when that
@@ -544,9 +559,12 @@ function loadOwnedSquad(
   // known-stale note below explains why.
   const state = db
     .prepare(
+      // id breaks the tie, and it has to: captured_at has second resolution, so two refreshes
+      // inside the same second - a manual "fetch latest now" landing on top of a scheduled one -
+      // sort arbitrarily, and the app can silently reason about the older of the two squads.
       `SELECT ms.id, ms.bank, ms.event_id AS eventId FROM manager_state ms
        WHERE ms.entry_id = ? AND EXISTS (SELECT 1 FROM squad_pick sp WHERE sp.manager_state_id = ms.id)
-       ORDER BY ms.captured_at DESC LIMIT 1`,
+       ORDER BY ms.captured_at DESC, ms.id DESC LIMIT 1`,
     )
     .get(teamId) as { id: number; bank: number | null; eventId: number | null } | undefined;
 
@@ -589,7 +607,24 @@ function loadOwnedSquad(
       ? ('api' as const)
       : ('unknown' as const);
 
-  return { squad, bank: state.bank, unresolved, asOfEventId: state.eventId, sellingPrices, priceSource };
+  // Transfers ticked as done for the gameweek being advised on. The API only ever returns picks
+  // for a gameweek that has already started, so for the whole week between one ending and the
+  // next beginning it is showing last week's team - and without this, every piece of advice in
+  // that window assumes you still own players you may have sold days ago.
+  const confirmed =
+    forEventId === undefined ? [] : loadConfirmedTransfers(db, teamId, forEventId);
+  const overlay = applyConfirmedTransfers(squad, confirmed, byId);
+
+  return {
+    squad: overlay.squad,
+    bank: state.bank,
+    unresolved,
+    asOfEventId: state.eventId,
+    sellingPrices,
+    priceSource,
+    confirmedApplied: overlay.applied,
+    confirmedUnresolved: overlay.unresolved,
+  };
 }
 
 /**
@@ -619,7 +654,7 @@ function sellingPricesFor(
        FROM squad_pick sp
        JOIN manager_state ms ON ms.id = sp.manager_state_id
        WHERE ms.entry_id = ? AND ms.id != ? AND sp.selling_price IS NOT NULL
-       ORDER BY ms.captured_at DESC`,
+       ORDER BY ms.captured_at DESC, ms.id DESC`,
     )
     .all(teamId, stateId) as { playerId: number; sellingPrice: number }[];
 
@@ -647,7 +682,7 @@ export function loadSquadForChips(
   if (!teamId) return { squad: undefined, chipsUsed: [] };
 
   const projections = buildProjections(db, eventId, rules, weights);
-  const owned = loadOwnedSquad(db, teamId, projections);
+  const owned = loadOwnedSquad(db, teamId, projections, eventId);
 
   const state = db
     .prepare(
@@ -1125,7 +1160,24 @@ export async function recommend(
     );
   }
 
-  const owned = options.teamId ? loadOwnedSquad(db, options.teamId, projections) : null;
+  const owned = options.teamId
+    ? loadOwnedSquad(db, options.teamId, projections, event.id)
+    : null;
+
+  if (owned && owned.confirmedApplied.length > 0) {
+    notes.push(
+      `${owned.confirmedApplied.length} transfer(s) you ticked as done have been applied on top ` +
+        'of your last loaded squad, because FPL does not publish this gameweek\'s picks until it ' +
+        'starts. Untick any you did not actually make - everything below is built on this squad.',
+    );
+  }
+  if (owned && owned.confirmedUnresolved.length > 0) {
+    notes.push(
+      `${owned.confirmedUnresolved.length} ticked transfer(s) could not be applied because the ` +
+        'incoming player is not in the latest player data. Re-import bootstrap-static, or untick ' +
+        'them - advice built on a transfer that silently did nothing would be quietly wrong.',
+    );
+  }
 
   if (owned && owned.asOfEventId !== null && owned.asOfEventId < event.id) {
     notes.push(
@@ -1200,6 +1252,7 @@ export async function recommend(
       // compare with.
       transferPlan: null,
       priorityFixPlan: null,
+      confirmedTransfers: [],
       previousComparison: null,
       notes,
       playersConsidered: projections.length,
@@ -1418,6 +1471,7 @@ export async function recommend(
     transfers,
     transferPlan,
     priorityFixPlan,
+    confirmedTransfers: owned?.confirmedApplied ?? [],
     previousComparison,
     notes,
     playersConsidered: projections.length,

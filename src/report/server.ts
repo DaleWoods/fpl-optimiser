@@ -10,6 +10,7 @@ import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
+import { confirmTransfer, unconfirmTransfer } from '../model/confirmedTransfers.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
 import { calibrationProgress, computeCalibration } from '../model/calibration.js';
@@ -334,6 +335,43 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     }
 
     // Health check: must stay cheap and must not depend on the FPL API being up.
+    // "I made this transfer" from the My Team page. Recorded against the gameweek being
+    // planned, and applied on top of the last real squad until FPL publishes that gameweek's
+    // picks - which it does not do until the gameweek starts.
+    if (url.pathname === '/confirm-transfer' && request.method === 'POST') {
+      try {
+        const teamId = config.app.teamId;
+        if (!teamId) throw new Error('No team ID is configured, so there is no squad to update.');
+
+        const body = JSON.parse(await readBody(request, 64 * 1024)) as {
+          outPlayerId?: number;
+          inPlayerId?: number;
+          done?: boolean;
+        };
+        const outPlayerId = Number(body.outPlayerId);
+        const inPlayerId = Number(body.inPlayerId);
+        if (!Number.isInteger(outPlayerId) || !Number.isInteger(inPlayerId)) {
+          throw new Error('Both players must be given.');
+        }
+
+        const event = resolveTargetEvent(db, undefined);
+        if (!event) throw new Error('No gameweek is known yet - run an ingest first.');
+
+        if (body.done === false) {
+          unconfirmTransfer(db, teamId, event.id, outPlayerId);
+        } else {
+          confirmTransfer(db, teamId, event.id, outPlayerId, inPlayerId);
+        }
+
+        response.writeHead(200, JSON_HEADERS);
+        response.end(JSON.stringify({ ok: true, eventId: event.id }));
+      } catch (cause) {
+        response.writeHead(400, JSON_HEADERS);
+        response.end(JSON.stringify({ error: (cause as Error).message }));
+      }
+      return;
+    }
+
     if (url.pathname === '/healthz') {
       response.writeHead(200, JSON_HEADERS);
       response.end(JSON.stringify({ ok: true, ingesting, lastIngestError }));

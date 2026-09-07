@@ -174,7 +174,7 @@ export function previousActualPicks(
        LEFT JOIN event e ON e.id = ms.event_id
        WHERE ms.entry_id = ? AND ms.event_id IS NOT NULL AND ms.event_id < ?
          AND EXISTS (SELECT 1 FROM squad_pick sp WHERE sp.manager_state_id = ms.id)
-       ORDER BY ms.event_id DESC, ms.captured_at DESC LIMIT 1`,
+       ORDER BY ms.event_id DESC, ms.captured_at DESC, ms.id DESC LIMIT 1`,
     )
     .get(entryId, beforeEventId) as
     | { id: number; eventId: number; eventName: string | null }

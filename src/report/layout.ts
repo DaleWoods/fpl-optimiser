@@ -211,6 +211,18 @@ details.explain .inner { border: 1px solid var(--line); border-top: 0;
   border-radius: 0 0 10px 10px; padding: .1rem 1rem .9rem; background: var(--surface);
   font-size: .91rem; }
 
+/* "I made this one" against a suggestion. FPL publishes your picks only for a gameweek that has
+   already started, so for the whole week spent planning, the app is looking at last week's team
+   unless you can tell it otherwise. */
+.done-box { display: inline-flex; align-items: center; gap: .45rem; margin-top: .6rem;
+            font-size: .86rem; cursor: pointer; padding: .3rem .6rem; border-radius: 8px;
+            border: 1px solid var(--line); background: var(--bg); user-select: none; }
+.done-box:hover { border-color: var(--muted); }
+.done-box input { margin: 0; cursor: pointer; accent-color: ${BRAND.purple}; }
+.done-box.done { background: var(--hi); border-color: var(--ok); color: var(--ok);
+                 font-weight: 600; }
+.done-box.saving { opacity: .55; }
+
 .banner { padding: .75rem 1rem; border-radius: 10px; margin: .9rem 0; font-size: .92rem; }
 .banner.warn { background: var(--warn-bg); color: var(--warn-fg); }
 .banner.info { background: var(--surface); border: 1px solid var(--line); }

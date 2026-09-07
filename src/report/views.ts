@@ -330,7 +330,7 @@ function playerRow(
  * points, and may well be a net loss. Netting it out here, once, is the honest presentation -
  * including when the answer is that the plan is not worth it.
  */
-function renderPriorityFixPlan(plan: PriorityFixPlan): string {
+function renderPriorityFixPlan(plan: PriorityFixPlan & { doneOutIds: Set<number> }): string {
   const worthIt = plan.netGain >= 0;
   const paidFor = Math.min(plan.moves.length, plan.freeTransfers);
 
@@ -359,6 +359,10 @@ function renderPriorityFixPlan(plan: PriorityFixPlan): string {
             ? '<span class="muted">level</span>'
             : `${change > 0 ? '+' : '&minus;'}${formatMoney(Math.abs(change))}`;
         })()}</td>
+        <td><label class="done-box${plan.doneOutIds.has(move.out.playerId) ? ' done' : ''}">
+          <input type="checkbox" data-done-out="${move.out.playerId}"
+                 data-done-in="${move.in.playerId}"${plan.doneOutIds.has(move.out.playerId) ? ' checked' : ''}>
+          <span>Done</span></label></td>
       </tr>`,
     )
     .join('');
@@ -408,7 +412,8 @@ function renderPriorityFixPlan(plan: PriorityFixPlan): string {
   </div>
 
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
-    <thead><tr><th>Out</th><th>xPts</th><th></th><th>In</th><th>xPts</th><th>Price change</th></tr></thead>
+    <thead><tr><th>Out</th><th>xPts</th><th></th><th>In</th><th>xPts</th><th>Price change</th>
+      <th>Made it?</th></tr></thead>
     <tbody>${moves}</tbody></table></div></div>
 
   ${renderPitch(plan.eleven)}
@@ -438,6 +443,25 @@ export function renderRecommendation(rec: Recommendation): string {
     .map((player, index) => playerRow(player, `<span class="muted">#${index + 1}</span>`))
     .join('');
 
+  const doneOutIds = new Set(rec.confirmedTransfers.map((t) => t.outPlayerId));
+
+  /**
+   * "I made this one" against each suggestion.
+   *
+   * FPL publishes your picks only for a gameweek that has already started, so for the whole week
+   * between one ending and the next beginning the app is looking at last week's team. Without a
+   * way to say what you have actually done, every piece of advice in that window quietly assumes
+   * you still own players you may have sold days ago.
+   */
+  const doneBox = (transfer: { out: { playerId: number; name: string }; in: { playerId: number; name: string } }): string => {
+    const done = doneOutIds.has(transfer.out.playerId);
+    return `<label class="done-box${done ? ' done' : ''}">
+      <input type="checkbox" data-done-out="${transfer.out.playerId}"
+             data-done-in="${transfer.in.playerId}"${done ? ' checked' : ''}>
+      <span>${done ? 'Done &mdash; applied to your squad' : 'I made this transfer'}</span>
+    </label>`;
+  };
+
   const transfers =
     rec.transfers.length > 0
       ? rec.transfers
@@ -446,6 +470,7 @@ export function renderRecommendation(rec: Recommendation): string {
               <h3>${transfer.priority ? '<span class="pill" style="background:var(--warn-fg);color:#000">Priority fix</span> ' : ''}${escapeHtml(transfer.out.name)} &rarr; ${escapeHtml(transfer.in.name)}
                 <span class="pill good">${transfer.netGain >= 0 ? '+' : ''}${transfer.netGain.toFixed(2)} pts</span></h3>
               <p class="muted" style="margin:0">${escapeHtml(transfer.reason)}</p>
+              ${doneBox(transfer)}
             </div>`,
           )
           .join('')
@@ -543,7 +568,7 @@ export function renderRecommendation(rec: Recommendation): string {
     <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${head}<tbody>${bench}</tbody></table></div></div>
   </details>
 
-  ${rec.priorityFixPlan ? renderPriorityFixPlan(rec.priorityFixPlan) : ''}
+  ${rec.priorityFixPlan ? renderPriorityFixPlan({ ...rec.priorityFixPlan, doneOutIds }) : ''}
 
   ${
     rec.transfers.length > 0
@@ -668,6 +693,33 @@ export function renderRecommendation(rec: Recommendation): string {
 // ---------------------------------------------------------------------------
 
 const CLEAR_SQUAD_SCRIPT = `
+document.querySelectorAll('.done-box input[data-done-out]').forEach((box) => {
+  box.onchange = async () => {
+    const label = box.closest('.done-box');
+    label.classList.add('saving');
+    try {
+      const res = await fetch('/confirm-transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outPlayerId: Number(box.dataset.doneOut),
+          inPlayerId: Number(box.dataset.doneIn),
+          done: box.checked,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      // Reload so every number on the page reflects the squad you actually have. Showing a
+      // ticked box next to advice still built on the old squad would be worse than not
+      // offering the tick at all.
+      location.reload();
+    } catch (err) {
+      box.checked = !box.checked;
+      label.classList.remove('saving');
+      alert('Could not save that: ' + err.message);
+    }
+  };
+});
+
 document.querySelectorAll('[data-clear-squad]').forEach((btn) => {
   btn.onclick = async () => {
     if (!confirm('Clear the loaded squad? Imports and last-season history are kept.')) return;
