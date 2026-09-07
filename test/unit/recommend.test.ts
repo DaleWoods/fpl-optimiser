@@ -804,6 +804,76 @@ describe('recommendation with a squad loaded', () => {
     expect(result.transferPlan).toBeNull();
   });
 
+  it('describes changes against the XI you actually fielded, not against its own last advice', async () => {
+    // The exact complaint from the live app: "changed since gameweek 3" reported two players
+    // moving into the starting XI who had started every week, and a third dropping to the bench
+    // who had already been transferred out. Both follow from diffing advice against previous
+    // advice - that describes how the app's opinion moved, not what changed about your team,
+    // and it is not something anyone can act on.
+    //
+    // Forced deterministically: one player is injured for gameweek 1, so the advice benches him.
+    // The manager starts him anyway. He is fit again by gameweek 2, so the advice now starts him
+    // too. Against the old baseline he "moves into the XI"; against the manager's own XI, where
+    // he already was, nothing changed about him at all.
+    const fifteen = pickLegalFifteen(db);
+    const stubborn = fifteen[5]!;
+    const { teams, players } = bigLeague();
+
+    const seedWith = async (injured: number[], events: ReturnType<typeof fakeEvent>[]) =>
+      ingestBootstrap(
+        db,
+        new StubFplApi({
+          bootstrap: fakeBootstrap({
+            teams,
+            players: players.map((p) =>
+              injured.includes(p.id) ? { ...p, status: 'i', chance_of_playing_next_round: 0 } : p,
+            ),
+            events,
+          }),
+        }),
+        rules,
+      );
+
+    await seedWith([stubborn], [fakeEvent(1, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' })]);
+
+    // The manager fields him in slot 1 regardless of the flag.
+    const reordered = [stubborn, ...fifteen.filter((id) => id !== stubborn)];
+    await ingestEntry(
+      db,
+      new StubFplApi({
+        entry: { [teamId]: fakeEntry(teamId, { current_event: 1, last_deadline_bank: 20 }) },
+        history: { [teamId]: { current: [], chips: [] } },
+        picks: { [`${teamId}:1`]: fakePicks(reordered) },
+      }),
+      teamId,
+      rules,
+    );
+
+    const first = await recommend(db, rules, weights, { eventId: 1, teamId });
+    expect(first.eleven.starters.map((p) => p.playerId)).not.toContain(stubborn);
+
+    // Fit again, and gameweek 2 opens up.
+    await seedWith(
+      [],
+      [
+        fakeEvent(1, { finished: true, deadline_time: '2099-08-21T17:30:00Z' }),
+        fakeEvent(2, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+      ],
+    );
+    const gw2Fixtures = [];
+    for (let index = 0; index < teams.length; index += 2) {
+      gw2Fixtures.push(fakeFixture(200 + index / 2, 2, teams[index]!.id, teams[index + 1]!.id));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures: gw2Fixtures }));
+
+    const second = await recommend(db, rules, weights, { eventId: 2, teamId });
+    expect(second.eleven.starters.map((p) => p.playerId)).toContain(stubborn);
+
+    // He was in the manager's XI in gameweek 1 and is in the advised XI now. Nothing moved.
+    expect(second.previousComparison).not.toBeNull();
+    expect(second.previousComparison!.movedIntoXi.map((p) => p.playerId)).not.toContain(stubborn);
+  });
+
   it('never diffs a genuinely loaded squad against an earlier from-scratch build - that squad was never really yours', async () => {
     // Gameweek 1: no squad loaded yet, so this saves a from-scratch build under kind='squad'.
     const scratch = await recommend(db, rules, weights, { eventId: 1, teamId, fromScratch: true });
@@ -832,11 +902,21 @@ describe('recommendation with a squad loaded', () => {
     }
     await ingestFixtures(db, new StubFplApi({ fixtures: gw2Fixtures }));
 
+    const fifteen = pickLegalFifteen(db);
     const result = await recommend(db, rules, weights, { eventId: 2, teamId });
 
-    // Must not invent "changed since gameweek 1" against a squad that was never actually owned.
+    // The comparison is now against the squad genuinely loaded for gameweek 1, which is a real
+    // and useful baseline. What must never leak in is the from-scratch build: that team was
+    // never owned, so describing changes relative to it would be describing changes to a team
+    // that never existed. Every player named in the diff has to be one of the real fifteen.
     expect(result.mode).toBe('existing-squad');
-    expect(result.previousComparison).toBeNull();
+    const named = [
+      ...(result.previousComparison?.movedIntoXi ?? []),
+      ...(result.previousComparison?.movedToBench ?? []),
+    ].map((p) => p.playerId);
+    for (const playerId of named) {
+      expect(fifteen).toContain(playerId);
+    }
   });
 
   /**

@@ -12,7 +12,7 @@ import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
-import { computeCalibration } from '../model/calibration.js';
+import { calibrationProgress, computeCalibration } from '../model/calibration.js';
 import { computeLeagueTable } from '../model/table.js';
 import {
   renderAccuracy,
@@ -220,13 +220,15 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         ? computeCalibration(db, config.weights)
         : [];
 
+      const progress = calibrationProgress(db, config.weights);
+
       if (url.pathname === '/accuracy.json') {
         response.writeHead(200, JSON_HEADERS);
-        response.end(JSON.stringify({ season, latest, calibration }, null, 2));
+        response.end(JSON.stringify({ season, latest, calibration, progress }, null, 2));
         return;
       }
       response.writeHead(200, HTML);
-      response.end(renderAccuracy(season, latest, calibration));
+      response.end(renderAccuracy(season, latest, calibration, progress));
       return;
     }
 

@@ -2,8 +2,15 @@
   "$comment": [
     "Tunable weights for the expected-points (xPts) heuristic. Every number that shapes a",
     "projection lives here, not in code, so the model can be re-tuned without a rebuild.",
-    "modelVersion is stamped onto every stored projection for auditability - bump it whenever",
-    "you change these numbers, or past advice can no longer be explained."
+    "modelVersion is stamped onto every stored projection, and calibration only ever learns from",
+    "projections made under the CURRENT version - so bumping it throws away the grading history.",
+    "That makes the rule for bumping narrow and important: bump it when the numbers that produce",
+    "xPts change, and only then. Captaincy, chip timing, transfer logic and anything else that",
+    "reads a projection without altering it must NOT bump it. Those decisions are not stamped on",
+    "the projection and a correction learned under one is perfectly valid under the next.",
+    "0.18.0, 0.19.0 and 0.20.0 broke that rule: all three changed captaincy or chip timing and",
+    "left xPts identical, and each one reset the learning to zero for no reason. That is why the",
+    "Accuracy page kept saying it had nothing to learn from yet after three graded gameweeks."
   ],
   "modelVersion": "heuristic-0.20.0",
 

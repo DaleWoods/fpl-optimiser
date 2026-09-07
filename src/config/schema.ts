@@ -94,6 +94,16 @@ export const rulesSchema = z.strictObject({
 });
 
 export const modelWeightsSchema = z.strictObject({
+  /**
+   * Stamped onto every stored projection, and the key calibration groups by: a correction is
+   * only ever learned from projections made under the *current* version, so bumping this throws
+   * away the grading history and restarts the learning from nothing.
+   *
+   * Bump it when the numbers that produce xPts change, and only then. Captaincy, chip timing,
+   * transfer logic and anything else that reads a projection without altering it must not - the
+   * decision is not stamped on the projection, and a correction learned under one such version
+   * is perfectly valid under the next.
+   */
   modelVersion: z.string().min(1),
   availability: z.strictObject({
     statusProbability: z.record(z.string(), probability),

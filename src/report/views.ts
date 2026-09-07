@@ -1,5 +1,12 @@
 import type { GameweekAccuracy, SeasonAccuracy } from '../model/accuracy.js';
 import type { CalibrationFactor } from '../model/calibration.js';
+
+/** What calibrationProgress() returns: how close the model is to correcting itself. */
+interface CalibrationProgress {
+  gradedUnderCurrentModel: number;
+  needed: number;
+  gradedUnderOtherModels: number;
+}
 import type { ChipAdvice } from '../optimise/chips.js';
 import type { PayloadKind } from '../ingest/import.js';
 import type { ResetScope } from '../ingest/reset.js';
@@ -1135,11 +1142,26 @@ function gameweekScorecard(gw: SeasonAccuracy['gameweeks'][number]): string {
  * is not enough graded football yet, rather than an empty table - "not measured" and "measured
  * and fine" are different claims and should not look the same.
  */
-function renderCalibration(factors: readonly CalibrationFactor[]): string {
+function renderCalibration(
+  factors: readonly CalibrationFactor[],
+  progress: CalibrationProgress | null = null,
+): string {
   if (factors.length === 0) {
+    // "Nothing yet" on its own gives no way to tell "two more gameweeks" apart from "this will
+    // never happen because the scoring version keeps moving". The second was the real situation
+    // for a while, and it was completely invisible from here.
+    const detail = progress
+      ? ` <strong>${progress.gradedUnderCurrentModel} of ${progress.needed}</strong> graded
+         gameweeks are behind the current scoring model.` +
+        (progress.gradedUnderOtherModels > 0
+          ? ` Another ${progress.gradedUnderOtherModels} were graded under earlier scoring and
+             deliberately do not count &mdash; a correction learned from a model that has since
+             been fixed would be correcting a mistake that no longer exists.`
+          : '')
+      : '';
     return `<h2>What the model has learned</h2>
       <div class="banner info">Nothing yet. A correction needs several graded gameweeks behind
-      it &mdash; before that, what looks like a lean is just one week's variance.</div>`;
+      it &mdash; before that, what looks like a lean is just one week's variance.${detail}</div>`;
   }
 
   const rows = factors
@@ -1187,6 +1209,7 @@ export function renderAccuracy(
   season: SeasonAccuracy,
   latest: GameweekAccuracy | null,
   calibration: readonly CalibrationFactor[] = [],
+  calibrationProgress: CalibrationProgress | null = null,
 ): string {
   const errHead = `<thead><tr><th>Player</th><th>Pos</th><th>Club</th><th>Predicted</th><th>Actual</th><th>Error</th></tr></thead>`;
 
@@ -1262,7 +1285,18 @@ export function renderAccuracy(
       : ''
   }
 
-  ${renderCalibration(calibration)}
+  ${
+    season.pending.length > 0
+      ? `<div class="banner warn"><strong>Not graded yet:</strong>
+         ${season.pending
+           .map((p) => `Gameweek ${p.eventId} &mdash; ${escapeHtml(p.reason)}`)
+           .join('<br>')}
+         <br><span class="muted">Advice was given for these, so they belong on this page. They
+         appear in the table above as soon as the results land.</span></div>`
+      : ''
+  }
+
+  ${renderCalibration(calibration, calibrationProgress)}
 
   ${
     season.overall

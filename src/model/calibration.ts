@@ -117,6 +117,36 @@ export function computeCalibration(db: Database, weights: ModelWeights): Calibra
   return factors;
 }
 
+/**
+ * How close the model is to being able to correct itself, and what is holding it up.
+ *
+ * Without this the Accuracy page could only say "nothing yet", which gives no way to tell
+ * "two more gameweeks" apart from "this will never happen because the version keeps moving".
+ * The second was the real situation for a while, and it was invisible.
+ */
+export function calibrationProgress(
+  db: Database,
+  weights: ModelWeights,
+): { gradedUnderCurrentModel: number; needed: number; gradedUnderOtherModels: number } {
+  const countFor = (sameVersion: boolean): number =>
+    (
+      db
+        .prepare(
+          `SELECT COUNT(DISTINCT pr.event_id) AS n
+           FROM projection pr
+           JOIN actual_points a ON a.player_id = pr.player_id AND a.event_id = pr.event_id
+           WHERE pr.model_version ${sameVersion ? '=' : '!='} ?`,
+        )
+        .get(weights.modelVersion) as { n: number }
+    ).n;
+
+  return {
+    gradedUnderCurrentModel: countFor(true),
+    needed: weights.calibration.minGameweeks,
+    gradedUnderOtherModels: countFor(false),
+  };
+}
+
 /** Persist the factors for one model version, replacing whatever was there for it. */
 export function saveCalibration(
   db: Database,

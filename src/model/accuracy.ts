@@ -75,6 +75,16 @@ export interface SeasonAccuracy {
     leagueAverage: number | null;
     leagueHighest: number | null;
   }[];
+  /**
+   * Gameweeks that were projected but cannot be graded yet, and why.
+   *
+   * These used to be omitted entirely - the query joins projections to results, so a gameweek
+   * with advice but no results yet simply was not in the list. From the page that is
+   * indistinguishable from "the app forgot about it", which is exactly how it read: advice was
+   * given for a gameweek, the gameweek was played, and the gameweek was nowhere on the page.
+   * Saying "projected, waiting on results" is a different and much more honest state.
+   */
+  pending: { eventId: number; reason: string }[];
   overall: {
     playersScored: number;
     meanAbsoluteError: number;
@@ -137,6 +147,75 @@ export interface StoredRecommendationDetail {
  * genuinely loaded squad, is a fair baseline for "what changed". Also scoped to the same entry,
  * so a stale or differently-configured team's history can never bleed into this one's diff.
  */
+/**
+ * The XI you actually fielded in the most recent gameweek before this one.
+ *
+ * This is what "changed since gameweek N" should be measured against, and for a long time it was
+ * not: the diff compared the new advice with the app's own *previous advice*, which is a
+ * different question and a much less useful one. If you took a suggested transfer, or started
+ * someone the app had benched, the app never noticed - it went on describing changes relative to
+ * a team you never fielded. That is how it came to report a player moving into the XI who had
+ * been in your XI all along, and another dropping to the bench who was no longer in your squad
+ * at all.
+ *
+ * Reads squad_pick, where slot 1-11 is the XI and 12-15 the bench, in auto-sub order.
+ */
+export function previousActualPicks(
+  db: Database,
+  beforeEventId: number,
+  entryId: number | null,
+): StoredRecommendationDetail | null {
+  if (entryId === null) return null;
+
+  const state = db
+    .prepare(
+      `SELECT ms.id, ms.event_id AS eventId, e.name AS eventName
+       FROM manager_state ms
+       LEFT JOIN event e ON e.id = ms.event_id
+       WHERE ms.entry_id = ? AND ms.event_id IS NOT NULL AND ms.event_id < ?
+         AND EXISTS (SELECT 1 FROM squad_pick sp WHERE sp.manager_state_id = ms.id)
+       ORDER BY ms.event_id DESC, ms.captured_at DESC LIMIT 1`,
+    )
+    .get(entryId, beforeEventId) as
+    | { id: number; eventId: number; eventName: string | null }
+    | undefined;
+  if (!state) return null;
+
+  const picks = db
+    .prepare(
+      `SELECT sp.player_id AS playerId, p.web_name AS name, sp.slot,
+              sp.is_captain AS isCaptain, sp.is_vice_captain AS isVice
+       FROM squad_pick sp
+       JOIN player p ON p.id = sp.player_id
+       WHERE sp.manager_state_id = ? ORDER BY sp.slot`,
+    )
+    .all(state.id) as {
+    playerId: number;
+    name: string;
+    slot: number;
+    isCaptain: number;
+    isVice: number;
+  }[];
+  if (picks.length === 0) return null;
+
+  const asNamed = (row: (typeof picks)[number]) => ({
+    playerId: row.playerId,
+    name: row.name,
+    // The stored shape carries an xPts for the recommendation case. A real pick has no
+    // projection attached to it, and inventing one would be worse than saying zero.
+    xPts: 0,
+  });
+
+  return {
+    eventId: state.eventId,
+    eventName: state.eventName,
+    starters: picks.filter((row) => row.slot <= 11).map(asNamed),
+    bench: picks.filter((row) => row.slot > 11).map(asNamed),
+    captainId: picks.find((row) => row.isCaptain === 1)?.playerId ?? null,
+    viceCaptainId: picks.find((row) => row.isVice === 1)?.playerId ?? null,
+  };
+}
+
 export function previousRecommendationDetail(
   db: Database,
   beforeEventId: number,
@@ -658,9 +737,51 @@ export function evaluateSeason(db: Database, rules: Rules, entryId: number | nul
       .all() as { eventId: number }[]
   ).map((row) => row.eventId);
 
+  // Every gameweek that has advice stored, graded or not, so one can never silently vanish.
+  const projectedEventIds = (
+    db
+      .prepare('SELECT DISTINCT event_id AS eventId FROM projection ORDER BY event_id')
+      .all() as { eventId: number }[]
+  ).map((row) => row.eventId);
+
+  const graded = new Set(eventIds);
+  const pending = projectedEventIds
+    .filter((eventId) => !graded.has(eventId))
+    .map((eventId) => {
+      const event = db.prepare('SELECT finished FROM event WHERE id = ?').get(eventId) as
+        | { finished: number }
+        | undefined;
+      const actuals = (
+        db.prepare('SELECT COUNT(*) AS n FROM actual_points WHERE event_id = ?').get(eventId) as {
+          n: number;
+        }
+      ).n;
+
+      if (!event || event.finished !== 1) {
+        return { eventId, reason: 'still being played - results arrive once it finishes' };
+      }
+      if (actuals === 0) {
+        return {
+          eventId,
+          reason:
+            'finished, but the per-player results have not been fetched yet. They come from ' +
+            'each player\'s own match history, which the background refresh pulls once a ' +
+            'gameweek is marked complete - press Fetch latest now on the Dashboard to bring ' +
+            'it forward',
+        };
+      }
+      return {
+        eventId,
+        reason:
+          `results are in for ${actuals} player(s), but none of them is one this app projected ` +
+          '- most likely the projections were stored for a different gameweek',
+      };
+    });
+
   if (eventIds.length === 0) {
     return {
       gameweeks: [],
+      pending,
       overall: null,
       notes: [
         'Nothing to grade yet. Accuracy needs a projection made before a deadline and the ' +
@@ -713,6 +834,7 @@ export function evaluateSeason(db: Database, rules: Rules, entryId: number | nul
 
   return {
     gameweeks,
+    pending,
     overall: {
       playersScored: allRows.length,
       meanAbsoluteError: overallStats.meanAbsoluteError,

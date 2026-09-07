@@ -18,6 +18,7 @@ import {
 } from '../model/horizon.js';
 import { applyIntel, loadIntel, type Intel } from '../model/intel.js';
 import {
+  previousActualPicks,
   previousRecommendationDetail,
   saveRecommendation,
   type StoredRecommendationDetail,
@@ -1372,7 +1373,14 @@ export async function recommend(
     },
     new Set(transfers.map((t) => t.out.playerId)),
     new Set(transfers.map((t) => t.in.playerId)),
-    previousRecommendationDetail(db, event.id, options.teamId ?? null),
+    // Measured against the XI you actually fielded, falling back to the app's own last advice
+    // only when there are no real picks to compare with (before your first loaded gameweek).
+    // Comparing advice to previous advice answers "how has my opinion changed", which is not
+    // the question the heading asks and not one you can act on - and it produced plainly wrong
+    // lines, naming a player as moving into the XI who had started every week, and another
+    // dropping to the bench who had already been transferred out.
+    previousActualPicks(db, event.id, options.teamId ?? null) ??
+      previousRecommendationDetail(db, event.id, options.teamId ?? null),
   );
 
   saveRecommendation(db, {

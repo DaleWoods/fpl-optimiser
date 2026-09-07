@@ -692,6 +692,7 @@ describe('accuracy page', () => {
 
   const season = (overrides: Partial<SeasonAccuracy> = {}): SeasonAccuracy => ({
     gameweeks: [gameweek()],
+    pending: [],
     overall: { playersScored: 40, meanAbsoluteError: 1.6, bias: 0.2, gameweeks: 1 },
     notes: [],
     ...overrides,
@@ -753,8 +754,38 @@ describe('accuracy page', () => {
     expect(page).toMatch(/auto-sub rules/);
   });
 
+  it('says how far off the self-correction is, and what is not counting toward it', () => {
+    // "Nothing yet" alone cannot distinguish "two more gameweeks" from "this will never happen
+    // because the scoring version keeps being bumped". The second was the real situation for a
+    // while - three graded gameweeks, none of them counting - and nothing on the page said so.
+    const page = renderAccuracy(season(), null, [], {
+      gradedUnderCurrentModel: 1,
+      needed: 3,
+      gradedUnderOtherModels: 2,
+    });
+
+    expect(page).toMatch(/<strong>1 of 3<\/strong>\s*graded/);
+    expect(page).toMatch(/Another 2 were graded under earlier scoring/);
+  });
+
+  it('names a projected gameweek that cannot be graded yet, instead of dropping it', () => {
+    // Advice was given for gameweek 3, the gameweek was played, and gameweek 3 was nowhere on
+    // this page - because the query joins projections to results and a gameweek with one but
+    // not the other simply falls out. From the page that is indistinguishable from the app
+    // having forgotten about it.
+    const page = renderAccuracy(
+      season({
+        pending: [{ eventId: 3, reason: 'finished, but the per-player results are not in yet' }],
+      }),
+      null,
+    );
+    expect(page).toMatch(/Not graded yet/);
+    expect(page).toMatch(/Gameweek 3/);
+    expect(page).toMatch(/per-player results are not in yet/);
+  });
+
   it('says nothing at all when there is nothing graded', () => {
-    const page = renderAccuracy({ gameweeks: [], overall: null, notes: ['Nothing to grade yet.'] }, null);
+    const page = renderAccuracy({ gameweeks: [], pending: [], overall: null, notes: ['Nothing to grade yet.'] }, null);
     expect(page).toMatch(/Nothing to grade yet\./);
     expect(page).not.toMatch(/We projected/);
   });
