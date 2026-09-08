@@ -165,7 +165,19 @@ export const modelWeightsSchema = z.strictObject({
     awayFactor: z.number().positive(),
     strengthExponent: z.number().min(0),
     /** How much the computed league table bends club strength. 0 disables it. */
+    /**
+     * How hard current form pulls a club's rating away from the API's own strength numbers.
+     * Applied as an exponent, so 0 disables form entirely and 1 trusts it fully.
+     */
     tableWeight: z.number().min(0),
+    /**
+     * Matches of underlying evidence before a club's form is half-trusted.
+     *
+     * Two matches of expected goals is barely more evidence than two matches of results, and
+     * early in a season that is all there is. Without this a club that happened to face two
+     * open games would carry a permanent-looking attacking boost from a sample of two.
+     */
+    formPriorMatches: z.number().min(0),
     minExpectedGoals: z.number().min(0),
     maxExpectedGoals: z.number().positive(),
     fallbackStrength: z.number().positive(),

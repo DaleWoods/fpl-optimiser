@@ -12,7 +12,7 @@
     "left xPts identical, and each one reset the learning to zero for no reason. That is why the",
     "Accuracy page kept saying it had nothing to learn from yet after three graded gameweeks."
   ],
-  "modelVersion": "heuristic-0.20.0",
+  "modelVersion": "heuristic-0.21.0",
 
   "availability": {
     "$comment": [
@@ -73,13 +73,24 @@
   "teamStrength": {
     "$comment": [
       "Converts bootstrap team strength ratings into expected goals for and against.",
-      "Expected goals = leagueAverage * (attack/opponentDefence)^exponent * venue factor."
+      "Expected goals = leagueAverage * (attack/opponentDefence)^exponent * venue factor.",
+      "tableWeight/formPriorMatches: current form nudges those ratings, separately for attack and",
+      "defence, and from EXPECTED goals rather than results. It used to be one points-per-game",
+      "number applied to both, which is the most luck-exposed metric in the game - a defence that",
+      "has conceded nothing off five expected goals against reads as the best in the league on",
+      "points alone, and one number cannot describe a side scoring freely while leaking badly.",
+      "Expected goals stabilise far faster, which is exactly why attacking.xgWeight already",
+      "prefers them for players; this applies the same belief to clubs.",
+      "formPriorMatches 5: two matches of underlying numbers is barely more evidence than two",
+      "matches of results, so form is shrunk toward no adjustment until a real sample exists.",
+      "Bounded to 0.7-1.3 either way, so form nudges the API's ratings and never replaces them."
     ],
     "leagueAverageGoalsPerGame": 1.45,
     "homeAdvantage": 1.1,
     "awayFactor": 0.92,
     "strengthExponent": 1.0,
     "tableWeight": 0.3,
+    "formPriorMatches": 5,
     "minExpectedGoals": 0.2,
     "maxExpectedGoals": 4.0,
     "fallbackStrength": 1100

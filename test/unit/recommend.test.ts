@@ -145,7 +145,7 @@ describe('projection building', () => {
   });
 });
 
-describe('league table blend', () => {
+describe('club form blend', () => {
   /**
    * Four clubs of identical underlying strength, so any projection difference between their
    * players can only come from the computed table, not the API's own ratings.
@@ -178,7 +178,141 @@ describe('league table blend', () => {
     };
   }
 
+  /**
+   * One club's expected goals in one match, carried by a dummy player so it never contaminates
+   * the rates of the players actually being compared. computeTeamForm sums expected_goals across
+   * a club's players and takes the maximum expected_goals_conceded, so a single row per club per
+   * fixture is exactly that club's match total.
+   */
+  function seedClubXg(
+    db: Database,
+    rows: { playerId: number; fixtureId: number; eventId: number; xgFor: number; xgAgainst: number }[],
+  ): void {
+    const insert = db.prepare(
+      `INSERT INTO player_fixture_history
+         (player_id, fixture_id, event_id, minutes, expected_goals, expected_goals_conceded,
+          updated_at, raw_json)
+       VALUES (?, ?, ?, 90, ?, ?, 0, '{}')`,
+    );
+    for (const row of rows) {
+      insert.run(row.playerId, row.fixtureId, row.eventId, row.xgFor, row.xgAgainst);
+    }
+  }
+
+  it('rates a club that scores freely and leaks badly as a good attack and a bad defence', async () => {
+    // The thing a single form number could not say. Club A and Club B have played out the same
+    // scorelines and have the same expected-goal difference - zero - so any scheme that moves
+    // attack and defence together has to rate them identically. On expected goals they are
+    // opposites: A creates three a game and concedes three, B does neither.
+    const teams = equalStrengthTeams();
+    const players = [101, 102, 103, 104].map((id) => identicalPlayer(id, id - 100));
+    // Carriers for the club-level expected goals, kept off the players under comparison.
+    const carriers = [201, 202, 203, 204].map((id) => identicalPlayer(id, id - 200));
+    const events = [
+      fakeEvent(1, { is_next: false, finished: true, deadline_time: '2020-08-14T17:30:00Z' }),
+      fakeEvent(2, { is_next: false, finished: true, deadline_time: '2020-08-21T17:30:00Z' }),
+      fakeEvent(3, { is_next: true, deadline_time: '2099-08-28T17:30:00Z' }),
+    ];
+
+    const db = openTestDatabase();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({ bootstrap: fakeBootstrap({ teams, players: [...players, ...carriers], events }) }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [
+          // Every played match finished 1-1, so results are silent and only expected goals speak.
+          fakeFixture(1, 1, 1, 3, { team_h_score: 1, team_a_score: 1, finished: true }),
+          fakeFixture(2, 1, 2, 4, { team_h_score: 1, team_a_score: 1, finished: true }),
+          fakeFixture(3, 2, 1, 4, { team_h_score: 1, team_a_score: 1, finished: true }),
+          fakeFixture(4, 2, 2, 3, { team_h_score: 1, team_a_score: 1, finished: true }),
+          // The target gameweek: A and B both at home, both against a league-average side.
+          fakeFixture(5, 3, 1, 3),
+          fakeFixture(6, 3, 2, 4),
+        ],
+      }),
+    );
+
+    seedClubXg(db, [
+      // A creates 3.0 a match and concedes 3.0; C and D concede and create the same back.
+      { playerId: 201, fixtureId: 1, eventId: 1, xgFor: 3.0, xgAgainst: 3.0 },
+      { playerId: 203, fixtureId: 1, eventId: 1, xgFor: 3.0, xgAgainst: 3.0 },
+      { playerId: 201, fixtureId: 3, eventId: 2, xgFor: 3.0, xgAgainst: 3.0 },
+      { playerId: 204, fixtureId: 3, eventId: 2, xgFor: 3.0, xgAgainst: 3.0 },
+      // B creates 1.0 a match and concedes 1.0.
+      { playerId: 202, fixtureId: 2, eventId: 1, xgFor: 1.0, xgAgainst: 1.0 },
+      { playerId: 204, fixtureId: 2, eventId: 1, xgFor: 1.0, xgAgainst: 1.0 },
+      { playerId: 202, fixtureId: 4, eventId: 2, xgFor: 1.0, xgAgainst: 1.0 },
+      { playerId: 203, fixtureId: 4, eventId: 2, xgFor: 1.0, xgAgainst: 1.0 },
+    ]);
+
+    const projections = buildProjections(db, 3, rules, weights);
+    const find = (id: number) => projections.find((p) => p.playerId === id)!;
+
+    // A attacks better than B.
+    expect(find(101).xPts).toBeGreaterThan(find(102).xPts);
+    // And A defends worse than B: the visitor at A out-projects the visitor at B, even though
+    // C and D are themselves identical. Both halves at once is the point.
+    expect(find(103).xPts).toBeGreaterThan(find(104).xPts);
+  });
+
+  it('does not let clubs measured in goals drag the rating of clubs measured in expected goals', async () => {
+    // Early in a season some clubs have underlying numbers and others do not. Expected goals and
+    // scorelines are not the same scale, so they are averaged within their own group. Without
+    // that split a goal glut among the clubs with no xG yet would move the league average and
+    // silently re-rate every club that does have it.
+    const teams = equalStrengthTeams();
+    const players = [101, 102, 103, 104].map((id) => identicalPlayer(id, id - 100));
+    const carriers = [201, 202].map((id) => identicalPlayer(id, id - 200));
+    const events = [
+      fakeEvent(1, { is_next: false, finished: true, deadline_time: '2020-08-14T17:30:00Z' }),
+      fakeEvent(2, { is_next: true, deadline_time: '2099-08-21T17:30:00Z' }),
+    ];
+
+    async function build(goalGlut: number): Promise<number> {
+      const db = openTestDatabase();
+      await ingestBootstrap(
+        db,
+        new StubFplApi({ bootstrap: fakeBootstrap({ teams, players: [...players, ...carriers], events }) }),
+        rules,
+      );
+      await ingestFixtures(
+        db,
+        new StubFplApi({
+          fixtures: [
+            // A v B: both have expected goals, so both are on the xG basis.
+            fakeFixture(1, 1, 1, 2, { team_h_score: 1, team_a_score: 1, finished: true }),
+            // C v D: no expected goals recorded, so both fall back to the scoreline - and that
+            // scoreline is what varies between the two runs.
+            fakeFixture(2, 1, 3, 4, {
+              team_h_score: goalGlut,
+              team_a_score: goalGlut,
+              finished: true,
+            }),
+            fakeFixture(3, 2, 1, 2),
+            fakeFixture(4, 2, 3, 4),
+          ],
+        }),
+      );
+      seedClubXg(db, [
+        { playerId: 201, fixtureId: 1, eventId: 1, xgFor: 1.0, xgAgainst: 1.0 },
+        { playerId: 202, fixtureId: 1, eventId: 1, xgFor: 1.0, xgAgainst: 1.0 },
+      ]);
+      return buildProjections(db, 2, rules, weights).find((p) => p.playerId === 101)!.xPts;
+    }
+
+    // One goal each, then six each. The player on Club A never played either of those clubs and
+    // his projection must not have moved a fraction because of them.
+    expect(await build(6)).toBeCloseTo(await build(1), 10);
+  });
+
   it('nudges a club on a hot streak above an out-of-form club with the same rating', async () => {
+    // No expected goals recorded anywhere here, so this is the goals fallback: until the
+    // element-summary data catches up, results are the only evidence there is and the model
+    // uses them rather than treating the whole league as formless.
     const teams = equalStrengthTeams();
     const players = [identicalPlayer(101, 1), identicalPlayer(102, 2)];
     const events = [

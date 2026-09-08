@@ -5,7 +5,7 @@ import type { ProjectedPlayer } from '../domain/types.js';
 import { loadCalibration } from './calibration.js';
 import { scoreDistribution } from './distribution.js';
 import { recentFixturesByPlayer, sumRecent, type RecentFixtureRow } from './recentForm.js';
-import { computeLeagueTable } from './table.js';
+import { computeTeamForm, type TeamForm } from './table.js';
 import { projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
 
 interface PlayerRow {
@@ -279,23 +279,62 @@ export function buildProjections(
 
   const shortRestClubs = clubsWithShortRest(db, fixtures, weights.minutes.rotationRiskRestDaysThreshold);
 
-  // Current league form, blended into club strength. Computed from imported fixture results,
-  // so it needs no separate upload and updates the moment results land. Bounded so a hot start
-  // nudges rather than dominates the API's own strength ratings.
-  const strengthAdjust = new Map<number, number>();
+  // Current form, blended into club strength - separately for attack and defence, and from
+  // expected goals rather than results.
+  //
+  // This used to be one points-per-game number applied to both. Points per game is the most
+  // luck-exposed metric in the game: a defence that has conceded nothing off five expected
+  // goals against reads, on points alone, as the best in the league, and there is no way to
+  // describe a side scoring freely while leaking badly because one number moved both ratings
+  // together. Expected goals stabilise far faster, which is the same reason the player model
+  // already prefers them (attacking.xgWeight) - a belief this app held about players and had
+  // never applied to clubs.
+  const attackAdjust = new Map<number, number>();
+  const defenceAdjust = new Map<number, number>();
   if (weights.teamStrength.tableWeight > 0) {
-    const table = computeLeagueTable(db);
-    const played = table.filter((row) => row.played > 0);
-    if (played.length > 0) {
-      const averagePpg =
-        played.reduce((sum, row) => sum + row.ppg, 0) / played.length || 1;
-      for (const row of played) {
-        const factor = (row.ppg > 0 ? row.ppg / averagePpg : 0.5) ** weights.teamStrength.tableWeight;
-        strengthAdjust.set(row.teamId, Math.min(1.3, Math.max(0.7, factor)));
+    const form = [...computeTeamForm(db).values()].filter((row) => row.matches > 0);
+
+    // Averaged within each basis and never across them. Early in a season some clubs already
+    // have underlying numbers and others do not, and expected goals do not sit on the same
+    // scale as goals actually scored. A club measured in xG against a league average half made
+    // of scorelines would be rated on the gap between two different metrics rather than on its
+    // own form, which is the sort of error that looks like a signal.
+    const averages = new Map<TeamForm['basis'], { forPerMatch: number; againstPerMatch: number }>();
+    for (const basis of ['xg', 'goals'] as const) {
+      const group = form.filter((row) => row.basis === basis);
+      if (group.length === 0) continue;
+      const mean = (pick: (row: TeamForm) => number) =>
+        group.reduce((sum, row) => sum + pick(row), 0) / group.length;
+      averages.set(basis, {
+        forPerMatch: mean((row) => row.forPerMatch),
+        againstPerMatch: mean((row) => row.againstPerMatch),
+      });
+    }
+
+    for (const row of form) {
+      const average = averages.get(row.basis);
+      if (average === undefined) continue;
+
+      // Shrunk toward no adjustment by matches played, the same caution every rate here gets:
+      // two matches of underlying numbers is barely more evidence than two matches of results.
+      const trust = row.matches / (row.matches + weights.teamStrength.formPriorMatches);
+      const bounded = (raw: number): number => {
+        const shrunk = 1 + (raw - 1) * trust;
+        return Math.min(1.3, Math.max(0.7, shrunk ** weights.teamStrength.tableWeight));
+      };
+
+      if (average.forPerMatch > 0 && row.forPerMatch > 0) {
+        attackAdjust.set(row.teamId, bounded(row.forPerMatch / average.forPerMatch));
+      }
+      // Inverted: conceding fewer than average is a *better* defence, and a higher defence
+      // rating is what expectedTeamGoals divides the opponent's attack by.
+      if (average.againstPerMatch > 0 && row.againstPerMatch > 0) {
+        defenceAdjust.set(row.teamId, bounded(average.againstPerMatch / row.againstPerMatch));
       }
     }
   }
-  const adjustFor = (teamId: number): number => strengthAdjust.get(teamId) ?? 1;
+  const attackFor = (teamId: number): number => attackAdjust.get(teamId) ?? 1;
+  const defenceFor = (teamId: number): number => defenceAdjust.get(teamId) ?? 1;
 
   // Every club's fixtures this gameweek: none is a blank, two is a double.
   const fixturesByTeam = new Map<number, FixtureContext[]>();
@@ -307,20 +346,20 @@ export function buildProjections(
     const fallback = weights.teamStrength.fallbackStrength;
 
     push(fixturesByTeam, fixture.teamH, {
-      teamAttack: (home.attackHome ?? fallback) * adjustFor(fixture.teamH),
-      teamDefence: (home.defenceHome ?? fallback) * adjustFor(fixture.teamH),
-      opponentAttack: (away.attackAway ?? fallback) * adjustFor(fixture.teamA),
-      opponentDefence: (away.defenceAway ?? fallback) * adjustFor(fixture.teamA),
+      teamAttack: (home.attackHome ?? fallback) * attackFor(fixture.teamH),
+      teamDefence: (home.defenceHome ?? fallback) * defenceFor(fixture.teamH),
+      opponentAttack: (away.attackAway ?? fallback) * attackFor(fixture.teamA),
+      opponentDefence: (away.defenceAway ?? fallback) * defenceFor(fixture.teamA),
       isHome: true,
       opponentShort: away.shortName,
       difficulty: fixture.difficultyH,
     });
 
     push(fixturesByTeam, fixture.teamA, {
-      teamAttack: (away.attackAway ?? fallback) * adjustFor(fixture.teamA),
-      teamDefence: (away.defenceAway ?? fallback) * adjustFor(fixture.teamA),
-      opponentAttack: (home.attackHome ?? fallback) * adjustFor(fixture.teamH),
-      opponentDefence: (home.defenceHome ?? fallback) * adjustFor(fixture.teamH),
+      teamAttack: (away.attackAway ?? fallback) * attackFor(fixture.teamA),
+      teamDefence: (away.defenceAway ?? fallback) * defenceFor(fixture.teamA),
+      opponentAttack: (home.attackHome ?? fallback) * attackFor(fixture.teamH),
+      opponentDefence: (home.defenceHome ?? fallback) * defenceFor(fixture.teamH),
       isHome: false,
       opponentShort: home.shortName,
       difficulty: fixture.difficultyA,

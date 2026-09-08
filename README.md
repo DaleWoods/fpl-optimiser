@@ -639,6 +639,38 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Club form is expected goals, split into attack and defence
+
+The API's own team ratings are a pre-season view. Current form nudges them
+(`teamStrength.tableWeight`, 0.3), bounded to a 0.7-1.3 multiplier either way so form can move a
+rating but never replace it, and shrunk toward no adjustment by matches played
+(`teamStrength.formPriorMatches`, 5) for the same reason every other rate here is shrunk.
+
+Two things about *how* that nudge is measured changed in `heuristic-0.21.0`.
+
+It used to be **points per game**, which is the most luck-exposed number in football, applied as
+**one factor to both attack and defence**. That has two failures. A side that has conceded
+nothing off five expected goals against reads, on points alone, as the best defence in the
+league — right up until the finishing regresses. And one number cannot describe a side scoring
+freely while leaking badly, because moving it moves both ratings the same way; every club is
+forced onto a single good-to-bad axis.
+
+It is now **expected goals, for and against, held separately**. This is not a new belief — the
+player model already prefers expected goals to actual ones (`attacking.xgWeight`, 0.7) on the
+grounds that they stabilise far faster over a small sample. It was simply never applied to
+clubs, so the app trusted xG for a striker and scorelines for his team in the same projection.
+
+Two details that are easy to get wrong:
+
+- **Expected goals against is a whole-team figure**, recorded against every player who was on the
+  pitch. Summing it across a squad multiplies one match's xGA by eleven, so it is taken as a
+  maximum per fixture while xG *for* is summed.
+- **Clubs with no underlying numbers yet fall back to scorelines**, and are then averaged only
+  against other clubs on that same basis. Expected goals and goals scored are not the same scale;
+  comparing a club measured in one against a league average made partly of the other rates it on
+  the gap between two metrics rather than on its form. Early in a season, when the per-gameweek
+  breakdown lags the results, that mix is the normal state rather than the edge case.
+
 ### Recent form counts for more than the season average
 
 Within "this season's stats", the last several gameweeks are weighted more heavily than the
