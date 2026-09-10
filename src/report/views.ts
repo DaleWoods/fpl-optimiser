@@ -423,7 +423,10 @@ function renderPriorityFixPlan(plan: PriorityFixPlan & { doneOutIds: Set<number>
     ${formatMoney(plan.totalCost)}, ${formatMoney(plan.bankRemaining)} left in the bank.</p>`;
 }
 
-export function renderRecommendation(rec: Recommendation): string {
+export function renderRecommendation(
+  rec: Recommendation,
+  options: { generatedAt?: number } = {},
+): string {
   const head = `<thead><tr><th>Pos</th><th>Player</th><th>Club</th><th>Fixture</th><th>Price</th><th>xPts</th><th>Confidence</th></tr></thead>`;
 
   const starters = rec.eleven.starters
@@ -476,10 +479,17 @@ export function renderRecommendation(rec: Recommendation): string {
           .join('')
       : '';
 
+  const age =
+    options.generatedAt === undefined
+      ? ''
+      : `<span class="muted" style="margin-left:.6rem;font-size:.88rem">Built
+         ${formatDuration(Math.floor(Date.now() / 1000) - options.generatedAt)} ago, from the data
+         on disk now. Rebuild only if something has changed.</span>`;
+
   const body = `
   <p style="margin:0 0 .6rem">
-    <a class="btn ghost" href="/optimise?generate=1">Regenerate</a>
-    <button class="btn danger" data-clear-squad style="margin-left:.4rem">Clear squad</button>
+    <a class="btn ghost" href="/optimise?generate=1">Rebuild</a>
+    <button class="btn danger" data-clear-squad style="margin-left:.4rem">Clear squad</button>${age}
   </p>
 
   ${
@@ -492,7 +502,7 @@ export function renderRecommendation(rec: Recommendation): string {
 
   <div class="grid">
     <div class="stat"><div class="label">Formation</div><div class="value">${escapeHtml(rec.eleven.formation)}</div></div>
-    <div class="stat"><div class="label">Projected</div><div class="value">${rec.eleven.expectedPoints.toFixed(1)}</div></div>
+    <div class="stat"><div class="label">Expected score</div><div class="value">${rec.eleven.expectedPoints.toFixed(1)}</div></div>
     <div class="stat"><div class="label">Squad cost</div><div class="value">${formatMoney(rec.totalCost)}</div></div>
     <div class="stat"><div class="label">In the bank</div><div class="value">${formatMoney(rec.bankRemaining)}</div></div>
   </div>
@@ -760,6 +770,8 @@ export function renderGenerate(options: {
   eventName: string | null;
   squadLoaded: boolean;
   blockedAttempt?: boolean;
+  /** A page was generated before, but the data has moved since - a different sentence. */
+  supersededByNewData?: boolean;
 }): string {
   const { readiness } = options;
 
@@ -787,9 +799,14 @@ export function renderGenerate(options: {
       : ''
   }
 
-  <div class="banner info"><strong>Nothing is generated until you click the button.</strong>
-  A team is only worth acting on when it is built from all the evidence at once, so generation
-  is blocked until this season's players, the fixtures and last season's stats are all in.</div>
+  ${
+    options.supersededByNewData
+      ? `<div class="banner info"><strong>New data has arrived since your last team was
+         built.</strong> Build it again to use it.</div>`
+      : `<div class="banner info"><strong>Nothing is built until you click the button.</strong>
+         A team is only worth acting on when it is built from all the evidence at once, so this
+         waits for this season's players, the fixtures and last season's stats.</div>`
+  }
 
   ${rows}
 
@@ -1159,7 +1176,11 @@ function errorRows(players: GameweekAccuracy['overRated']): string {
   return players
     .map(
       (p) => `<tr>
-        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.name)}${
+          p.inRecommendedXi
+            ? ' <span class="pill" style="background:var(--warn-fg);color:#000">yours</span>'
+            : ''
+        }</td>
         <td>${escapeHtml(p.position)}</td>
         <td>${escapeHtml(p.club)}</td>
         <td>${p.predicted.toFixed(2)}</td>
@@ -1182,20 +1203,23 @@ function gameweekScorecard(gw: SeasonAccuracy['gameweeks'][number]): string {
   const actual = gw.recommendedXiActual;
   const delta = predicted !== null && actual !== null ? actual - predicted : null;
 
-  // Direction is stated in words, so colour signals only *how far out* it was. An
-  // under-projection is not a better kind of wrong than an over-projection.
+  // Direction is stated in words, and names its subject: "too high" on its own left the reader
+  // to work out what was too high - the prediction, the score, or their own team. Colour then
+  // signals only *how far out* it was; guessing low is not a better kind of wrong than high.
   const deltaChip =
     delta === null
-      ? '<span class="delta none">not scored yet</span>'
+      ? '<span class="delta none">not played yet</span>'
       : Math.abs(delta) <= 5
-        ? `<span class="delta close">within ${Math.abs(delta).toFixed(1)}</span>`
-        : `<span class="delta off">${Math.abs(delta).toFixed(1)} too ${delta > 0 ? 'low' : 'high'}</span>`;
+        ? `<span class="delta close">we were close</span>`
+        : `<span class="delta off">we guessed ${Math.abs(delta).toFixed(1)} too ${
+            delta > 0 ? 'low' : 'high'
+          }</span>`;
 
   const foot = [
-    ['You scored', gw.yourActual],
-    ['Best possible', gw.bestPossibleFromSquad],
-    ['Game average', gw.leagueAverage],
-    ['Game best', gw.leagueHighest],
+    ['Your score', gw.yourActual],
+    ['Best you could have done', gw.bestPossibleFromSquad],
+    ['Average manager', gw.leagueAverage],
+    ['Top manager', gw.leagueHighest],
   ]
     .map(
       ([label, value]) =>
@@ -1205,13 +1229,17 @@ function gameweekScorecard(gw: SeasonAccuracy['gameweeks'][number]): string {
     )
     .join('');
 
+  // Naming the subject once, above the pair, is what makes the two numbers readable. "We
+  // projected -> It scored" used two different words for the same thing (this app) and never
+  // said what "it" was, so the row could be read as the reader's own team.
   return `<div class="gw-card">
     <div class="gw-head"><span class="gw-name">Gameweek ${gw.eventId}</span>${deltaChip}</div>
+    <div class="k" style="margin:.1rem 0 .2rem">The team this app told you to play</div>
     <div class="vs">
-      <div class="side"><div class="k">We projected</div>
+      <div class="side"><div class="k">we said</div>
         <div class="v">${predicted !== null ? predicted.toFixed(1) : '<span class="muted">&mdash;</span>'}</div></div>
       <div class="arrow">&rarr;</div>
-      <div class="side"><div class="k">It scored</div>
+      <div class="side"><div class="k">it got</div>
         <div class="v">${actual !== null ? actual : '<span class="muted">&mdash;</span>'}</div></div>
     </div>
     <div class="gw-foot">${foot}</div>
@@ -1234,18 +1262,28 @@ function renderCalibration(
     // "Nothing yet" on its own gives no way to tell "two more gameweeks" apart from "this will
     // never happen because the scoring version keeps moving". The second was the real situation
     // for a while, and it was completely invisible from here.
+    // "Nothing yet" reads as "it is not measuring anything", which is wrong and is the
+    // complaint this answers: it measures every week (see the reliability figures below) and
+    // withholds the *correction* until it has enough of them under one scoring version. Saying
+    // which gameweek it becomes usable turns an unexplained blank into a countdown.
     const detail = progress
-      ? ` <strong>${progress.gradedUnderCurrentModel} of ${progress.needed}</strong> graded
-         gameweeks are behind the current scoring model.` +
-        (progress.gradedUnderOtherModels > 0
-          ? ` Another ${progress.gradedUnderOtherModels} were graded under earlier scoring and
-             deliberately do not count &mdash; a correction learned from a model that has since
-             been fixed would be correcting a mistake that no longer exists.`
-          : '')
+      ? (() => {
+          const short = Math.max(0, progress.needed - progress.gradedUnderCurrentModel);
+          const stale =
+            progress.gradedUnderOtherModels > 0
+              ? ` The ${progress.gradedUnderOtherModels} graded before that change do not count:
+                 a correction learned from scoring that has since been fixed would be correcting
+                 a mistake that no longer exists.`
+              : '';
+          return ` It has <strong>${progress.gradedUnderCurrentModel} of the
+            ${progress.needed}</strong> it needs, so it starts correcting after
+            <strong>${short} more gameweek${short === 1 ? '' : 's'}</strong>.${stale}`;
+        })()
       : '';
     return `<h2>What the model has learned</h2>
-      <div class="banner info">Nothing yet. A correction needs several graded gameweeks behind
-      it &mdash; before that, what looks like a lean is just one week's variance.${detail}</div>`;
+      <div class="banner info">It is measuring itself every week &mdash; see how far out it
+      typically is, below. What it will not do yet is <em>correct</em> itself: one or two weeks
+      of a lean is just variance, and acting on it would make the projections worse.${detail}</div>`;
   }
 
   const rows = factors
@@ -1313,11 +1351,11 @@ export function renderAccuracy(
           const perWeek = (totalActual - totalPredicted) / graded.length;
           const direction =
             Math.abs(perWeek) < 2
-              ? `close &mdash; within ${Math.abs(perWeek).toFixed(1)} points a week on average`
+              ? `within ${Math.abs(perWeek).toFixed(1)} points a week`
               : `${Math.abs(perWeek).toFixed(1)} points a week too ${perWeek > 0 ? 'low' : 'high'}`;
-          return `Across ${graded.length} graded gameweek${graded.length === 1 ? '' : 's'} the
-            recommended XI was projected at <strong>${totalPredicted.toFixed(1)}</strong> and
-            scored <strong>${totalActual}</strong>. That is ${direction}.`;
+          return `Over ${graded.length} graded gameweek${graded.length === 1 ? '' : 's'} we said
+            the team we picked would score <strong>${totalPredicted.toFixed(1)}</strong>. It
+            scored <strong>${totalActual}</strong> &mdash; ${direction}.`;
         })();
 
   const seasonRows = season.gameweeks
@@ -1347,23 +1385,21 @@ export function renderAccuracy(
   ${
     season.gameweeks.length > 0
       ? `${headline ? `<div class="banner info">${headline}</div>` : ''}
-         <h2>Projected vs actual, week by week</h2>
+         <h2>Week by week</h2>
          <div class="gw-cards">${scorecards}</div>
          <details class="explain">
            <summary>What am I looking at?</summary>
            <div class="inner">
-             <p><strong>We projected</strong> is what the XI this app recommended before the
-             deadline was expected to score. <strong>It scored</strong> is what those same
-             players really went on to score, with FPL's auto-sub rules replayed: a starter who
-             blanked is replaced by the first eligible bench player who played, and the
-             captain's double moves to the vice-captain if the captain blanked.</p>
-             <p>It does <em>not</em> include transfer hits or chip multipliers, so it is not
-             your live FPL score. That is the separate <strong>You scored</strong> figure,
-             taken straight from your own entry history.</p>
-             <p><strong>Best possible</strong> is the highest-scoring legal XI that could have
-             been picked from that squad, known only in hindsight. The gap between it and
-             &ldquo;it scored&rdquo; is what a perfect projection would have been worth, in
-             real points &mdash; it is the size of the prize, not a criticism.</p>
+             <p>Each card grades <strong>this app's advice</strong>, not your team.
+             <strong>we said</strong> is what the XI it told you to play was expected to score;
+             <strong>it got</strong> is what that same XI really scored, with auto-subs and the
+             vice-captain replayed as FPL would.</p>
+             <p><strong>Your score</strong> is separate: your real FPL total, including any hits
+             and chips. The two differ whenever you did not follow the advice exactly.</p>
+             <p><strong>Best you could have done</strong> is the highest-scoring legal XI from
+             that same squad, known only afterwards. The gap to &ldquo;it got&rdquo; is what a
+             perfect prediction would have been worth &mdash; the size of the prize, not a
+             telling-off.</p>
            </div>
          </details>`
       : ''
@@ -1415,19 +1451,26 @@ export function renderAccuracy(
 
   ${
     latest && latest.playersScored > 0
-      ? `<h2>Gameweek ${latest.eventId}: where it went wrong</h2>
+      ? `<h2>Gameweek ${latest.eventId} in detail</h2>
          <div class="grid">
            <div class="stat"><div class="label">Typical miss</div><div class="value">${latest.meanAbsoluteError.toFixed(2)}</div></div>
            <div class="stat"><div class="label">Leaning</div><div class="value">${latest.bias > 0 ? '+' : ''}${latest.bias.toFixed(2)}</div></div>
-           <div class="stat"><div class="label">Big misses (RMSE)</div><div class="value">${latest.rootMeanSquareError.toFixed(2)}</div></div>
+           <div class="stat"><div class="label">Big misses</div><div class="value">${latest.rootMeanSquareError.toFixed(2)}</div></div>
            <div class="stat"><div class="label">Model</div><div class="value" style="font-size:.95rem">${escapeHtml(latest.modelVersion ?? 'unknown')}</div></div>
          </div>
 
-         <h3 style="margin-top:1.4rem">Most over-rated <span class="muted" style="font-weight:400">&mdash; we said more than they scored</span></h3>
+         <p class="muted" style="font-size:.88rem;margin:1.4rem 0 .4rem">These two lists are not
+         opposites, and they never will be. A player reaches the first by being rated highly,
+         which is also how a player gets picked &mdash; so
+         <span class="pill" style="background:var(--warn-fg);color:#000">yours</span> turns up
+         here and almost never below, where the players were rated near zero and so were never
+         going to be picked. The first list is the one that cost you points.</p>
+
+         <h3 style="margin:0">We rated them too highly</h3>
          <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${errHead}
            <tbody>${errorRows(latest.overRated)}</tbody></table></div></div>
 
-         <h3>Most under-rated <span class="muted" style="font-weight:400">&mdash; they beat the projection</span></h3>
+         <h3>We rated them too low</h3>
          <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>${errHead}
            <tbody>${errorRows(latest.underRated)}</tbody></table></div></div>
 
@@ -1460,7 +1503,7 @@ export function renderAccuracy(
            <summary>Every number, in one table</summary>
            <div class="inner"><div class="scroll"><table>
              <thead><tr><th>GW</th><th>Players</th><th>Typical miss</th><th>Leaning</th>
-               <th>Projected</th><th>Our XI scored</th><th>Best possible</th><th>You scored</th>
+               <th>We said</th><th>It got</th><th>Best possible</th><th>Your score</th>
                <th>Game average</th><th>Game best</th></tr></thead>
              <tbody>${seasonRows}</tbody></table></div></div>
          </details>`

@@ -10,6 +10,11 @@ import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
+import {
+  hasStaleCachedRecommendation,
+  loadCachedRecommendation,
+  saveCachedRecommendation,
+} from '../model/cache.js';
 import { confirmTransfer, unconfirmTransfer } from '../model/confirmedTransfers.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
@@ -294,6 +299,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           return;
         }
       } else if (!wantsGenerate || !readiness.ready) {
+        // Coming back to the tab is not a request to rebuild. If a page was generated from
+        // exactly the data now on disk, show it - the button is for when something changed, and
+        // demanding it for a look trains people to click straight past the one screen meant to
+        // make them stop.
+        const cached =
+          !wantsGenerate && event
+            ? loadCachedRecommendation(db, event.id, config.app.teamId ?? null, config.weights.modelVersion)
+            : null;
+        if (cached) {
+          response.writeHead(200, HTML);
+          response.end(renderRecommendation(cached.recommendation, { generatedAt: cached.generatedAt }));
+          return;
+        }
+
         response.writeHead(readiness.ready || !wantsGenerate ? 200 : 409, HTML);
         response.end(
           renderGenerate({
@@ -301,6 +320,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             eventName: event?.name ?? null,
             squadLoaded,
             blockedAttempt: wantsGenerate && !readiness.ready,
+            // Distinguishes "never generated" from "generated, but the data has moved since",
+            // which are different situations and want different sentences.
+            supersededByNewData: !wantsGenerate && hasStaleCachedRecommendation(db),
           }),
         );
         return;
@@ -323,6 +345,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           return;
         }
 
+        saveCachedRecommendation(db, result, config.app.teamId ?? null);
         response.writeHead(200, HTML);
         response.end(renderRecommendation(result));
       } catch (cause) {

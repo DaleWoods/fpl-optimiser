@@ -265,7 +265,9 @@ describe('formatting helpers', () => {
 
   it('formats durations readably', () => {
     expect(formatDuration(null)).toBe('never');
-    expect(formatDuration(30)).toBe('<1m');
+    // Deliberately not '<1m': it goes straight into HTML, where the '<' would open a tag.
+    expect(formatDuration(30)).toBe('under a minute');
+    expect(formatDuration(30)).not.toContain('<');
     expect(formatDuration(3600)).toBe('1h');
     expect(formatDuration(90000)).toBe('1d 1h');
   });
@@ -531,8 +533,8 @@ describe('report server', () => {
       const body = await response.text();
 
       expect(response.status).toBe(200);
-      expect(body).toMatch(/Nothing is generated until you click the button/);
-      expect(body).not.toMatch(/Regenerate/);
+      expect(body).toMatch(/Nothing is built until you click the button/);
+      expect(body).not.toMatch(/Rebuild/);
     });
 
     it('lists what is missing when nothing has been imported yet', async () => {
@@ -570,7 +572,48 @@ describe('report server', () => {
       const body = await response.text();
 
       expect(response.status).toBe(200);
-      expect(body).toMatch(/Regenerate/);
+      expect(body).toMatch(/Rebuild/);
+    });
+
+    it('shows the team again on a plain visit, instead of demanding the button', async () => {
+      // The complaint this fixes: leaving My Team and coming back threw the team away and asked
+      // for the button again, which then produced the same answer from the same data. Looking is
+      // not building.
+      const base = await start();
+      await importReadyData(base);
+      await fetch(`${base}/optimise?generate=1`);
+
+      const body = await (await fetch(`${base}/optimise`)).text();
+      expect(body).toMatch(/Expected score/);
+      expect(body).toMatch(/Built[\s\S]*?ago/);
+      expect(body).not.toMatch(/Nothing is built until you click/);
+    });
+
+    it('asks for the button again once the data behind the team has changed', async () => {
+      // The other half, and the reason it is safe. A stored page is only shown while it still
+      // describes the data on disk; a fresh import must not be quietly ignored.
+      const base = await start();
+      await importReadyData(base);
+      await fetch(`${base}/optimise?generate=1`);
+      expect(await (await fetch(`${base}/optimise`)).text()).toMatch(/Built[\s\S]*?ago/);
+
+      await importSlot(base, 'fixtures', [
+        fakeFixture(1, 1, 1, 2), fakeFixture(2, 1, 3, 4), fakeFixture(3, 1, 1, 3),
+      ]);
+
+      const body = await (await fetch(`${base}/optimise`)).text();
+      expect(body).not.toMatch(/Built[\s\S]*?ago/);
+      expect(body).toMatch(/New data has arrived since your last team/);
+    });
+
+    it('still refuses to build anything on a first visit', async () => {
+      // The gate itself is untouched: with nothing stored, visiting must not silently build.
+      const base = await start();
+      await importReadyData(base);
+
+      const body = await (await fetch(`${base}/optimise`)).text();
+      expect(body).toMatch(/Nothing is built until you click the button/);
+      expect(body).not.toMatch(/Expected score/);
     });
 
     it('serves the JSON recommendation once ready, without needing generate=1', async () => {
@@ -703,9 +746,9 @@ describe('accuracy page', () => {
     // The whole point of the page. Before this, a gameweek's projected total was not on the
     // page at all - only what it went on to score - so there was nothing to learn from.
     const page = renderAccuracy(season(), null);
-    expect(page).toMatch(/We projected/);
+    expect(page).toMatch(/we said/);
     expect(page).toMatch(/62\.5/);
-    expect(page).toMatch(/It scored/);
+    expect(page).toMatch(/it got/);
     expect(page).toMatch(/>55</);
   });
 
@@ -714,13 +757,13 @@ describe('accuracy page', () => {
       season({ gameweeks: [gameweek({ recommendedXiPredicted: 20, recommendedXiActual: 75 })] }),
       null,
     );
-    expect(under).toMatch(/55\.0 too low/);
+    expect(under).toMatch(/we guessed 55\.0 too low/);
 
     const over = renderAccuracy(
       season({ gameweeks: [gameweek({ recommendedXiPredicted: 75, recommendedXiActual: 20 })] }),
       null,
     );
-    expect(over).toMatch(/55\.0 too high/);
+    expect(over).toMatch(/we guessed 55\.0 too high/);
   });
 
   it('does not claim a miss for a gameweek that has not been scored yet', () => {
@@ -728,7 +771,7 @@ describe('accuracy page', () => {
       season({ gameweeks: [gameweek({ recommendedXiActual: null, bestPossibleFromSquad: null })] }),
       null,
     );
-    expect(page).toMatch(/not scored yet/);
+    expect(page).toMatch(/not played yet/);
     expect(page).not.toMatch(/too (low|high)/);
   });
 
@@ -743,7 +786,7 @@ describe('accuracy page', () => {
       null,
     );
     // 124 projected against 157 actual, over two gameweeks: 16.5 a week too low.
-    expect(page).toMatch(/projected at <strong>124\.0<\/strong>/);
+    expect(page).toMatch(/would score <strong>124\.0<\/strong>/);
     expect(page).toMatch(/scored <strong>157<\/strong>/);
     expect(page).toMatch(/16\.5 points a week too low/);
   });
@@ -752,7 +795,7 @@ describe('accuracy page', () => {
     const page = renderAccuracy(season(), null);
     expect(page).toMatch(/<summary>What am I looking at\?<\/summary>/);
     // The auto-sub caveat is still there for anyone who wants it - just not in the way.
-    expect(page).toMatch(/auto-sub rules/);
+    expect(page).toMatch(/auto-subs/);
   });
 
   it('says how far off the self-correction is, and what is not counting toward it', () => {
@@ -765,8 +808,8 @@ describe('accuracy page', () => {
       gradedUnderOtherModels: 2,
     });
 
-    expect(page).toMatch(/<strong>1 of 3<\/strong>\s*graded/);
-    expect(page).toMatch(/Another 2 were graded under earlier scoring/);
+    expect(page).toMatch(/<strong>1 of the\s*3<\/strong>\s*it needs/);
+    expect(page).toMatch(/The 2 graded before that change do not count/);
   });
 
   it('names a projected gameweek that cannot be graded yet, instead of dropping it', () => {
@@ -788,7 +831,7 @@ describe('accuracy page', () => {
   it('says nothing at all when there is nothing graded', () => {
     const page = renderAccuracy({ gameweeks: [], pending: [], overall: null, notes: ['Nothing to grade yet.'] }, null);
     expect(page).toMatch(/Nothing to grade yet\./);
-    expect(page).not.toMatch(/We projected/);
+    expect(page).not.toMatch(/The team this app told you to play/);
   });
 });
 

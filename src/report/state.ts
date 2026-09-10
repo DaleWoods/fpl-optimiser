@@ -285,6 +285,8 @@ export function formatDuration(seconds: number | null): string {
   if (days) parts.push(`${days}d`);
   if (hours) parts.push(`${hours}h`);
   if (!days && minutes) parts.push(`${minutes}m`);
-  if (parts.length === 0) parts.push('<1m');
+  // Not '<1m': every caller drops this straight into HTML, where a leading '<' opens what the
+  // parser takes for a tag and silently eats the rest of the sentence.
+  if (parts.length === 0) parts.push('under a minute');
   return parts.join(' ');
 }

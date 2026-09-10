@@ -25,6 +25,17 @@ export interface PlayerError {
   actual: number;
   error: number;
   confidence: string | null;
+  /**
+   * Whether this app told you to start the player that gameweek.
+   *
+   * Without it these two tables look symmetrical and are not. A player only reaches the
+   * over-rated list by being projected high, and projecting high is how a player gets
+   * recommended - so the app's own picks are structurally over-represented there. The
+   * under-rated list is the mirror: it is made of players projected near zero, which is
+   * precisely why they were never picked. Marking them turns a misleading pair of tables into
+   * the useful question - how many of the misses were ones you actually acted on.
+   */
+  inRecommendedXi: boolean;
 }
 
 export interface GameweekAccuracy {
@@ -463,26 +474,6 @@ export function evaluateGameweek(
     };
   });
 
-  const withError: PlayerError[] = rows.map((row) => ({
-    playerId: row.playerId,
-    name: row.name,
-    position: row.position,
-    club: row.club,
-    predicted: Math.round(row.predicted * 100) / 100,
-    actual: row.actual,
-    error: Math.round((row.predicted - row.actual) * 100) / 100,
-    confidence: row.confidence,
-  }));
-
-  const sorted = [...withError].sort((a, b) => b.error - a.error);
-  const overRated = sorted.slice(0, 5);
-  const underRated = [...sorted].reverse().slice(0, 5);
-
-  // How the advice actually fared, if a recommendation was stored before the deadline.
-  let recommendedXiActual: number | null = null;
-  let recommendedXiPredicted: number | null = null;
-  let bestPossibleFromSquad: number | null = null;
-
   // kind='xi' only: a kind='squad' row is a from-scratch build (saved whenever no owned squad
   // could be loaded that time), never actually "your" recommended XI, so grading against it
   // would score a fantasy team that was never followed. Scoped to entry_id for the same reason
@@ -494,6 +485,40 @@ export function evaluateGameweek(
        ORDER BY created_at DESC LIMIT 1`,
     )
     .get(eventId, entryId) as { detail: string } | undefined;
+
+  // Which players the stored advice actually put in the XI, for the marker on the tables below.
+  const recommendedIds = new Set<number>();
+  if (stored) {
+    try {
+      const picked = JSON.parse(stored.detail) as { starters?: { playerId: number }[] };
+      for (const starter of picked.starters ?? []) recommendedIds.add(starter.playerId);
+    } catch {
+      // A malformed stored recommendation costs a marker, never the page.
+    }
+  }
+
+  const withError: PlayerError[] = rows.map((row) => ({
+    playerId: row.playerId,
+    name: row.name,
+    position: row.position,
+    club: row.club,
+    predicted: Math.round(row.predicted * 100) / 100,
+    actual: row.actual,
+    error: Math.round((row.predicted - row.actual) * 100) / 100,
+    confidence: row.confidence,
+    inRecommendedXi: recommendedIds.has(row.playerId),
+  }));
+
+  const sorted = [...withError].sort((a, b) => b.error - a.error);
+  const overRated = sorted.slice(0, 5);
+  const underRated = [...sorted].reverse().slice(0, 5);
+
+  // How the advice actually fared, if a recommendation was stored before the deadline.
+  let recommendedXiActual: number | null = null;
+  let recommendedXiPredicted: number | null = null;
+  let bestPossibleFromSquad: number | null = null;
+
+
 
   if (stored) {
     try {

@@ -639,6 +639,54 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Looking at the team is not rebuilding it
+
+Generation stays explicit - a team is only worth acting on when it is built from all the evidence
+at once. That rule was being applied to *looking* as well: leaving My Team and coming back threw
+the page away and demanded the button again, which then produced the same answer from the same
+data. Clicking past a gate that never says no is how you learn to ignore it.
+
+The question that actually matters is whether the team on screen was built from the data
+currently on disk, which is a question about the inputs. So `cached_recommendation` stores the
+last generated page next to a fingerprint of every input the projections read, and a plain visit
+serves it back with the age it was built at. A new import moves the fingerprint, the stored page
+stops matching, and the button comes back - now saying *why* ("new data has arrived since your
+last team was built") rather than repeating the first-run explanation.
+
+The fingerprint is counts **and** maximum timestamps, per table. A timestamp alone misses a
+deletion, since clearing a squad leaves the surviving rows untouched; a count alone misses a
+same-size overwrite, which is exactly what re-importing a bootstrap file is.
+
+### Fewer words, and the same word for the same thing
+
+The app had four names for one idea - *projected*, *xPts*, *expected points*, *we projected* -
+and used "we" and "it" for itself in adjacent labels without ever saying what "it" was. On the
+Accuracy page that made a scorecard genuinely unreadable: `We projected 46.7 -> It scored 34`
+next to `You scored 45` invited the reading that two of those three were your team.
+
+The subject is now named once, above the pair - **the team this app told you to play** - and the
+labels shrink to **we said** and **it got**. Your own total is **your score**. A gameweek chip
+that read `12.7 too high` (too high *what?*) now reads **we guessed 12.7 too high**. The My Team
+tile called *Projected* is **expected score**.
+
+Two further things the page was getting wrong about itself:
+
+- **"What the model has learned: nothing yet"** read as *it is not measuring anything*, which is
+  false - it grades every gameweek, and those numbers are further down the same page. What it
+  withholds is the *correction*, until enough gameweeks sit under one scoring version. It now
+  says how many it has, how many more it needs, and that the earlier ones do not count because
+  the scoring they measured has since changed.
+- **Most over-rated / most under-rated are not opposites.** A player only reaches the first list
+  by being rated highly, which is also how a player gets recommended - so this app's own picks
+  are structurally over-represented there, and structurally absent from the second, which is made
+  of players rated near zero and therefore never picked. Presented side by side as a symmetrical
+  pair, that looked like a bug in the advice. The players you were actually told to start are now
+  marked, and the asymmetry is stated instead of left to be inferred.
+
+`formatDuration` also returned the literal `<1m`, which every caller dropped straight into HTML,
+where the `<` opens what the parser takes for a tag and eats the rest of the sentence. It returns
+"under a minute".
+
 ### Saying how sure it is, in the heading and not just the small print
 
 Three places where the app stated more confidence than it had. None of them changed a number;
