@@ -264,6 +264,9 @@
       "to sit behind a || that short-circuits only on exactly zero, so ceilingWeight was dead",
       "config affecting nothing at all.",
       "haulThreshold 10: a double-figure return is what a captaincy is actually trying to catch.",
+  "tooCloseMargin 1.0: display only. A captaincy doubles one score, so a gap smaller than",
+  "this is not a finding - it is two similar bets, and the page says so rather than dressing",
+  "an arbitrary winner as a verdict. Never changes who is captained.",
       "tripleCaptainUsesCeiling applies that same bounded bonus to Triple Captain timing. It used",
       "to rank gameweeks on the raw ceiling, which was wrong: a 90th percentile of a discrete",
       "distribution saturates, so a double gameweek raised the captain's expected gain far more",
@@ -274,6 +277,7 @@
     "ceilingWeight": 0.1,
     "maxCeilingBonus": 0.6,
     "haulThreshold": 10,
+  "tooCloseMargin": 1.0,
     "tiebreakEpsilon": 0.35,
     "tripleCaptainUsesCeiling": true
   },

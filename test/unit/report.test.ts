@@ -10,6 +10,7 @@ import {
   renderAccuracy,
   renderDashboard,
   renderImport,
+  renderChips,
   renderRecommendation,
 } from '../../src/report/views.js';
 import { formatDuration, formatMoney, getStateOfPlay } from '../../src/report/state.js';
@@ -862,10 +863,14 @@ describe('priority-fix team on My Team', () => {
       transfers: [], transferPlan: null, previousComparison: null, notes: [],
       confirmedTransfers: [],
       playersConsidered: 640, lowConfidence: false,
+      captaincy: {
+        runnerUpName: starters[4]!.name, runnerUpXPts: starters[4]!.xPts,
+        margin: starters[9]!.xPts - starters[4]!.xPts, tooClose: false,
+      },
       evidence: {
         intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
         intelPriceMismatches: 0, contextNotes: [], eliteSampleSize: 0, usingPreviousSeason: 0,
-        horizonGameweeks: 5, calibration: [],
+        lastSeasonPlayers: 640, horizonGameweeks: 5, calibration: [],
       },
       priorityFixPlan: {
         moves: [
@@ -988,5 +993,127 @@ describe('priority-fix team on My Team', () => {
     rec.priorityFixPlan = null;
     const page = renderRecommendation(rec as never);
     expect(page).not.toMatch(/Your team with every priority fix/);
+  });
+});
+
+describe('saying how sure it is', () => {
+  const pitchPlayer = (name: string, xPts: number) => ({
+    ...player({ name, position: 'MID', xPts, clubId: 1, price: 90 }),
+    fixtures: [{ opponentShort: 'AVL', isHome: true, difficulty: 3 }],
+  });
+
+  /** A minimal My Team recommendation - only the fields these assertions read. */
+  function rec(overrides: Record<string, unknown> = {}) {
+    const starters = Array.from({ length: 11 }, (_, i) => pitchPlayer(`P${i}`, 5 - i * 0.1));
+    return {
+      mode: 'existing-squad', eventId: 4, eventName: 'Gameweek 4', deadlineIso: null,
+      modelVersion: 'heuristic-0.21.0', generatedAt: 0,
+      squad: starters, totalCost: 1000, bankRemaining: 5,
+      eleven: {
+        starters, bench: [], captain: pitchPlayer('Captain', 6.7),
+        viceCaptain: pitchPlayer('Runner Up', 6.0), formation: '3-4-3', expectedPoints: 52.8,
+      },
+      transfers: [], transferPlan: null, priorityFixPlan: null, confirmedTransfers: [],
+      previousComparison: null, notes: [], playersConsidered: 655, lowConfidence: true,
+      captaincy: { runnerUpName: 'Runner Up', runnerUpXPts: 6.0, margin: 0.7, tooClose: true },
+      evidence: {
+        intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
+        intelPriceMismatches: 0, contextNotes: [], eliteSampleSize: 0,
+        usingPreviousSeason: 0, lastSeasonPlayers: 0, horizonGameweeks: 16, calibration: [],
+      },
+      ...overrides,
+    };
+  }
+
+  const withEvidence = (patch: Record<string, unknown>) =>
+    rec({ evidence: { ...rec().evidence, ...patch } });
+
+  /** The templates wrap across lines; a browser collapses that, so the assertions do too. */
+  const render = (input: unknown) =>
+    renderRecommendation(input as never).replace(/\s+/g, ' ');
+
+
+  it('stops claiming last season is missing once the season is under way', () => {
+    // The bug this replaces: the page derived "no last-season history" from how many players
+    // were being *projected from* last season's rates, which is nobody from the moment this
+    // season has minutes - so from gameweek 2 onward it told every reader their history was
+    // missing whether it was there or not. It is now counted from the table itself.
+    const page = render(withEvidence({ lastSeasonPlayers: 611 }) as never);
+    expect(page).not.toMatch(/No last-season history loaded/);
+    expect(page).toMatch(/611 players have last-season history/);
+  });
+
+  it('still says so loudly when last season really is missing, and what it costs', () => {
+    const page = render(withEvidence({ lastSeasonPlayers: 0 }) as never);
+    expect(page).toMatch(/No last-season history loaded/);
+    // Not just "missing" - what it does to the numbers, which is the part that decides
+    // whether a reader bothers.
+    expect(page).toMatch(/shrunk toward zero/);
+  });
+
+  it('keeps the pre-season wording when rates really are taken from last season', () => {
+    const page = render(withEvidence({ lastSeasonPlayers: 611, usingPreviousSeason: 42 }));
+    expect(page).toMatch(/42 player\(s\) projected from last season's rates/);
+  });
+
+  it('admits when the captaincy is a coin toss rather than a finding', () => {
+    const page = render(rec());
+    expect(page).toMatch(/Runner Up projects 6\.0/);
+    expect(page).toMatch(/two similar bets/);
+    // The caveat has to name the reason it is weak this particular week.
+    expect(page).toMatch(/low confidence/);
+  });
+
+  it('states a clear captaincy plainly, with the gap that makes it clear', () => {
+    const page = render(
+      rec({ captaincy: { runnerUpName: 'Runner Up', runnerUpXPts: 3.1, margin: 3.6, tooClose: false } }),
+    );
+    expect(page).toMatch(/Clear of Runner Up \(3\.1\) by 3\.6/);
+    expect(page).not.toMatch(/two similar bets/);
+  });
+
+  it('explains a captain who projects below the man he was preferred to', () => {
+    // Possible because a bounded upside bonus can prefer the better shape at the same average,
+    // and it is the single most confusing pick the page can produce if left unexplained.
+    const page = render(
+      rec({ captaincy: { runnerUpName: 'Runner Up', runnerUpXPts: 7.0, margin: -0.3, tooClose: true } }),
+    );
+    expect(page).toMatch(/higher/);
+    expect(page).toMatch(/more upside/);
+  });
+});
+
+describe('chip advice headline', () => {
+  const advice = (confident: boolean) => ({
+    horizon: [{ eventId: 4, fixtureCount: 10, doubleClubs: [], blankClubs: [], squadDoubles: 0, squadBlanks: 0 }],
+    notes: [],
+    recommendations: [{
+      chip: '3xc', chipName: 'Triple Captain', half: 1 as const, recommendedEvent: 4,
+      expectedGain: 6.2, confident,
+      reason: confident ? 'GW4 is worth about 6.2 extra points.' : 'No standout week. 16 gameweeks are within 0.75 point(s) of each other.',
+      alternatives: [], warning: null,
+    }],
+  });
+
+  it('does not dress a tied gameweek as the week it found', () => {
+    // The model had already worked this out - it set confident=false and said so in the
+    // paragraph. The heading printed a bold GW4 anyway, which is what a reader actually takes
+    // in, and it contradicted the sentence directly beneath it. A chip is worth one play a
+    // season; that heading was the most expensive sentence on the page.
+    const page = renderChips(advice(false) as never, 4).replace(/\s+/g, ' ');
+    // Scoped to the card heading: the fixtures table further down legitimately bolds every
+    // gameweek it lists, and matching the whole page would pass on that instead.
+    const heading = page.match(/<h3>.*?<\/h3>/)![0];
+    expect(heading).toMatch(/no standout week &mdash; hold/);
+    expect(heading).not.toMatch(/<strong>GW4<\/strong>/);
+    // The tied week is still named, just in the body where the caveat travels with it.
+    expect(page).toMatch(/No standout week\. 16 gameweeks/);
+  });
+
+  it('still names the week plainly when it really has found one', () => {
+    const page = renderChips(advice(true) as never, 4).replace(/\s+/g, ' ');
+    expect(page.match(/<h3>.*?<\/h3>/)![0]).toMatch(/<strong>GW4<\/strong>/);
+    expect(page).toMatch(/\+6\.2 pts/);
+    expect(page).not.toMatch(/no standout week/i);
   });
 });

@@ -292,6 +292,20 @@ export interface Recommendation {
   notes: string[];
   playersConsidered: number;
   lowConfidence: boolean;
+  /**
+   * Whether the captain is clear of the runner-up, or just first past a coin toss.
+   *
+   * The armband doubles one score, and a gap of a few tenths between two players is not a
+   * finding - especially while most projections are low confidence, which is exactly when the
+   * page was stating the pick most confidently. Presenting an arbitrary winner as a verdict is
+   * the same mistake the chip advisor already refuses to make with a tied gameweek.
+   */
+  captaincy: {
+    runnerUpName: string;
+    runnerUpXPts: number;
+    margin: number;
+    tooClose: boolean;
+  } | null;
 
   /** Where the evidence behind these projections came from. */
   evidence: {
@@ -303,6 +317,13 @@ export interface Recommendation {
     contextNotes: string[];
     eliteSampleSize: number;
     usingPreviousSeason: number;
+    /**
+     * Players with last-season history stored. Counted from the table itself, not inferred from
+     * usingPreviousSeason - that only counts players whose rates are being *taken* from last
+     * season, which is nobody once this season is under way, whether the history is there or
+     * not. Reporting one as the other told every mid-season reader their history was missing.
+     */
+    lastSeasonPlayers: number;
     /** How many gameweeks transfers and captaincy were actually judged over. */
     horizonGameweeks: number;
     /**
@@ -1145,6 +1166,11 @@ export async function recommend(
     usingPreviousSeason: projections.filter((p) =>
       p.reasons.some((r) => r.includes('Rates are from')),
     ).length,
+    lastSeasonPlayers: (
+      db
+        .prepare('SELECT COUNT(DISTINCT player_id) AS n FROM player_season_history')
+        .get() as { n: number }
+    ).n,
     horizonGameweeks: horizon.gameweeks.length,
     calibration: weights.calibration.enabled
       ? [...loadCalibration(db, weights.modelVersion).values()].sort((a, b) =>
@@ -1257,6 +1283,7 @@ export async function recommend(
       notes,
       playersConsidered: projections.length,
       lowConfidence,
+      captaincy: describeCaptaincy(selection.eleven, weights),
       evidence,
     };
   }
@@ -1476,7 +1503,29 @@ export async function recommend(
     notes,
     playersConsidered: projections.length,
     lowConfidence,
+    captaincy: describeCaptaincy(eleven, weights),
     evidence,
+  };
+}
+
+/**
+ * How clear the captain is of the next-best option in the same XI.
+ *
+ * The vice-captain is that runner-up by construction: it is the top of the risk-adjusted sort
+ * once the captain is removed. A negative margin is possible and worth showing rather than
+ * hiding - it means the bounded upside bonus preferred a slightly lower projection for its
+ * shape, which is the single most confusing pick this page can produce if left unexplained.
+ */
+function describeCaptaincy(
+  eleven: { captain: { name: string; xPts: number }; viceCaptain: { name: string; xPts: number } },
+  weights: ModelWeights,
+): Recommendation['captaincy'] {
+  const margin = eleven.captain.xPts - eleven.viceCaptain.xPts;
+  return {
+    runnerUpName: eleven.viceCaptain.name,
+    runnerUpXPts: round(eleven.viceCaptain.xPts),
+    margin: round(margin),
+    tooClose: margin <= weights.captain.tooCloseMargin,
   };
 }
 

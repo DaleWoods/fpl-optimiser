@@ -510,6 +510,26 @@ export function renderRecommendation(rec: Recommendation): string {
             } &mdash; the armband doubles one score, so the shape of it matters, not just the
             average.</span>`
          : ''
+     }${
+       rec.captaincy === null
+         ? ''
+         : rec.captaincy.tooClose
+           ? ` <span class="muted">${escapeHtml(rec.captaincy.runnerUpName)} projects
+              ${rec.captaincy.runnerUpXPts.toFixed(1)}${
+                rec.captaincy.margin < 0
+                  ? ' - <strong>higher</strong>, and was passed over only because the ' +
+                    'captain carries more upside for the same average'
+                  : `, ${Math.abs(rec.captaincy.margin).toFixed(1)} behind`
+              }. That is inside the margin where this model cannot honestly separate two
+              players${
+                rec.lowConfidence
+                  ? ', and most projections this week are low confidence'
+                  : ''
+              }, so treat it as two similar bets rather than a verdict - your own read on the
+              fixture is worth as much here.</span>`
+           : ` <span class="muted">Clear of ${escapeHtml(rec.captaincy.runnerUpName)}
+              (${rec.captaincy.runnerUpXPts.toFixed(1)}) by
+              ${rec.captaincy.margin.toFixed(1)}.</span>`
      }</p>
 
   ${
@@ -616,12 +636,17 @@ export function renderRecommendation(rec: Recommendation): string {
   <div class="card"><ul class="tight">
     <li>${rec.playersConsidered} players considered, model ${escapeHtml(rec.modelVersion)}</li>
     <li>${
-      rec.evidence.usingPreviousSeason > 0
-        ? `${rec.evidence.usingPreviousSeason} player(s) projected from last season's rates,
-           because this season has no minutes yet`
-        : `<strong>No last-season history loaded.</strong> Import it on the
-           <a href="/import">Import Data</a> tab to project from real rates rather than the
-           API's own estimate`
+      rec.evidence.lastSeasonPlayers === 0
+        ? `<strong>No last-season history loaded.</strong> Import it on the
+           <a href="/import">Import Data</a> tab. Without it every thin rate this season is
+           shrunk toward zero rather than toward what the player actually did, which roughly
+           halves each projection and squeezes the good players toward the ordinary ones`
+        : rec.evidence.usingPreviousSeason > 0
+          ? `${rec.evidence.usingPreviousSeason} player(s) projected from last season's rates,
+             because this season has no minutes yet
+             (${rec.evidence.lastSeasonPlayers} players have last-season history)`
+          : `${rec.evidence.lastSeasonPlayers} players have last-season history, anchoring this
+             season's thin rates to what they actually did rather than to zero`
     }</li>
     <li>${
       rec.evidence.intelCompiledAt
@@ -826,9 +851,16 @@ export function renderChips(advice: ChipAdvice, fromEvent: number): string {
     .map(
       (rec) => `<div class="card">
         <h3>${escapeHtml(rec.chipName)} &mdash; ${
-          rec.recommendedEvent !== null
-            ? `<strong>GW${rec.recommendedEvent}</strong>`
-            : '<span class="muted">hold for now</span>'
+          rec.recommendedEvent === null
+            ? '<span class="muted">hold for now</span>'
+            : rec.confident
+              ? `<strong>GW${rec.recommendedEvent}</strong>`
+              // The model set confident=false because it could not separate this week from
+              // several others - it sorted a tie rather than finding a week. Printing a bold
+              // gameweek here read as a recommendation and flatly contradicted the paragraph
+              // underneath it, which is the one thing this page must never do with a chip that
+              // is worth one play a season.
+              : '<span class="muted">no standout week &mdash; hold</span>'
         }${rec.confident ? ` <span class="pill good">+${rec.expectedGain} pts</span>` : ''}</h3>
         <p class="muted" style="margin:.2rem 0">${escapeHtml(rec.reason)}</p>
         ${

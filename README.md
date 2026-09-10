@@ -639,6 +639,43 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Saying how sure it is, in the heading and not just the small print
+
+Three places where the app stated more confidence than it had. None of them changed a number;
+all of them changed what a reader would do.
+
+**A tied chip week is not a found one.** The chip advisor already worked out when it could not
+separate the best gameweek from the field - it sets `confident: false` and the paragraph says
+"no standout week ... it has sorted a tie". The card heading printed a bold **GW4** anyway. A
+chip is worth one play a season, and the heading is what people actually read, so that heading
+contradicted its own paragraph in the most expensive place on the site. It now reads "no
+standout week - hold", and the tied week stays in the body where the caveat travels with it.
+
+**"No last-season history loaded" was not measured.** It was derived from how many players were
+being *projected from* last season's rates - which is nobody from the moment this season has
+minutes, whether the history is loaded or not. So from gameweek 2 onward the page told every
+reader their history was missing, and the claim carried no information either way. It is now
+counted from `player_season_history` directly, with three distinct states: missing, loaded and
+anchoring, and loaded and actively supplying rates.
+
+That message matters more than it looks, because missing last-season history disables the
+anchoring in `attacking.anchorPriorWeightMinutes` entirely - with no anchor, every thin rate is
+shrunk toward **zero** rather than toward what the player actually did. Measured on the model
+itself, three gameweeks in: an elite striker's goals term falls from 3.39 to 0.98, a
+hard-working midfielder's defensive-contribution term from 0.76 to 0.01, projections roughly
+halve, and the gap between the two shrinks from 0.76 to 0.18. Everything collapses toward the
+appearance points, which is the only term that survives. That is what "low confidence" actually
+means here, so the warning now says it.
+
+**The captaincy names its runner-up.** The armband doubles one score, and a few tenths between
+two players is not a finding - least of all in a week the model itself rates low confidence,
+which is exactly when the page stated the pick most flatly. The card now always shows what the
+next-best option projects, and when the gap is under `captain.tooCloseMargin` (1.0, display
+only - it never changes who is captained) it says outright that these are two similar bets. A
+captain projecting *below* his runner-up is possible, because the bounded upside bonus can
+prefer the better shape at the same average; that is the most confusing pick the page can
+produce, so it is now spelled out rather than left to be discovered.
+
 ### Club form is expected goals, split into attack and defence
 
 The API's own team ratings are a pre-season view. Current form nudges them

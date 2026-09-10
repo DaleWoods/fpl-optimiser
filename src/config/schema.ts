@@ -328,6 +328,12 @@ export const modelWeightsSchema = z.strictObject({
     /** Score at or above which a gameweek counts as a haul, for haulProbability. */
     haulThreshold: z.number().positive(),
     /**
+     * How far ahead the captain has to project before the page states the pick without a
+     * caveat. Display only - it never changes who is captained, only whether the card admits
+     * the choice was close. Does not bump modelVersion: no number producing xPts moves.
+     */
+    tooCloseMargin: z.number().min(0),
+    /**
      * How close two vice-captain candidates' risk-adjusted values have to be before ceiling
      * separates them. Previously this comparison sat behind a `||`, which short-circuits only on
      * exactly zero - and two independently computed floats never are - so ceilingWeight was dead
