@@ -1692,3 +1692,75 @@ describe('diffAgainstPrevious', () => {
     expect(diff?.previousEventName).toBe('Gameweek 3');
   });
 });
+
+describe('what the captaincy is actually a bet on', () => {
+  /**
+   * Two players are in the same match either as opponents or as team-mates, and the key has to
+   * treat both the same way while never matching two unrelated fixtures. Exercised through
+   * recommend() rather than a unit on the key itself, because the thing that can quietly break
+   * is the wiring - a key built from the wrong end of the fixture still type-checks.
+   */
+  const pitch = (
+    name: string,
+    club: number,
+    clubShort: string,
+    opponentShort: string,
+    xPts: number,
+    position = 'MID',
+  ) => ({
+    ...player({ name, position, xPts, clubId: club, price: 60 }),
+    clubShort,
+    fixtures: [{ opponentShort, isHome: true, difficulty: 3 }],
+  });
+
+  it('spots opponents, team-mates and unrelated fixtures apart', async () => {
+    const { describeCaptaincyForTest } = await import('../../src/report/recommend.js');
+
+    const cap = pitch('Cap', 1, 'MUN', 'MCI', 6.7);
+    const opponent = pitch('Opp', 2, 'MCI', 'MUN', 6.0);
+    const mate = pitch('Mate', 1, 'MUN', 'MCI', 4.3);
+    const elsewhere = pitch('Far', 3, 'ARS', 'SUN', 4.0);
+
+    const sameMatch = describeCaptaincyForTest(
+      { captain: cap, viceCaptain: opponent, starters: [cap, opponent, mate, elsewhere] },
+      weights,
+    )!;
+    expect(sameMatch.sameFixture).toBe(true);
+    // Captain, opponent and team-mate - but not the player in a different game.
+    expect(sameMatch.fixtureShare).not.toBeNull();
+    expect(sameMatch.fixtureShare!.players).toBe(3);
+    expect(sameMatch.fixtureShare!.label).toBe('MCI v MUN');
+    // The armband doubles, so the captain counts twice toward what rides on the match.
+    expect(sameMatch.fixtureShare!.xPts).toBeCloseTo(6.7 + 6.0 + 4.3 + 6.7, 5);
+
+    const differentMatch = describeCaptaincyForTest(
+      { captain: cap, viceCaptain: elsewhere, starters: [cap, opponent, mate, elsewhere] },
+      weights,
+    )!;
+    expect(differentMatch.sameFixture).toBe(false);
+  });
+
+  it('says nothing about one fixture when the player has none, or two', async () => {
+    const { describeCaptaincyForTest } = await import('../../src/report/recommend.js');
+
+    const blank = { ...pitch('Blank', 1, 'MUN', 'MCI', 6.7), fixtures: [] };
+    const double = {
+      ...pitch('Double', 1, 'MUN', 'MCI', 6.7),
+      fixtures: [
+        { opponentShort: 'MCI', isHome: true, difficulty: 3 },
+        { opponentShort: 'SUN', isHome: false, difficulty: 2 },
+      ],
+    };
+    const other = pitch('Other', 2, 'MCI', 'MUN', 6.0);
+
+    // A blank has no match to concentrate on, and a double has two - neither is one thing.
+    for (const captain of [blank, double]) {
+      const result = describeCaptaincyForTest(
+        { captain, viceCaptain: other, starters: [captain, other] },
+        weights,
+      )!;
+      expect(result.fixtureShare).toBeNull();
+      expect(result.sameFixture).toBe(false);
+    }
+  });
+});

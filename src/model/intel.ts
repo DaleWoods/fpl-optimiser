@@ -42,6 +42,19 @@ export const intelSchema = z.looseObject({
   season: z.string(),
   staleAfterGameweek: z.number().int().positive(),
   sources: z.array(z.string()),
+  /**
+   * Standing places to check when these notes are refreshed - as opposed to `sources`, which
+   * are the specific articles the current file was built from.
+   *
+   * Nothing here is fetched. The app has no live news feed and cannot have one: reading football
+   * news is a judgement task, and a scraper that turned headlines into automatic xPts nudges
+   * would be exactly the "copy what the pundits said" behaviour this model is meant to avoid.
+   * This is a checklist for whoever compiles the file, surfaced in the app so it is visible at
+   * the moment the notes need refreshing rather than buried in config.
+   */
+  newsSources: z
+    .array(z.looseObject({ name: z.string(), url: z.string(), useFor: z.string() }))
+    .optional(),
   weights: z.looseObject({
     eliteConsensusWeight: z.number().min(0),
     availabilityOverridesEnabled: z.boolean(),

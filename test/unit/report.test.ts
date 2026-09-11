@@ -1080,9 +1080,15 @@ describe('priority-fix team on My Team', () => {
 });
 
 describe('saying how sure it is', () => {
-  const pitchPlayer = (name: string, xPts: number) => ({
+  const pitchPlayer = (name: string, xPts: number, opponent = 'AVL') => ({
     ...player({ name, position: 'MID', xPts, clubId: 1, price: 90 }),
-    fixtures: [{ opponentShort: 'AVL', isHome: true, difficulty: 3 }],
+    fixtures: [{ opponentShort: opponent, isHome: true, difficulty: 3 }],
+  });
+
+  const captaincy = (overrides: Record<string, unknown> = {}) => ({
+    runnerUpName: 'Runner Up', runnerUpXPts: 6.0, margin: 0.7, tooClose: true,
+    sameFixture: false, fixtureShare: null,
+    ...overrides,
   });
 
   /** A minimal My Team recommendation - only the fields these assertions read. */
@@ -1098,7 +1104,7 @@ describe('saying how sure it is', () => {
       },
       transfers: [], transferPlan: null, priorityFixPlan: null, confirmedTransfers: [],
       previousComparison: null, notes: [], playersConsidered: 655, lowConfidence: true,
-      captaincy: { runnerUpName: 'Runner Up', runnerUpXPts: 6.0, margin: 0.7, tooClose: true },
+      captaincy: captaincy(),
       evidence: {
         intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
         intelPriceMismatches: 0, contextNotes: [], eliteSampleSize: 0,
@@ -1139,6 +1145,51 @@ describe('saying how sure it is', () => {
     expect(page).toMatch(/42 player\(s\) projected from last season's rates/);
   });
 
+  it('says when the two captain candidates are playing each other', () => {
+    // Expectation is linear, so this must not change which of them projects higher - and the
+    // model is right not to adjust for it. What it changes is what the decision is: two players
+    // in one match are two sides of a single bet, and the parts of their returns that conflict
+    // cannot both land.
+    const page = render(
+      rec({
+        captaincy: captaincy({
+          sameFixture: true,
+          fixtureShare: { label: 'MCI v MUN', players: 3, xPts: 17.0 },
+        }),
+      }),
+    );
+    expect(page).toMatch(/They play each other/);
+    expect(page).toMatch(/cannot both land/);
+    expect(page).toMatch(/3 of your XI are in it, worth 17\.0/);
+  });
+
+  it('flags a week riding on one fixture even when the captaincy is not the reason', () => {
+    const page = render(
+      rec({
+        captaincy: captaincy({
+          tooClose: false, margin: 3.6,
+          sameFixture: false,
+          fixtureShare: { label: 'ARS v CHE', players: 5, xPts: 22.4 },
+        }),
+      }),
+    );
+    expect(page).toMatch(/5 of your XI play/);
+    expect(page).toMatch(/One match decides most of your week/);
+  });
+
+  it('stays quiet when the week is not concentrated on one fixture', () => {
+    const page = render(
+      rec({
+        captaincy: captaincy({
+          tooClose: false, margin: 3.6,
+          fixtureShare: { label: 'ARS v CHE', players: 2, xPts: 9.1 },
+        }),
+      }),
+    );
+    expect(page).not.toMatch(/One match decides/);
+    expect(page).not.toMatch(/They play each other/);
+  });
+
   it('admits when the captaincy is a coin toss rather than a finding', () => {
     const page = render(rec());
     expect(page).toMatch(/Runner Up projects 6\.0/);
@@ -1149,7 +1200,7 @@ describe('saying how sure it is', () => {
 
   it('states a clear captaincy plainly, with the gap that makes it clear', () => {
     const page = render(
-      rec({ captaincy: { runnerUpName: 'Runner Up', runnerUpXPts: 3.1, margin: 3.6, tooClose: false } }),
+      rec({ captaincy: captaincy({ runnerUpXPts: 3.1, margin: 3.6, tooClose: false }) }),
     );
     expect(page).toMatch(/Clear of Runner Up \(3\.1\) by 3\.6/);
     expect(page).not.toMatch(/two similar bets/);
@@ -1159,7 +1210,7 @@ describe('saying how sure it is', () => {
     // Possible because a bounded upside bonus can prefer the better shape at the same average,
     // and it is the single most confusing pick the page can produce if left unexplained.
     const page = render(
-      rec({ captaincy: { runnerUpName: 'Runner Up', runnerUpXPts: 7.0, margin: -0.3, tooClose: true } }),
+      rec({ captaincy: captaincy({ runnerUpXPts: 7.0, margin: -0.3, tooClose: true }) }),
     );
     expect(page).toMatch(/higher/);
     expect(page).toMatch(/more upside/);

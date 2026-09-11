@@ -10,6 +10,7 @@ import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
+import { loadIntel } from '../model/intel.js';
 import {
   hasStaleCachedRecommendation,
   loadCachedRecommendation,
@@ -176,7 +177,23 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
     if (url.pathname === '/import' && request.method !== 'POST') {
       response.writeHead(200, HTML);
-      response.end(renderImport(buildImportSlots(db)));
+      {
+        const intel = loadIntel();
+        const targetEvent = resolveTargetEvent(db);
+        response.end(
+          renderImport(
+            buildImportSlots(db),
+            intel
+              ? {
+                  compiledAt: intel.compiledAt,
+                  staleAfterGameweek: intel.staleAfterGameweek,
+                  currentEventId: targetEvent?.id ?? null,
+                  sources: intel.newsSources ?? [],
+                }
+              : null,
+          ),
+        );
+      }
       return;
     }
 

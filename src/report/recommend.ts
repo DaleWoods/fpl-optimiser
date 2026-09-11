@@ -305,6 +305,26 @@ export interface Recommendation {
     runnerUpXPts: number;
     margin: number;
     tooClose: boolean;
+    /**
+     * Whether the two candidates are playing each other.
+     *
+     * Expectation is linear, so this changes nothing about which of them projects higher - and
+     * the model is right not to adjust for it. What it changes is what the decision *is*: two
+     * players in the same match are not two independent bets, they are two sides of one, and
+     * the parts of their returns that conflict (a clean sheet for one needs the other to be
+     * kept quiet) cannot both land. Worth saying out loud rather than leaving the reader to
+     * notice the fixtures themselves.
+     */
+    sameFixture: boolean;
+    /**
+     * How much of the XI rides on the captain's match. Null for a blank or a double gameweek,
+     * where "the captain's match" is not one thing.
+     *
+     * The optimiser maximises a sum of means, and a sum of means is blind to how correlated
+     * its terms are - so it will happily concentrate a third of the week on one fixture without
+     * ever mentioning it. That is not an error in the total, but it is a fact about the bet.
+     */
+    fixtureShare: { label: string; players: number; xPts: number } | null;
   } | null;
 
   /** Where the evidence behind these projections came from. */
@@ -1516,16 +1536,53 @@ export async function recommend(
  * hiding - it means the bounded upside bonus preferred a slightly lower projection for its
  * shape, which is the single most confusing pick this page can produce if left unexplained.
  */
+/** Exported for tests: the wiring is what can quietly break, not the arithmetic. */
+export const describeCaptaincyForTest = (
+  eleven: Parameters<typeof describeCaptaincy>[0],
+  weights: ModelWeights,
+): Recommendation['captaincy'] => describeCaptaincy(eleven, weights);
+
 function describeCaptaincy(
-  eleven: { captain: { name: string; xPts: number }; viceCaptain: { name: string; xPts: number } },
+  eleven: {
+    captain: ProjectedPlayer;
+    viceCaptain: ProjectedPlayer;
+    starters: readonly ProjectedPlayer[];
+  },
   weights: ModelWeights,
 ): Recommendation['captaincy'] {
   const margin = eleven.captain.xPts - eleven.viceCaptain.xPts;
+
+  // Order-independent, so the two sides of one match and two team-mates all key the same. Only
+  // defined for exactly one fixture: a blank has no match and a double has two, and neither is
+  // a single thing to concentrate on.
+  const fixtureKey = (player: ProjectedPlayer): string | null => {
+    if (player.fixtures.length !== 1) return null;
+    return [player.clubShort, player.fixtures[0]!.opponentShort].sort().join(' v ');
+  };
+
+  const captainKey = fixtureKey(eleven.captain);
+  const inFixture =
+    captainKey === null
+      ? []
+      : eleven.starters.filter((player) => fixtureKey(player) === captainKey);
+
   return {
     runnerUpName: eleven.viceCaptain.name,
     runnerUpXPts: round(eleven.viceCaptain.xPts),
     margin: round(margin),
     tooClose: margin <= weights.captain.tooCloseMargin,
+    sameFixture: captainKey !== null && captainKey === fixtureKey(eleven.viceCaptain),
+    fixtureShare:
+      captainKey === null
+        ? null
+        : {
+            label: captainKey,
+            players: inFixture.length,
+            // The captain's score is doubled, so it counts twice toward what rides on the match.
+            xPts: round(
+              inFixture.reduce((sum, player) => sum + player.xPts, 0) + eleven.captain.xPts,
+            ),
+          },
   };
 }
 

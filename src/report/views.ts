@@ -540,6 +540,25 @@ export function renderRecommendation(
            : ` <span class="muted">Clear of ${escapeHtml(rec.captaincy.runnerUpName)}
               (${rec.captaincy.runnerUpXPts.toFixed(1)}) by
               ${rec.captaincy.margin.toFixed(1)}.</span>`
+     }${
+       rec.captaincy?.sameFixture
+         ? `<span class="muted"> <strong>They play each other.</strong> That makes this one bet
+            on which way a single match goes, not a choice between two independent players
+            &mdash; the parts of their scores that conflict, like a clean sheet for one needing
+            the other kept quiet, cannot both land.${
+              rec.captaincy.fixtureShare && rec.captaincy.fixtureShare.players > 2
+                ? ` ${rec.captaincy.fixtureShare.players} of your XI are in it, worth
+                   ${rec.captaincy.fixtureShare.xPts.toFixed(1)} of your
+                   ${rec.eleven.expectedPoints.toFixed(1)} with the armband doubled.`
+                : ''
+            }</span>`
+         : rec.captaincy?.fixtureShare && rec.captaincy.fixtureShare.players >= 4
+           ? `<span class="muted"> <strong>${rec.captaincy.fixtureShare.players} of your XI play
+              in ${escapeHtml(rec.captaincy.fixtureShare.label)}</strong>, worth
+              ${rec.captaincy.fixtureShare.xPts.toFixed(1)} of your
+              ${rec.eleven.expectedPoints.toFixed(1)} with the armband doubled. One match decides
+              most of your week.</span>`
+           : ''
      }</p>
 
   ${
@@ -940,7 +959,74 @@ export interface ImportSlot {
   lastImportedAgo: string | null;
 }
 
-export function renderImport(slots: ImportSlot[]): string {
+/**
+ * Where to look when the curated notes need refreshing.
+ *
+ * Deliberately a reading list and not a feed. Nothing here is fetched, and it should not be:
+ * turning headlines into automatic xPts nudges is exactly the "do what the pundits said"
+ * behaviour this model exists to avoid, and a scraper cannot tell a manager's press-conference
+ * hedge from a confirmed absence. What a human reading these can do is write a dated, sourced
+ * line into config/intel.json, which is auditable and expires on its own.
+ *
+ * Shown here because config is not a place anyone looks, and the moment you notice the notes
+ * have gone stale is the moment you are on this page.
+ */
+function renderNewsSources(
+  notes: {
+    compiledAt: string;
+    staleAfterGameweek: number;
+    currentEventId: number | null;
+    sources: readonly { name: string; url: string; useFor: string }[];
+  } | null,
+): string {
+  if (!notes || notes.sources.length === 0) return '';
+
+  const current = notes.currentEventId;
+  const expired = current !== null && current > notes.staleAfterGameweek;
+  const lastWeek = current !== null && current === notes.staleAfterGameweek;
+
+  const state = expired
+    ? `<div class="banner warn"><strong>The curated notes have expired.</strong> They were
+       compiled ${escapeHtml(notes.compiledAt)} and stopped being applied after gameweek
+       ${notes.staleAfterGameweek}, so nothing below is reaching the projections. Refresh them or
+       the model is running on the API's own flags alone.</div>`
+    : lastWeek
+      ? `<div class="banner warn"><strong>This is the last gameweek the curated notes apply.</strong>
+         Compiled ${escapeHtml(notes.compiledAt)}, they stop after gameweek
+         ${notes.staleAfterGameweek}.</div>`
+      : `<p class="muted" style="margin:.3rem 0 .6rem">Compiled
+         ${escapeHtml(notes.compiledAt)}, applied up to gameweek ${notes.staleAfterGameweek}.</p>`;
+
+  const rows = notes.sources
+    .map(
+      (source) => `<tr>
+        <td><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener">${escapeHtml(source.name)}</a></td>
+        <td class="muted">${escapeHtml(source.useFor)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  return `<h2>Where the team news comes from</h2>
+  ${state}
+  <div class="banner info">The app does <strong>not</strong> read these. Football news is a
+  judgement call &mdash; a scraper cannot tell &ldquo;we'll see how he trains&rdquo; from a
+  confirmed absence, and turning headlines into automatic adjustments is the copy-the-pundits
+  behaviour this model is built to avoid. These are where a human checks before writing a dated,
+  sourced line into <code>config/intel.json</code>, which expires on its own.</div>
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Source</th><th>Worth checking for</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+
+export function renderImport(
+  slots: ImportSlot[],
+  notes: {
+    compiledAt: string;
+    staleAfterGameweek: number;
+    currentEventId: number | null;
+    sources: readonly { name: string; url: string; useFor: string }[];
+  } | null = null,
+): string {
   const cards = slots
     .map(
       (slot) => `<div class="card" data-slot="${escapeHtml(slot.id)}">
@@ -1153,6 +1239,8 @@ if (fetchBtn) {
   </style>
 
   ${cards}
+
+  ${renderNewsSources(notes)}
 
   <h2>Order matters</h2>
   <div class="card"><p style="margin:0">Import <strong>this season's player data first</strong>.

@@ -18,11 +18,9 @@
     "EVERY adjustment is a tunable number, and setting eliteConsensusWeight to 0 disables the",
     "whole lot without deleting anything."
   ],
-
   "compiledAt": "2026-08-25",
   "season": "2026/27",
   "staleAfterGameweek": 4,
-
   "sources": [
     "https://www.premierleague.com/en/news/4681112/early-scout-selection-the-best-fantasy-squad-for-202627",
     "https://www.fantasyfootballscout.co.uk/2026/08/10/10-top-managers-reveal-their-fpl-2026-27-teams",
@@ -51,7 +49,6 @@
     "https://www.liverpoolfc.com/news/szoboszlai-scores-late-penalty-rescue-point-liverpool-season-opener-newcastle",
     "https://www.rousingthekop.com/2026/08/23/andoni-iraola-asked-to-explain-why-dominik-szoboszlai-took-liverpools-penalty-vs-newcastle-not-alexander-isak/"
   ],
-
   "weights": {
     "$comment": [
       "eliteConsensusWeight: xPts added to a player owned by essentially every elite manager,",
@@ -63,7 +60,6 @@
     "eliteConsensusWeight": 0.6,
     "availabilityOverridesEnabled": true
   },
-
   "eliteConsensus": [
     {
       "webName": "Haaland",
@@ -71,7 +67,7 @@
       "position": "FWD",
       "expectedPrice": 155,
       "consensus": 1.0,
-      "note": "Owned by essentially every elite manager and above 70% overall ownership, at a record £15.5m. Sources disagree on his 2025/26 total (212 and 239 points both reported) - either way comfortably the top forward. Three attractive home fixtures in the opening five."
+      "note": "Owned by essentially every elite manager and above 70% overall ownership, at a record \u00a315.5m. Sources disagree on his 2025/26 total (212 and 239 points both reported) - either way comfortably the top forward. Three attractive home fixtures in the opening five."
     },
     {
       "webName": "B.Fernandes",
@@ -95,10 +91,10 @@
       "position": "MID",
       "expectedPrice": 70,
       "consensus": 0.6,
-      "note": "Set-piece duties plus defensive-contribution potential at £7.0m - a cheaper route into Liverpool's attack."
+      "note": "Set-piece duties plus defensive-contribution potential at \u00a37.0m - a cheaper route into Liverpool's attack."
     },
     {
-      "webName": "João Pedro",
+      "webName": "Jo\u00e3o Pedro",
       "club": "CHE",
       "position": "FWD",
       "expectedPrice": 75,
@@ -114,15 +110,15 @@
       "note": "Top pre-season form pick: four goals in four friendlies under a new head coach."
     },
     {
-      "webName": "Guéhi",
+      "webName": "Gu\u00e9hi",
       "club": "CRY",
       "position": "DEF",
       "expectedPrice": 60,
       "consensus": 0.35,
-      "note": "Top scorer among £5.5m-£6.5m defenders last season: 179 points, 14 clean sheets."
+      "note": "Top scorer among \u00a35.5m-\u00a36.5m defenders last season: 179 points, 14 clean sheets."
     },
     {
-      "webName": "Kinský",
+      "webName": "Kinsk\u00fd",
       "club": "TOT",
       "position": "GKP",
       "expectedPrice": 45,
@@ -138,7 +134,6 @@
       "note": "Firmly established as United's undisputed no.1 after a full 2025/26 debut season (32 appearances, 2.5 saves per game), not a fresh or contested signing - the model's own thin-sample caution does not really apply to him. Opens away to Hull, one of the two promoted sides."
     }
   ],
-
   "availabilityFlags": [
     {
       "$comment": "These only ever reduce availability. The API remains the authority on injuries.",
@@ -148,32 +143,68 @@
       "probability": 0,
       "note": "Reported as the biggest defensive absence going into the season."
     },
-    { "webName": "Kulusevski", "club": "TOT", "state": "doubtful", "probability": 0.25, "note": "Return date unknown." },
-    { "webName": "Odobert", "club": "TOT", "state": "doubtful", "probability": 0.25, "note": "Return date unknown." },
-    { "webName": "Livramento", "club": "NEW", "state": "doubtful", "probability": 0.75, "note": "Reported at 75% availability." },
-    { "webName": "Joelinton", "club": "NEW", "state": "doubtful", "probability": 0.75, "note": "Reported at 75% availability." },
     {
-      "webName": "Martínez",
+      "webName": "Kulusevski",
+      "club": "TOT",
+      "state": "doubtful",
+      "probability": 0.25,
+      "note": "Return date unknown."
+    },
+    {
+      "webName": "Odobert",
+      "club": "TOT",
+      "state": "doubtful",
+      "probability": 0.25,
+      "note": "Return date unknown."
+    },
+    {
+      "webName": "Livramento",
+      "club": "NEW",
+      "state": "doubtful",
+      "probability": 0.75,
+      "note": "Reported at 75% availability."
+    },
+    {
+      "webName": "Joelinton",
+      "club": "NEW",
+      "state": "doubtful",
+      "probability": 0.75,
+      "note": "Reported at 75% availability."
+    },
+    {
+      "webName": "Mart\u00ednez",
       "club": "AVL",
       "state": "doubtful",
       "probability": 0.5,
       "note": "Played in the World Cup final on 19 July; Aston Villa may give him longer to recover than gameweek 1 allows."
     },
-    { "webName": "Enzo", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Late return from the World Cup; involvement in the opener uncertain." },
-    { "webName": "Reece James", "club": "CHE", "state": "doubtful", "probability": 0.6, "note": "Flagged as one to monitor through pre-season." },
     {
-      "webName": "Dúbravka",
+      "webName": "Enzo",
+      "club": "CHE",
+      "state": "doubtful",
+      "probability": 0.6,
+      "note": "Late return from the World Cup; involvement in the opener uncertain."
+    },
+    {
+      "webName": "Reece James",
+      "club": "CHE",
+      "state": "doubtful",
+      "probability": 0.6,
+      "note": "Flagged as one to monitor through pre-season."
+    },
+    {
+      "webName": "D\u00fabravka",
       "club": "TOT",
       "state": "unavailable",
       "probability": 0.03,
-      "note": "Signed as a free agent in June 2026 purely as experienced backup; Antonín Kinský is Spurs' clear undisputed no.1 for 2026/27 (Vicario left on loan to Juventus). Kinský started gameweek 1, Dúbravka an unused substitute."
+      "note": "Signed as a free agent in June 2026 purely as experienced backup; Anton\u00edn Kinsk\u00fd is Spurs' clear undisputed no.1 for 2026/27 (Vicario left on loan to Juventus). Kinsk\u00fd started gameweek 1, D\u00fabravka an unused substitute."
     },
     {
       "webName": "Pope",
       "club": "NEW",
       "state": "unavailable",
       "probability": 0.03,
-      "note": "Not injured - pushed down the pecking order. Newcastle signed two goalkeepers this summer under new manager Matthias Jaissle: Lukáš Horníček (£26m, from Braga) and Ewen Jaouen (£18m). Horníček started and played all 90 minutes of gameweek 1 (2-2 v Liverpool); Pope was an unused substitute."
+      "note": "Not injured - pushed down the pecking order. Newcastle signed two goalkeepers this summer under new manager Matthias Jaissle: Luk\u00e1\u0161 Horn\u00ed\u010dek (\u00a326m, from Braga) and Ewen Jaouen (\u00a318m). Horn\u00ed\u010dek started and played all 90 minutes of gameweek 1 (2-2 v Liverpool); Pope was an unused substitute."
     },
     {
       "webName": "Watkins",
@@ -187,7 +218,7 @@
       "club": "CRY",
       "state": "doubtful",
       "probability": 0.35,
-      "note": "Missed gameweek 1 with a groin injury the club called minor, hadn't trained for two days beforehand; a return around the gameweek 2 deadline has been reported. Simultaneously the subject of a reported ~£30m Galatasaray bid he is said to be pushing for before Turkey's window closes - fitness and a possible exit are both live at once."
+      "note": "Missed gameweek 1 with a groin injury the club called minor, hadn't trained for two days beforehand; a return around the gameweek 2 deadline has been reported. Simultaneously the subject of a reported ~\u00a330m Galatasaray bid he is said to be pushing for before Turkey's window closes - fitness and a possible exit are both live at once."
     },
     {
       "webName": "Diallo",
@@ -197,7 +228,6 @@
       "note": "Ankle injury in training, ruled out of gameweek 1 - return estimates range from gameweek 3 (30 August, v Ipswich) to roughly six weeks, so treat as unavailable until the club confirms a date. Bryan Mbeumo started on the right in his absence and remains United's clear starter there regardless of when Diallo returns."
     }
   ],
-
   "contextNotes": [
     "The 2026 World Cup final was played on 19 July 2026. Players who reached the final or the third-place playoff did not report back to club training until 9-12 August, leaving under eleven days of preparation before the 21 August deadline. Expect rotation and cameos rather than full starts for that group.",
     "Nine clubs begin the season with a new head coach or an unresolved managerial situation, so last season's roles are a weaker guide than usual.",
@@ -205,5 +235,37 @@
     "Manchester City and Arsenal are modelled as a tier of their own for the opening fixtures.",
     "Defenders dominated the 2025/26 scoring charts, which the DefCon rules continue to reward.",
     "Szoboszlai took Liverpool's 99th-minute equalising penalty in gameweek 1 with Isak on the pitch, but manager Iraola stopped short of naming him sole taker afterward, citing \"some specialists\" - treat as a real signal, not a confirmed nailed-on penalty taker."
+  ],
+  "newsSources": [
+    {
+      "name": "BBC Sport",
+      "url": "https://www.bbc.co.uk/sport/football",
+      "useFor": "Injury and team news, press-conference quotes, the daily gossip column"
+    },
+    {
+      "name": "ESPN",
+      "url": "https://www.espn.co.uk/football/",
+      "useFor": "Global coverage and in-depth stats"
+    },
+    {
+      "name": "TNT Sports",
+      "url": "https://www.tntsports.co.uk/football",
+      "useFor": "Highlights and European cup involvement - the midweek load the FPL API cannot see"
+    },
+    {
+      "name": "FourFourTwo",
+      "url": "https://www.fourfourtwo.com/",
+      "useFor": "Tactical analysis - role changes that a stat line only catches weeks later"
+    },
+    {
+      "name": "Goal",
+      "url": "https://www.goal.com/en-gb",
+      "useFor": "Fast transfer updates and team breakdowns"
+    },
+    {
+      "name": "NewsNow Football",
+      "url": "https://www.newsnow.co.uk/h/Sport/Football",
+      "useFor": "Aggregated headlines from hundreds of outlets - a final sweep for anything missed"
+    }
   ]
 }

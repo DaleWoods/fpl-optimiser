@@ -639,6 +639,44 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### When the captaincy is a bet on one match
+
+Choosing between two players who are playing *each other* is not the same kind of decision as
+choosing between two players in different games, and the model had no way to say so.
+
+The arithmetic is fine and deliberately unchanged. Expectation is linear, so correlation does not
+affect which of two candidates projects higher, and the fixture model is already internally
+consistent about the match itself: a home player's expected goals conceded is computed from
+exactly the same attack-versus-defence terms as the away player's expected goals, so both sides
+of one fixture imply a single scoreline. There is no bug to fix in the total.
+
+What is missing is what the decision *is*. Two players in one match are two sides of a single
+bet, and the parts of their returns that conflict - a clean sheet for one needs the other kept
+quiet - cannot both land. The optimiser maximises a sum of means, and a sum of means is blind to
+how correlated its terms are, so it will happily put a third of your week on one fixture and
+never mention it.
+
+So the captaincy line now says when the two candidates are playing each other, and how much of
+the XI rides on that match with the armband doubled. It is a statement, not an adjustment: no
+projection moves, and the model still picks on expected points. The reader is the one who knows
+whether they want the week decided by one game.
+
+### The news sources are a reading list, not a feed
+
+`config/intel.json` gains `newsSources` - BBC Sport, ESPN, TNT Sports, FourFourTwo, Goal and
+NewsNow - each with what it is actually worth checking for, surfaced on the Import Data page
+beside a note saying plainly that **the app does not read them**.
+
+That refusal is the point, not a missing feature. Football news is a judgement call: a scraper
+cannot tell "we'll see how he trains" from a confirmed absence, and turning headlines into
+automatic xPts nudges is precisely the do-what-the-pundits-said behaviour this model exists to
+avoid. What a human reading these can do is write a dated, sourced line into the intel file,
+which is auditable and expires on its own.
+
+The page also now says when those notes are about to expire or already have. They stop being
+applied after `staleAfterGameweek`, and until now that happened silently - the model quietly fell
+back to the API's own flags with nothing on screen to say so.
+
 ### Two teams, not three scores
 
 The gameweek scorecard kept producing the same question: *we said 46.7, it got 34, your score 45
