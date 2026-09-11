@@ -746,10 +746,50 @@ describe('accuracy page', () => {
     // The whole point of the page. Before this, a gameweek's projected total was not on the
     // page at all - only what it went on to score - so there was nothing to learn from.
     const page = renderAccuracy(season(), null);
-    expect(page).toMatch(/we said/);
+    expect(page).toMatch(/we guessed/);
     expect(page).toMatch(/62\.5/);
-    expect(page).toMatch(/it got/);
+    expect(page).toMatch(/it really scored/);
     expect(page).toMatch(/>55</);
+    // Both teams are named, because the whole confusion this card caused was that it showed
+    // several scores without ever saying which of them was whose.
+    expect(page).toMatch(/The team <strong>we<\/strong> told you to play/);
+    expect(page).toMatch(/The team <strong>you<\/strong> actually played/);
+  });
+
+  it('says plainly whether you beat the team it told you to play', () => {
+    // Three numbers on a card and no relationship stated between them is what made this
+    // unreadable. The comparison is the reason the reader is here.
+    const beat = renderAccuracy(
+      season({ gameweeks: [gameweek({ recommendedXiActual: 34, yourActual: 45 })] }),
+      null,
+    ).replace(/\s+/g, ' ');
+    expect(beat).toMatch(/You beat our XI by 11\./);
+
+    const trailed = renderAccuracy(
+      season({ gameweeks: [gameweek({ recommendedXiActual: 55, yourActual: 45 })] }),
+      null,
+    ).replace(/\s+/g, ' ');
+    expect(trailed).toMatch(/You trailed our XI by 10\./);
+  });
+
+  it('withholds a ceiling that the same row disproves', () => {
+    // "Best you could have done" is computed from the 15 stored with that gameweek's advice,
+    // which is last week's 15 whenever the team was generated before the deadline. Make a
+    // transfer and it can land BELOW what you actually scored - impossible for a real ceiling,
+    // and printing it anyway is how a page loses the reader's trust in every other number.
+    const page = renderAccuracy(
+      season({ gameweeks: [gameweek({ bestPossibleFromSquad: 41, yourActual: 45 })] }),
+      null,
+    );
+    expect(page).not.toMatch(/>41</);
+    expect(page).toMatch(/n\/a/);
+
+    // A consistent one is still shown - the guard must not swallow the whole column.
+    const fine = renderAccuracy(
+      season({ gameweeks: [gameweek({ bestPossibleFromSquad: 71, yourActual: 61 })] }),
+      null,
+    );
+    expect(fine).toMatch(/>71</);
   });
 
   it('states the size and direction of the miss in words, not just a number', () => {

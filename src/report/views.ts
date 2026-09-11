@@ -1198,51 +1198,89 @@ function errorRows(players: GameweekAccuracy['overRated']): string {
  * and the number that actually came back. Everything else on the page - mean error, bias, the
  * per-position breakdown - is a way of explaining that gap, so it comes after it, not before.
  */
+/**
+ * The best XI available from the 15 the advice was built on - suppressed when the week's own
+ * numbers contradict it.
+ *
+ * It is computed from the squad stored with that gameweek's recommendation, which is the squad
+ * the app could see at the time. The public API only returns picks for a gameweek that has
+ * already started, so a team generated before the deadline is working from last week's 15: make
+ * a transfer and the stored squad is not the one you fielded. When that happens this figure can
+ * come out *below* the score you actually got, which is impossible for a genuine ceiling and
+ * makes the whole column untrustworthy. Better to show nothing than a number the same row
+ * disproves.
+ */
+function bestFromSquadCell(gw: SeasonAccuracy['gameweeks'][number]): string {
+  const best = gw.bestPossibleFromSquad;
+  if (best === null || best === undefined) return '<span class="muted">&mdash;</span>';
+  if (gw.yourActual !== null && gw.yourActual !== undefined && gw.yourActual > best) {
+    return '<span class="muted" title="The 15 on file for this gameweek were not the 15 you played">n/a</span>';
+  }
+  return String(best);
+}
+
 function gameweekScorecard(gw: SeasonAccuracy['gameweeks'][number]): string {
   const predicted = gw.recommendedXiPredicted;
   const actual = gw.recommendedXiActual;
   const delta = predicted !== null && actual !== null ? actual - predicted : null;
 
-  // Direction is stated in words, and names its subject: "too high" on its own left the reader
-  // to work out what was too high - the prediction, the score, or their own team. Colour then
-  // signals only *how far out* it was; guessing low is not a better kind of wrong than high.
+  // Direction is stated in words and names its subject; colour then signals only *how far out*
+  // it was. Guessing low is not a better kind of wrong than guessing high.
   const deltaChip =
     delta === null
       ? '<span class="delta none">not played yet</span>'
       : Math.abs(delta) <= 5
-        ? `<span class="delta close">we were close</span>`
+        ? '<span class="delta close">we were close</span>'
         : `<span class="delta off">we guessed ${Math.abs(delta).toFixed(1)} too ${
             delta > 0 ? 'low' : 'high'
           }</span>`;
 
-  const foot = [
-    ['Your score', gw.yourActual],
-    ['Best you could have done', gw.bestPossibleFromSquad],
-    ['Average manager', gw.leagueAverage],
-    ['Top manager', gw.leagueHighest],
-  ]
-    .map(
-      ([label, value]) =>
-        `<div><div class="k">${label as string}</div><div class="v">${
-          value === null || value === undefined ? '<span class="muted">&mdash;</span>' : value
-        }</div></div>`,
-    )
-    .join('');
+  const num = (value: number | null | undefined, dp = 0): string =>
+    value === null || value === undefined
+      ? '<span class="muted">&mdash;</span>'
+      : dp > 0
+        ? value.toFixed(dp)
+        : String(value);
 
-  // Naming the subject once, above the pair, is what makes the two numbers readable. "We
-  // projected -> It scored" used two different words for the same thing (this app) and never
-  // said what "it" was, so the row could be read as the reader's own team.
+  // Two different teams, and that is the whole reason there is more than one score here. The
+  // card used to run all of them together in one grid, which read as three attempts to say the
+  // same thing - so each is now under a heading naming whose team it was.
+  const yourScore = gw.yourActual;
+  const comparison =
+    yourScore === null || actual === null
+      ? ''
+      : yourScore === actual
+        ? '<div class="gw-note">Same score as our XI.</div>'
+        : `<div class="gw-note">You ${yourScore > actual ? 'beat' : 'trailed'} our XI by
+           ${Math.abs(yourScore - actual)}.</div>`;
+
   return `<div class="gw-card">
     <div class="gw-head"><span class="gw-name">Gameweek ${gw.eventId}</span>${deltaChip}</div>
-    <div class="k" style="margin:.1rem 0 .2rem">The team this app told you to play</div>
-    <div class="vs">
-      <div class="side"><div class="k">we said</div>
-        <div class="v">${predicted !== null ? predicted.toFixed(1) : '<span class="muted">&mdash;</span>'}</div></div>
-      <div class="arrow">&rarr;</div>
-      <div class="side"><div class="k">it got</div>
-        <div class="v">${actual !== null ? actual : '<span class="muted">&mdash;</span>'}</div></div>
+
+    <div class="gw-block">
+      <div class="gw-who">The team <strong>we</strong> told you to play</div>
+      <div class="vs">
+        <div class="side"><div class="k">we guessed</div>
+          <div class="v">${num(predicted, 1)}</div></div>
+        <div class="arrow">&rarr;</div>
+        <div class="side"><div class="k">it really scored</div>
+          <div class="v">${num(actual)}</div></div>
+      </div>
     </div>
-    <div class="gw-foot">${foot}</div>
+
+    <div class="gw-block">
+      <div class="gw-who">The team <strong>you</strong> actually played</div>
+      <div class="vs">
+        <div class="side"><div class="k">you scored</div>
+          <div class="v">${num(yourScore)}</div></div>
+      </div>
+      ${comparison}
+    </div>
+
+    <div class="gw-foot">
+      <div><div class="k">Average manager</div><div class="v">${num(gw.leagueAverage)}</div></div>
+      <div><div class="k">Top manager</div><div class="v">${num(gw.leagueHighest)}</div></div>
+    </div>
   </div>`;
 }
 
@@ -1367,7 +1405,7 @@ export function renderAccuracy(
         <td style="color:${Math.abs(gw.bias) < 0.25 ? 'var(--ok)' : 'var(--warn-fg)'}">${gw.bias > 0 ? '+' : ''}${gw.bias.toFixed(2)}</td>
         <td>${gw.recommendedXiPredicted !== null ? gw.recommendedXiPredicted.toFixed(1) : '<span class="muted">&mdash;</span>'}</td>
         <td>${gw.recommendedXiActual ?? '<span class="muted">&mdash;</span>'}</td>
-        <td>${gw.bestPossibleFromSquad ?? '<span class="muted">&mdash;</span>'}</td>
+        <td>${bestFromSquadCell(gw)}</td>
         <td>${gw.yourActual ?? '<span class="muted">&mdash;</span>'}</td>
         <td>${gw.leagueAverage ?? '<span class="muted">&mdash;</span>'}</td>
         <td>${gw.leagueHighest ?? '<span class="muted">&mdash;</span>'}</td>
@@ -1390,16 +1428,19 @@ export function renderAccuracy(
          <details class="explain">
            <summary>What am I looking at?</summary>
            <div class="inner">
-             <p>Each card grades <strong>this app's advice</strong>, not your team.
-             <strong>we said</strong> is what the XI it told you to play was expected to score;
-             <strong>it got</strong> is what that same XI really scored, with auto-subs and the
-             vice-captain replayed as FPL would.</p>
-             <p><strong>Your score</strong> is separate: your real FPL total, including any hits
-             and chips. The two differ whenever you did not follow the advice exactly.</p>
-             <p><strong>Best you could have done</strong> is the highest-scoring legal XI from
-             that same squad, known only afterwards. The gap to &ldquo;it got&rdquo; is what a
-             perfect prediction would have been worth &mdash; the size of the prize, not a
-             telling-off.</p>
+             <p><strong>There are two teams on each card, which is why there is more than one
+             score.</strong> This page exists to grade the app, so it has to show what the app's
+             own team did &mdash; and that is only the same as your team if you followed every
+             piece of advice exactly.</p>
+             <p><strong>The team we told you to play:</strong> <em>we guessed</em> is what this
+             app expected that XI to score before the deadline. <em>It really scored</em> is what
+             those same eleven went on to get, with auto-subs and the vice-captain replayed the
+             way FPL would. The gap between those two is the app's mistake, and the tag at the
+             top of the card is that gap.</p>
+             <p><strong>The team you actually played:</strong> your real FPL score for the week,
+             hits and chips included, straight from your own history. Nothing to do with the
+             app's guess &mdash; it is there so you can see whether following the advice would
+             have helped or hurt.</p>
            </div>
          </details>`
       : ''
@@ -1503,7 +1544,7 @@ export function renderAccuracy(
            <summary>Every number, in one table</summary>
            <div class="inner"><div class="scroll"><table>
              <thead><tr><th>GW</th><th>Players</th><th>Typical miss</th><th>Leaning</th>
-               <th>We said</th><th>It got</th><th>Best possible</th><th>Your score</th>
+               <th>We guessed</th><th>Our XI got</th><th>Best from those 15</th><th>You got</th>
                <th>Game average</th><th>Game best</th></tr></thead>
              <tbody>${seasonRows}</tbody></table></div></div>
          </details>`

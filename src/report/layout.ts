@@ -188,6 +188,11 @@ tbody tr:last-child td { border-bottom: 0; }
                color: var(--muted); font-weight: 700; }
 .vs .side .v { font-size: 1.85rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; }
 .vs .arrow { color: var(--muted); font-size: 1.15rem; padding-bottom: .4rem; }
+.gw-block { margin-top: .6rem; }
+.gw-block + .gw-block { padding-top: .6rem; border-top: 1px solid var(--line); }
+.gw-who { font-size: .78rem; color: var(--muted); margin-bottom: .15rem; }
+.gw-who strong { color: var(--fg); }
+.gw-note { font-size: .78rem; color: var(--muted); margin-top: .25rem; }
 .gw-foot { margin-top: .7rem; padding-top: .6rem; border-top: 1px solid var(--line);
            display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .7rem; }
 .gw-foot .k { font-size: .66rem; text-transform: uppercase; letter-spacing: .05em;

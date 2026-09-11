@@ -639,6 +639,33 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Two teams, not three scores
+
+The gameweek scorecard kept producing the same question: *we said 46.7, it got 34, your score 45
+- how can there be three scores?* There are not three. There are **two teams**, and the card was
+running both through one undifferentiated grid of numbers, so they read as three attempts to say
+the same thing.
+
+This page exists to grade the app, which means it has to show what the app's own XI did. That is
+only the same team you played if you followed every piece of advice exactly, and you generally
+will not have. So each card now puts the two under headings that name whose team it was:
+
+- **The team we told you to play** - *we guessed* 46.7, *it really scored* 34. The gap between
+  those is the app's error, and the tag at the top of the card is that gap and nothing else.
+- **The team you actually played** - *you scored* 45. Your real FPL total, hits and chips
+  included.
+
+Then the line that gives the card a point: **"You beat our XI by 11."** Three unrelated numbers
+became two labelled teams and one comparison.
+
+**A ceiling the same row disproves is now withheld.** "Best you could have done" is computed from
+the 15 stored with that gameweek's advice - which is *last week's* 15 whenever the team was
+generated before the deadline, because the public API only returns picks for a gameweek that has
+already started. Make a transfer and the stored squad is not the one you fielded, and the figure
+can land *below* what you actually scored. That is impossible for a genuine ceiling, and printing
+it anyway costs the reader's trust in every other number on the page. It moves into the full
+table and shows `n/a` whenever the row contradicts it.
+
 ### Looking at the team is not rebuilding it
 
 Generation stays explicit - a team is only worth acting on when it is built from all the evidence
