@@ -639,6 +639,44 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Measuring against something, at last
+
+Four graded gameweeks produced a typical miss of 1.31 points per player and no way to know
+whether that was good. Every figure on the Accuracy page was self-referential: with nothing to
+beat, "the model is 1.31 out" and "the model is useless" look identical, and the page could not
+answer the only question that matters - is any of this better than not doing it?
+
+So the same players, over the same gameweeks, are now scored three ways:
+
+- **This model** - what the app projected before the deadline.
+- **FPL's own number** - `ep_next`, the expected-points figure the API publishes for free. This
+  is the benchmark that counts: it is what you get by doing nothing, and any week the model
+  loses to it is a week this app made decisions worse.
+- **Points per game so far** - the "just pick whoever has been scoring" heuristic this model is
+  supposed to improve on.
+
+Both baselines are read from the last snapshot taken *before* each deadline, never after, so they
+are what was genuinely knowable at the time. A player is scored only when all three have an
+answer for him - nobody wins by declining the hard cases. The page leads with the verdict, and
+the verdict is allowed to be **"this model is losing"**; the tests set the model up to lose and
+assert that it is reported as losing, because a comparison that can only flatter is worse than
+none.
+
+### Grading the armband on its own
+
+Averaged into an eleven-player total, a catastrophic captaincy and a merely dull one look the
+same. That hid the largest decision on the page: one pick, doubled, which moves a week further
+than anything else the model does.
+
+Each gameweek's captain is now graded against **the best captain available from the same 15** -
+not the best in the league, since the squad is the only part the model controlled that week - and
+the season total is shown as points given away. One subtlety worth stating because getting it
+wrong doubles every number on the page: the armband adds *one extra copy* of the captain's score,
+so what a bad pick gave away is the difference between the two single scores, not twice it.
+
+This separates two failures that need completely different fixes: **picking bad players**, and
+**picking fine players then doubling the wrong one**. Guessing between those wastes weeks.
+
 ### When the captaincy is a bet on one match
 
 Choosing between two players who are playing *each other* is not the same kind of decision as

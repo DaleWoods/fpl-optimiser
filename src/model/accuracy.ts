@@ -59,6 +59,24 @@ export interface GameweekAccuracy {
   /** The best legal XI in hindsight, from the squad that was recommended. */
   bestPossibleFromSquad: number | null;
   /**
+   * How the armband went, on its own.
+   *
+   * The captaincy is one decision that doubles one score, so it swings a week harder than any
+   * other choice the model makes - and until now it was averaged into an eleven-player total
+   * where a disastrous pick and a mediocre one look identical. Isolating it is the only way to
+   * tell "the projections are poor" apart from "the projections are fine and the armband is
+   * going on the wrong player", which need completely different fixes.
+   */
+  captaincy: {
+    name: string;
+    actual: number;
+    /** The best captain available from the same 15, known only afterwards. */
+    bestName: string;
+    bestActual: number;
+    /** Points the armband gave away versus that best choice. Never negative. */
+    cost: number;
+  } | null;
+  /**
    * The whole game's gameweek score, from the FPL API's own event data - not something this
    * app derives. Populated automatically the next time bootstrap-static is imported after the
    * gameweek finishes; there is nothing separate to upload for it.
@@ -82,6 +100,7 @@ export interface SeasonAccuracy {
     recommendedXiPredicted: number | null;
     recommendedXiActual: number | null;
     bestPossibleFromSquad: number | null;
+    captaincy: GameweekAccuracy['captaincy'];
     yourActual: number | null;
     leagueAverage: number | null;
     leagueHighest: number | null;
@@ -443,6 +462,7 @@ export function evaluateGameweek(
       recommendedXiActual: null,
       recommendedXiPredicted: null,
       bestPossibleFromSquad: null,
+      captaincy: null,
       ...leagueScores(db, eventId),
       notes,
     };
@@ -517,6 +537,7 @@ export function evaluateGameweek(
   let recommendedXiActual: number | null = null;
   let recommendedXiPredicted: number | null = null;
   let bestPossibleFromSquad: number | null = null;
+  let captaincyResult: GameweekAccuracy['captaincy'] = null;
 
 
 
@@ -603,6 +624,37 @@ export function evaluateGameweek(
       if (detail.squad && detail.squad.length === rules.squad.size) {
         bestPossibleFromSquad = bestElevenByActual(detail.squad, actualById, rules);
       }
+
+      // The armband on its own. Measured against the best captain available from the same 15,
+      // not against the whole league: the question is whether the model put it on the right one
+      // of the players it already owned, which is the only part it controlled that week.
+      if (detail.captainId !== undefined && detail.squad && detail.squad.length > 0) {
+        const nameById = new Map(withError.map((row) => [row.playerId, row.name]));
+        const owned = detail.squad
+          .filter((player) => actualById.has(player.playerId))
+          .map((player) => ({
+            playerId: player.playerId,
+            name: nameById.get(player.playerId) ?? `Player ${player.playerId}`,
+            actual: actualById.get(player.playerId)!,
+          }));
+        const captain = owned.find((player) => player.playerId === detail.captainId);
+        const best = owned.reduce<(typeof owned)[number] | null>(
+          (top, player) => (top === null || player.actual > top.actual ? player : top),
+          null,
+        );
+
+        if (captain && best) {
+          captaincyResult = {
+            name: captain.name,
+            actual: captain.actual,
+            bestName: best.name,
+            bestActual: best.actual,
+            // The armband adds one extra copy of the captain's score, so what it gave away is
+            // the difference between those two single scores - not twice it.
+            cost: Math.max(0, best.actual - captain.actual),
+          };
+        }
+      }
     } catch {
       notes.push('A stored recommendation for this gameweek could not be read.');
     }
@@ -625,6 +677,7 @@ export function evaluateGameweek(
     recommendedXiActual,
     recommendedXiPredicted,
     bestPossibleFromSquad,
+    captaincy: captaincyResult,
     ...leagueScores(db, eventId),
     notes,
   };
@@ -837,6 +890,7 @@ export function evaluateSeason(db: Database, rules: Rules, entryId: number | nul
       recommendedXiPredicted: accuracy.recommendedXiPredicted,
       recommendedXiActual: accuracy.recommendedXiActual,
       bestPossibleFromSquad: accuracy.bestPossibleFromSquad,
+      captaincy: accuracy.captaincy,
       yourActual: yourResults.get(eventId) ?? null,
       leagueAverage: accuracy.leagueAverage,
       leagueHighest: accuracy.leagueHighest,

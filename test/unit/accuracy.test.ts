@@ -767,3 +767,98 @@ describe('grading the model', () => {
     expect(season.notes.join(' ')).toMatch(/Nothing to grade yet/);
   });
 });
+
+describe('grading the armband on its own', () => {
+  /**
+   * The captaincy doubles one score, so it swings a week harder than anything else the model
+   * decides - and averaged into an eleven-player total, a disaster and a dull week look
+   * identical. These check the isolated figure is right, because the whole point of it is to
+   * tell "the projections are poor" apart from "the projections are fine and the armband went
+   * on the wrong player".
+   */
+  let db: Database;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({ events: [fakeEvent(1, { finished: true })] }),
+      }),
+      rules,
+    );
+  });
+
+  function seedGameweek(captainId: number, scores: Record<number, number>): void {
+    const squad = Object.keys(scores).map((id) => ({
+      playerId: Number(id),
+      position: 'MID',
+      xPts: 4,
+    }));
+    const insertProjection = db.prepare(
+      `INSERT INTO projection (player_id, event_id, model_version, created_at, xpts, xpts_raw,
+                               availability_probability, expected_minutes, fixture_count,
+                               confidence, breakdown_json)
+       VALUES (?, 1, ?, ?, 4, 4, 1, 80, 1, 'high', '{}')`,
+    );
+    const insertActual = db.prepare(
+      `INSERT INTO actual_points (player_id, event_id, points, minutes, source, recorded_at)
+       VALUES (?, 1, ?, 90, 'test', ?)`,
+    );
+    for (const [id, points] of Object.entries(scores)) {
+      insertProjection.run(Number(id), weights.modelVersion, nowSeconds());
+      insertActual.run(Number(id), points, nowSeconds());
+    }
+
+    db.prepare(
+      `INSERT INTO recommendation (created_at, event_id, entry_id, kind, model_version, summary,
+                                   detail_json)
+       VALUES (?, 1, NULL, 'xi', ?, 'test', ?)`,
+    ).run(
+      nowSeconds(),
+      weights.modelVersion,
+      JSON.stringify({
+        starters: squad.slice(0, 11),
+        bench: squad.slice(11),
+        captainId,
+        squad,
+      }),
+    );
+  }
+
+  it('measures the armband against the best captain in the same squad', () => {
+    // Captained player 1 for 2 points when player 3 in the same squad got 15.
+    seedGameweek(1, { 1: 2, 2: 6, 3: 15, 4: 1, 5: 3 });
+    const result = evaluateGameweek(db, 1, rules);
+
+    expect(result.captaincy).not.toBeNull();
+    expect(result.captaincy!.actual).toBe(2);
+    expect(result.captaincy!.bestActual).toBe(15);
+    // The armband adds ONE extra copy of the score, so what it gave away is the difference
+    // between the two single scores - not twice it. Getting this wrong would double every
+    // number on the page and make the model look far worse than it is.
+    expect(result.captaincy!.cost).toBe(13);
+  });
+
+  it('charges nothing when the armband went on the right player', () => {
+    seedGameweek(3, { 1: 2, 2: 6, 3: 15, 4: 1, 5: 3 });
+    const result = evaluateGameweek(db, 1, rules);
+
+    expect(result.captaincy!.cost).toBe(0);
+    expect(result.captaincy!.name).toBe(result.captaincy!.bestName);
+  });
+
+  it('never reports a negative cost', () => {
+    // Nobody in the squad outscored the captain, so there was nothing better available and the
+    // honest answer is zero, not a credit for having been lucky.
+    seedGameweek(1, { 1: 9, 2: 2, 3: 1 });
+    expect(evaluateGameweek(db, 1, rules).captaincy!.cost).toBe(0);
+  });
+
+  it('says nothing when the captain did not play', () => {
+    // No result for the captain means no honest comparison - reporting a cost against a player
+    // who was never scored would invent a mistake.
+    seedGameweek(99, { 1: 9, 2: 2, 3: 1 });
+    expect(evaluateGameweek(db, 1, rules).captaincy).toBeNull();
+  });
+});

@@ -11,6 +11,7 @@ import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { loadIntel } from '../model/intel.js';
+import { benchmarkSeason } from '../model/benchmark.js';
 import {
   hasStaleCachedRecommendation,
   loadCachedRecommendation,
@@ -251,7 +252,18 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         return;
       }
       response.writeHead(200, HTML);
-      response.end(renderAccuracy(season, latest, calibration, progress));
+      response.end(
+        renderAccuracy(
+          season,
+          latest,
+          calibration,
+          progress,
+          benchmarkSeason(
+            db,
+            season.gameweeks.map((gw) => gw.eventId),
+          ),
+        ),
+      );
       return;
     }
 

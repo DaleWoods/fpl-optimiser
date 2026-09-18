@@ -14,6 +14,7 @@ import { escapeHtml, renderShell } from './layout.js';
 import type { PriorityFixPlan, Readiness, Recommendation } from './recommend.js';
 import type { LeagueTableRow } from '../model/table.js';
 import { formatDuration, formatMoney, type StateOfPlay } from './state.js';
+import type { Benchmark } from '../model/benchmark.js';
 
 /** Every page in the app, sharing one shell so the tabs and styling stay consistent. */
 
@@ -1453,11 +1454,128 @@ function renderCalibration(
   </details>`;
 }
 
+
+/**
+ * Whether any of this is worth doing, stated before anything else on the page.
+ *
+ * Every other figure here is self-referential. "Typical miss 1.31" sounds fine and means nothing
+ * without something to compare it against, which is how four graded gameweeks produced no answer
+ * to the only question that matters. This puts the model next to the number FPL publishes for
+ * free and next to picking on recent form, over the same players, and leads with the verdict -
+ * including when the verdict is that the model lost.
+ */
+function renderBenchmark(benchmark: Benchmark | null): string {
+  if (!benchmark) return '';
+
+  const model = benchmark.lines.find((line) => line.key === 'model')!;
+  const verdict =
+    benchmark.verdict === 'model-beaten'
+      ? `<div class="banner warn"><strong>This model is losing to
+         ${benchmark.beatenBy.map((name) => escapeHtml(name)).join(' and ')}.</strong> On the same
+         players it is further from the truth than a number you can get for nothing, so on this
+         evidence it is making your decisions worse, not better.</div>`
+      : benchmark.verdict === 'model-tied'
+        ? `<div class="banner warn"><strong>This model is no better than the free
+           alternatives.</strong> It is within a couple of percent of them over
+           ${benchmark.players} projections, which is not a difference &mdash; all the work in
+           here is currently buying you nothing.</div>`
+        : `<div class="banner info"><strong>This model is closer than both alternatives</strong>
+           over ${benchmark.players} projections.</div>`;
+
+  const rows = benchmark.lines
+    .map((line) => {
+      const gap =
+        line.improvementOverModel === null
+          ? '<span class="muted">&mdash;</span>'
+          : `<span style="color:${line.improvementOverModel > 0 ? 'var(--ok)' : 'var(--danger)'}">${
+              line.improvementOverModel > 0 ? 'we are ' : 'we are '
+            }${Math.abs(Math.round(line.improvementOverModel * 100))}% ${
+              line.improvementOverModel > 0 ? 'closer' : 'further out'
+            }</span>`;
+      return `<tr${line.key === 'model' ? ' class="special"' : ''}>
+        <td>${line.key === 'model' ? `<strong>${escapeHtml(line.label)}</strong>` : escapeHtml(line.label)}</td>
+        <td>${line.meanAbsoluteError.toFixed(2)}</td>
+        <td>${line.bias > 0 ? '+' : ''}${line.bias.toFixed(2)}</td>
+        <td>${gap}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<h2>Is this better than not having it?</h2>
+  ${verdict}
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Way of guessing</th><th>Typical miss</th><th>Leaning</th><th>vs this model</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>
+  <details class="explain">
+    <summary>What is being compared</summary>
+    <div class="inner">
+      <p>The same players, the same gameweeks, three ways of guessing what they would score.
+      <strong>FPL's own number</strong> is <code>ep_next</code>, the expected-points figure the
+      API publishes for free &mdash; it is what you get by doing nothing, and it is the one that
+      has to be beaten for any of this to be worth running. <strong>Points per game so far</strong>
+      is the "just pick whoever has been scoring" heuristic this model is supposed to improve on.</p>
+      <p>Both are read from the last thing the API said <em>before</em> each deadline, never
+      after, so they are what was genuinely knowable at the time. A player is scored only when
+      all three have an answer for him &mdash; nobody wins by declining the hard cases.</p>
+    </div>
+  </details>`;
+}
+
+
+/**
+ * What the armband has cost so far, which is the single biggest decision on the page.
+ *
+ * Averaged into an eleven-player total, a catastrophic captaincy and a merely dull one look the
+ * same. Pulled out, the season total answers a question no other figure here can: is the model
+ * picking bad players, or picking fine players and then doubling the wrong one? Those need
+ * different fixes, and guessing between them wastes weeks.
+ *
+ * Measured against the best captain from the same 15, not the best in the league - the only
+ * part of the decision the model actually controlled that week.
+ */
+function renderCaptaincyCost(season: SeasonAccuracy): string {
+  const graded = season.gameweeks.filter((gw) => gw.captaincy !== null);
+  if (graded.length === 0) return '';
+
+  const total = graded.reduce((sum, gw) => sum + (gw.captaincy?.cost ?? 0), 0);
+  const perWeek = total / graded.length;
+
+  const rows = graded
+    .map((gw) => {
+      const cap = gw.captaincy!;
+      return `<tr>
+        <td><strong>GW${gw.eventId}</strong></td>
+        <td>${escapeHtml(cap.name)}</td>
+        <td>${cap.actual}</td>
+        <td>${escapeHtml(cap.bestName)}</td>
+        <td>${cap.bestActual}</td>
+        <td style="color:${cap.cost > 0 ? 'var(--danger)' : 'var(--ok)'}">${
+          cap.cost > 0 ? `&minus;${cap.cost}` : 'best pick'
+        }</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<h2>What the armband cost</h2>
+  <div class="banner ${perWeek >= 4 ? 'warn' : 'info'}">The captaincy gave away
+  <strong>${total}</strong> points across ${graded.length} gameweek${graded.length === 1 ? '' : 's'}
+  &mdash; ${perWeek.toFixed(1)} a week &mdash; against the best captain in the same squad. One
+  decision, doubled, so it moves a week further than anything else here.</div>
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>GW</th><th>We captained</th><th>He got</th><th>Best was</th><th>He got</th><th>Cost</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>
+  <p class="muted" style="font-size:.88rem;margin:.4rem 0 0">Some of this is unavoidable &mdash;
+  nobody picks the top scorer every week, and hindsight always wins. It is worth attention when
+  it is large and persistent, because then it is the armband going on the wrong player rather
+  than the projections being poor, and those need different fixes.</p>`;
+}
+
 export function renderAccuracy(
   season: SeasonAccuracy,
   latest: GameweekAccuracy | null,
   calibration: readonly CalibrationFactor[] = [],
   calibrationProgress: CalibrationProgress | null = null,
+  benchmark: Benchmark | null = null,
 ): string {
   const errHead = `<thead><tr><th>Player</th><th>Pos</th><th>Club</th><th>Predicted</th><th>Actual</th><th>Error</th></tr></thead>`;
 
@@ -1511,6 +1629,10 @@ export function renderAccuracy(
   ${
     season.gameweeks.length > 0
       ? `${headline ? `<div class="banner info">${headline}</div>` : ''}
+         ${renderBenchmark(benchmark)}
+
+         ${renderCaptaincyCost(season)}
+
          <h2>Week by week</h2>
          <div class="gw-cards">${scorecards}</div>
          <details class="explain">

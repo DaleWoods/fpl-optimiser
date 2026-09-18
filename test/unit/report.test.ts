@@ -728,6 +728,7 @@ describe('accuracy page', () => {
     recommendedXiPredicted: 62.5,
     recommendedXiActual: 55,
     bestPossibleFromSquad: 71,
+    captaincy: null,
     yourActual: 61,
     leagueAverage: 57,
     leagueHighest: 129,
