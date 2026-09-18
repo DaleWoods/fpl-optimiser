@@ -6,6 +6,7 @@
     "without touching version control (config/local.*.json is gitignored)."
   ],
   "teamId": 2651633,
+  "rivalTeamIds": [],
   "api": {
     "baseUrl": "https://fantasy.premierleague.com/api/",
     "userAgent": "fpl-optimiser/0.1 (single-user personal tool; +https://github.com/dalewoods/fpl-optimiser)",

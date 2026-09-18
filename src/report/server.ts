@@ -12,6 +12,8 @@ import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { loadIntel } from '../model/intel.js';
 import { benchmarkSeason } from '../model/benchmark.js';
+import { ingestRivals } from '../ingest/rivals.js';
+import { compareRivals } from '../model/rivals.js';
 import {
   hasStaleCachedRecommendation,
   loadCachedRecommendation,
@@ -122,6 +124,23 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         teamId: config.app.teamId,
         onProgress: (message) => console.log(`[ingest] ${message}`),
       });
+
+      // Rivals last and never fatally: their squads are a nice-to-have signal, and a manager who
+      // has deleted their team or whose picks are not public yet must not take the whole refresh
+      // - and with it prices, fixtures and your own squad - down with them.
+      if (config.app.rivalTeamIds.length > 0) {
+        try {
+          const started = db
+            .prepare('SELECT id FROM event WHERE finished = 1 OR is_current = 1 ORDER BY id DESC LIMIT 1')
+            .get() as { id: number } | undefined;
+          if (started) {
+            const result = await ingestRivals(db, api, config.app.rivalTeamIds, started.id);
+            for (const note of result.notes) console.log(`[ingest] rivals: ${note}`);
+          }
+        } catch (cause) {
+          console.warn(`[ingest] rivals failed: ${(cause as Error).message}`);
+        }
+      }
       lastIngestError = null;
     } catch (cause) {
       lastIngestError = (cause as Error).message;

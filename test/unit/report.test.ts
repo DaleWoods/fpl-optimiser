@@ -946,7 +946,7 @@ describe('priority-fix team on My Team', () => {
       squad: [...starters, ...bench], eleven, totalCost: 1000, bankRemaining: 5,
       transfers: [], transferPlan: null, previousComparison: null, notes: [],
       confirmedTransfers: [],
-      playersConsidered: 640, lowConfidence: false,
+      playersConsidered: 640, lowConfidence: false, rivals: [],
       captaincy: {
         runnerUpName: starters[4]!.name, runnerUpXPts: starters[4]!.xPts,
         margin: starters[9]!.xPts - starters[4]!.xPts, tooClose: false,
@@ -1088,7 +1088,7 @@ describe('saying how sure it is', () => {
 
   const captaincy = (overrides: Record<string, unknown> = {}) => ({
     runnerUpName: 'Runner Up', runnerUpXPts: 6.0, margin: 0.7, tooClose: true,
-    sameFixture: false, fixtureShare: null,
+    sameFixture: false, fixtureShare: null, shortlist: [],
     ...overrides,
   });
 
@@ -1105,6 +1105,7 @@ describe('saying how sure it is', () => {
       },
       transfers: [], transferPlan: null, priorityFixPlan: null, confirmedTransfers: [],
       previousComparison: null, notes: [], playersConsidered: 655, lowConfidence: true,
+      rivals: [],
       captaincy: captaincy(),
       evidence: {
         intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
@@ -1191,6 +1192,36 @@ describe('saying how sure it is', () => {
     expect(page).not.toMatch(/They play each other/);
   });
 
+  it('shows the runners-up for the armband, not just the winner', () => {
+    // A single name gives a reader no way to disagree usefully. The upside columns sit beside
+    // the average because for a doubled pick they are closer to what is being bought.
+    const page = render(
+      rec({
+        captaincy: captaincy({
+          shortlist: [
+            { name: 'Safe Mid', xPts: 6.7, ceiling: 12.5, haulProbability: 0.18, chosen: true },
+            { name: 'Big Forward', xPts: 6.0, ceiling: 17, haulProbability: 0.34, chosen: false },
+          ],
+        }),
+      }),
+    );
+    expect(page).toMatch(/Captain shortlist/);
+    expect(page).toMatch(/Big Forward/);
+    expect(page).toMatch(/34%/);
+    expect(page).toMatch(/armband/);
+  });
+
+  it('does not show a shortlist of one', () => {
+    const page = render(
+      rec({
+        captaincy: captaincy({
+          shortlist: [{ name: 'Only', xPts: 6, ceiling: 10, haulProbability: 0.1, chosen: true }],
+        }),
+      }),
+    );
+    expect(page).not.toMatch(/Captain shortlist/);
+  });
+
   it('admits when the captaincy is a coin toss rather than a finding', () => {
     const page = render(rec());
     expect(page).toMatch(/Runner Up projects 6\.0/);
@@ -1250,5 +1281,70 @@ describe('chip advice headline', () => {
     expect(page.match(/<h3>.*?<\/h3>/)![0]).toMatch(/<strong>GW4<\/strong>/);
     expect(page).toMatch(/\+6\.2 pts/);
     expect(page).not.toMatch(/no standout week/i);
+  });
+});
+
+describe('managers worth watching, on the page', () => {
+  const pitchPlayer = (name: string, xPts: number) => ({
+    ...player({ name, position: 'MID', xPts, clubId: 1, price: 90 }),
+    fixtures: [{ opponentShort: 'AVL', isHome: true, difficulty: 3 }],
+  });
+
+  function rec(rivals: unknown[]) {
+    const starters = Array.from({ length: 11 }, (_, i) => pitchPlayer(`P${i}`, 5 - i * 0.1));
+    return {
+      mode: 'existing-squad', eventId: 4, eventName: 'Gameweek 4', deadlineIso: null,
+      modelVersion: 'heuristic-0.21.0', generatedAt: 0,
+      squad: starters, totalCost: 1000, bankRemaining: 5,
+      eleven: {
+        starters, bench: [], captain: pitchPlayer('Captain', 6.7),
+        viceCaptain: pitchPlayer('Runner Up', 6.0), formation: '3-4-3', expectedPoints: 52.8,
+      },
+      transfers: [], transferPlan: null, priorityFixPlan: null, confirmedTransfers: [],
+      previousComparison: null, notes: [], playersConsidered: 655, lowConfidence: false,
+      rivals,
+      captaincy: {
+        runnerUpName: 'Runner Up', runnerUpXPts: 6.0, margin: 0.7, tooClose: false,
+        sameFixture: false, fixtureShare: null, shortlist: [],
+      },
+      evidence: {
+        intelCompiledAt: null, intelSources: [], intelApplied: 0, intelUnmatched: [],
+        intelPriceMismatches: 0, contextNotes: [], eliteSampleSize: 0,
+        usingPreviousSeason: 0, lastSeasonPlayers: 500, horizonGameweeks: 16, calibration: [],
+      },
+    };
+  }
+
+  const render = (input: unknown) =>
+    renderRecommendation(input as never).replace(/\s+/g, ' ');
+
+  it('frames a rival as a disagreement, not a shopping list', () => {
+    // The instruction this is built around is "don't just copy other people unless it's the
+    // right thing to do". A page that simply lists a winning manager's players cannot honour
+    // that, so the split has to be visible on screen and not only in the data.
+    const page = render(
+      rec([
+        {
+          entryId: 7, label: 'Rival R', totalPoints: 300, eventId: 4,
+          missed: [{ playerId: 1, name: 'Big Forward', position: 'FWD', club: 'MCI', xPts: 7.8, multiplier: 2 }],
+          hisCall: [{ playerId: 2, name: 'Punt', position: 'DEF', club: 'BUR', xPts: 1.4, multiplier: 1 }],
+          yoursOnly: [{ playerId: 3, name: 'Mine', position: 'MID', club: 'ARS', xPts: 6.1, multiplier: 1 }],
+          captain: { playerId: 1, name: 'Big Forward', position: 'FWD', club: 'MCI', xPts: 7.8, multiplier: 2 },
+        },
+      ]),
+    );
+
+    expect(page).toMatch(/Rival R/);
+    expect(page).toMatch(/He captained <strong>Big Forward<\/strong>/);
+    // The two groups must be labelled differently - the whole point is that they are not the
+    // same kind of information.
+    expect(page).toMatch(/You have missed these/);
+    expect(page).toMatch(/His call, not ours/);
+    expect(page).toMatch(/copying his variance/);
+    expect(page).toMatch(/Yours, not his/);
+  });
+
+  it('says nothing at all when no rival squad is available', () => {
+    expect(render(rec([]))).not.toMatch(/Managers worth watching/);
   });
 });

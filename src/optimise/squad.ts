@@ -51,22 +51,32 @@ function captainBonusFor(player: ProjectedPlayer, options: SelectionOptions): nu
 }
 
 /**
- * A small, bounded, upward-only nudge toward a captain with a higher ceiling.
+ * A bounded, upward-only nudge toward a captain with a higher ceiling.
  *
  * The captaincy doubles one player's score, which makes it the one slot where the shape of the
  * distribution matters and not just its mean - two players projected at 9.0 are not the same bet
  * when one has a real chance of fifteen and the other reliably returns 8-10.
  *
- * Deliberately shaped like the consistency bonus above it: additive, capped, never negative, so
- * it can separate two candidates the expected-points term already rates as near-equal without
- * ever overturning a clear difference between them. A ceiling is a reason to prefer one of two
- * similar bets, never a reason to take a worse one.
+ * Additive, capped, never negative, so it separates candidates the expected-points term already
+ * rates as near-equal without overturning a clear difference between them.
+ *
+ * The cap used to be 0.6, and that was a real fault rather than a conservative setting: measured
+ * across the shapes that actually compete for the armband, it turned an eight-point spread of
+ * genuine upside into a **0.15-point** spread of bonus, and pinned both premium forwards - the
+ * exact players this term exists to identify - at the same capped value. A tiebreak that cannot
+ * tell apart the candidates it was written for is dead weight, the same class of fault as a
+ * comparison behind a short-circuit that never fires.
+ *
+ * The cap is now sized against the model's own measured error rather than picked for feel: a
+ * difference in expected points smaller than a typical miss is not evidence of anything, so
+ * upside is allowed to decide within roughly that band and no further. It stays powerless
+ * against a clearly higher projection, which is the property that mattered all along.
  *
  * Driven by how much upside the player carries beyond his own mean, not by the raw ceiling. The
  * raw ceiling correlates strongly with expected points, so using it directly would just be a
  * second, noisier vote for what the first term already said.
  */
-function captainCeilingBonusFor(player: ProjectedPlayer, weights: ModelWeights): number {
+export function captainCeilingBonusFor(player: ProjectedPlayer, weights: ModelWeights): number {
   const excess = Math.max(0, (player.ceiling ?? 0) - player.xPts);
   return Math.min(weights.captain.maxCeilingBonus, excess * weights.captain.ceilingWeight);
 }

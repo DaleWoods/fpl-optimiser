@@ -1724,6 +1724,7 @@ describe('what the captaincy is actually a bet on', () => {
     const sameMatch = describeCaptaincyForTest(
       { captain: cap, viceCaptain: opponent, starters: [cap, opponent, mate, elsewhere] },
       weights,
+      rules,
     )!;
     expect(sameMatch.sameFixture).toBe(true);
     // Captain, opponent and team-mate - but not the player in a different game.
@@ -1736,6 +1737,7 @@ describe('what the captaincy is actually a bet on', () => {
     const differentMatch = describeCaptaincyForTest(
       { captain: cap, viceCaptain: elsewhere, starters: [cap, opponent, mate, elsewhere] },
       weights,
+      rules,
     )!;
     expect(differentMatch.sameFixture).toBe(false);
   });
@@ -1758,9 +1760,60 @@ describe('what the captaincy is actually a bet on', () => {
       const result = describeCaptaincyForTest(
         { captain, viceCaptain: other, starters: [captain, other] },
         weights,
+        rules,
       )!;
       expect(result.fixtureShare).toBeNull();
       expect(result.sameFixture).toBe(false);
     }
+  });
+});
+
+describe('the armband tiebreak actually breaks ties', () => {
+  /**
+   * The fault this guards against is subtle and was live for weeks: the upside bonus was capped
+   * so low that every high-ceiling candidate hit the cap, so the term that exists to separate
+   * captain candidates returned the same number for all the players it was written for. A
+   * tiebreak that cannot tell its own candidates apart is dead weight, and it is invisible
+   * because the code reads as if it works.
+   */
+  const shape = (xPts: number, ceiling: number) => ({
+    ...player({ name: `p${xPts}-${ceiling}`, position: 'MID', xPts, clubId: 1, price: 60 }),
+    ceiling,
+  });
+
+  it('gives measurably different bonuses across the shapes that compete for the armband', async () => {
+    const { captainCeilingBonusFor } = await import('../../src/optimise/squad.js');
+
+    // A budget defender through to an elite forward: the real spread of upside in a squad.
+    const candidates = [shape(3.5, 8), shape(4.5, 10), shape(5.5, 11), shape(6.0, 17), shape(7.5, 20)];
+    const bonuses = candidates.map((p) => captainCeilingBonusFor(p, weights));
+    const spread = Math.max(...bonuses) - Math.min(...bonuses);
+
+    // Under the old 0.6 cap this spread was 0.15 - less than a fifth of a point to express an
+    // eight-point difference in upside, with both forwards pinned at the same capped value.
+    expect(spread).toBeGreaterThan(0.5);
+
+    // And specifically: the two biggest ceilings must not come out identical.
+    expect(captainCeilingBonusFor(shape(7.5, 20), weights)).toBeGreaterThan(
+      captainCeilingBonusFor(shape(6.0, 17), weights),
+    );
+  });
+
+  it('still cannot overturn a clearly better projection', () => {
+    // The property the cap was protecting, and it has to survive the cap being raised: upside
+    // separates near-equal bets, it never justifies taking a worse one.
+    const dull = shape(9.0, 11);
+    const exciting = shape(6.0, 20);
+    const value = (p: typeof dull) =>
+      p.xPts + Math.min(weights.captain.maxCeilingBonus, Math.max(0, (p.ceiling ?? 0) - p.xPts) * weights.captain.ceilingWeight);
+
+    expect(value(dull)).toBeGreaterThan(value(exciting));
+  });
+
+  it('is bounded by the model\'s own measured error, not by feel', () => {
+    // Sized deliberately: a gap in expected points smaller than a typical miss is not evidence,
+    // so upside is allowed to decide inside roughly that band and no further.
+    expect(weights.captain.maxCeilingBonus).toBeGreaterThan(1);
+    expect(weights.captain.maxCeilingBonus).toBeLessThan(2);
   });
 });

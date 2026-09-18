@@ -47,7 +47,8 @@
     "https://sports.yahoo.com/articles/manchester-united-forward-amad-diallo-163500000.html",
     "https://www.si.com/soccer/why-amad-diallo-not-playing-man-utd-vs-hull-8-22-26",
     "https://www.liverpoolfc.com/news/szoboszlai-scores-late-penalty-rescue-point-liverpool-season-opener-newcastle",
-    "https://www.rousingthekop.com/2026/08/23/andoni-iraola-asked-to-explain-why-dominik-szoboszlai-took-liverpools-penalty-vs-newcastle-not-alexander-isak/"
+    "https://www.rousingthekop.com/2026/08/23/andoni-iraola-asked-to-explain-why-dominik-szoboszlai-took-liverpools-penalty-vs-newcastle-not-alexander-isak/",
+    "https://www.fantasyfootballhub.co.uk/fantasy-football-hub-ai-team-reveal-fpl"
   ],
   "weights": {
     "$comment": [
@@ -266,6 +267,11 @@
       "name": "NewsNow Football",
       "url": "https://www.newsnow.co.uk/h/Sport/Football",
       "useFor": "Aggregated headlines from hundreds of outlets - a final sweep for anything missed"
+    },
+    {
+      "name": "Fantasy Football Hub - AI team reveal",
+      "url": "https://www.fantasyfootballhub.co.uk/fantasy-football-hub-ai-team-reveal-fpl",
+      "useFor": "Another model's squad, useful as a second opinion to disagree with - check WHY it differs before copying anything"
     }
   ]
 }

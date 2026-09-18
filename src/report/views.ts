@@ -424,6 +424,105 @@ function renderPriorityFixPlan(plan: PriorityFixPlan & { doneOutIds: Set<number>
     ${formatMoney(plan.totalCost)}, ${formatMoney(plan.bankRemaining)} left in the bank.</p>`;
 }
 
+
+/**
+ * The armband, with its runners-up and the numbers behind each.
+ *
+ * Naming a single captain gives a reader no way to disagree usefully, which is why the same
+ * question kept coming back. The shortlist is ranked by exactly the value the optimiser
+ * maximised, so it is the decision it actually made rather than a second opinion rendered
+ * beside it - and the two columns that matter for a doubled pick, the good-week score and the
+ * chance of a double-figure haul, sit next to the average rather than behind it.
+ */
+function renderCaptainShortlist(rec: Recommendation): string {
+  const shortlist = rec.captaincy?.shortlist ?? [];
+  if (shortlist.length < 2) return '';
+
+  const rows = shortlist
+    .map(
+      (pick) => `<tr${pick.chosen ? ' class="special"' : ''}>
+        <td>${pick.chosen ? `<strong>${escapeHtml(pick.name)}</strong> <span class="pill good">armband</span>` : escapeHtml(pick.name)}</td>
+        <td>${pick.xPts.toFixed(1)}</td>
+        <td>${pick.ceiling === null ? '<span class="muted">&mdash;</span>' : pick.ceiling.toFixed(1)}</td>
+        <td>${
+          pick.haulProbability === null
+            ? '<span class="muted">&mdash;</span>'
+            : `${Math.round(pick.haulProbability * 100)}%`
+        }</td>
+      </tr>`,
+    )
+    .join('');
+
+  return `<h2>Captain shortlist</h2>
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Player</th><th>Average week</th><th>Good week</th><th>Chance of 10+</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>
+  <p class="muted" style="font-size:.88rem;margin:.4rem 0 0">Ranked the way the optimiser ranked
+  them. The armband doubles one score, so <strong>chance of 10+</strong> is closer to what you are
+  actually buying than the average is &mdash; a player who reliably returns six is a worse bet
+  than one who might return sixteen, at the same average. Where those two columns disagree, the
+  call is yours.</p>`;
+}
+
+
+/**
+ * What a rival who is beating you owns, and whether this model agrees.
+ *
+ * Not his squad. The *disagreement* between his squad and this model, because a list of a
+ * winning manager's players cannot be acted on honestly: copied wholesale it is cargo-culting,
+ * ignored entirely it throws away the one signal you have about someone ahead of you.
+ */
+function renderRivals(rec: Recommendation): string {
+  if (rec.rivals.length === 0) return '';
+
+  const list = (players: Recommendation['rivals'][number]['missed']): string =>
+    players.length === 0
+      ? '<p class="muted" style="margin:.2rem 0">Nothing.</p>'
+      : `<ul class="tight">${players
+          .slice(0, 6)
+          .map(
+            (p) =>
+              `<li>${escapeHtml(p.name)} <span class="muted">${escapeHtml(p.position)} &middot;
+               ${escapeHtml(p.club)} &middot; we rate him ${p.xPts.toFixed(1)}</span></li>`,
+          )
+          .join('')}</ul>`;
+
+  const cards = rec.rivals
+    .map(
+      (rival) => `<div class="card">
+      <h3 style="margin:0 0 .4rem">${escapeHtml(rival.label ?? `Manager ${rival.entryId}`)}${
+        rival.totalPoints !== null
+          ? ` <span class="muted" style="font-weight:400">&middot; ${rival.totalPoints} pts</span>`
+          : ''
+      }</h3>
+      ${
+        rival.captain
+          ? `<p class="muted" style="margin:0 0 .5rem">He captained
+             <strong>${escapeHtml(rival.captain.name)}</strong>, who we rate
+             ${rival.captain.xPts.toFixed(1)}.</p>`
+          : ''
+      }
+      <p style="margin:.4rem 0 .1rem"><strong>You have missed these</strong>
+        <span class="muted">&mdash; he owns them, we rate them, you do not have them</span></p>
+      ${list(rival.missed)}
+      <p style="margin:.6rem 0 .1rem"><strong>His call, not ours</strong>
+        <span class="muted">&mdash; he owns them, we do not rate them. Either he knows something
+        we do not, or he got lucky, and those look the same for weeks</span></p>
+      ${list(rival.hisCall)}
+      <p style="margin:.6rem 0 .1rem"><strong>Yours, not his</strong></p>
+      ${list(rival.yoursOnly)}
+    </div>`,
+    )
+    .join('');
+
+  return `<h2>Managers worth watching</h2>
+  <p class="muted" style="font-size:.88rem;margin:0 0 .6rem">Shown as a disagreement, not a
+  shopping list. The first group is where this model already agrees with him and you simply have
+  not acted &mdash; those are the ones worth moving on. The second is where it does not, and
+  copying that is copying his variance as much as his judgement.</p>
+  ${cards}`;
+}
+
 export function renderRecommendation(
   rec: Recommendation,
   options: { generatedAt?: number } = {},
@@ -561,6 +660,10 @@ export function renderRecommendation(
               most of your week.</span>`
            : ''
      }</p>
+
+  ${renderCaptainShortlist(rec)}
+
+  ${renderRivals(rec)}
 
   ${
     rec.previousComparison

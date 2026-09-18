@@ -639,6 +639,61 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### The armband tiebreak could not break ties
+
+The benchmark answered the question it was built for, and the answer split cleanly in two.
+
+**The projections are fine.** Over 3,820 graded projections this model's typical miss is 1.26,
+against 1.36 for FPL's own `ep_next` and 1.39 for points-per-game - 8% and 9% closer. The work in
+here is buying something.
+
+**The armband was giving away 13.3 points a week**, against the best captain in the same squad,
+over three gameweeks. That is larger than everything else on the page combined, and it is a
+different failure from bad projections.
+
+The cause was a fault in the upside term, not a judgement call. `maxCeilingBonus` was 0.6, and
+measured across the shapes that actually compete for the armband it turned an **eight-point**
+spread of genuine upside into a **0.15-point** spread of bonus - with both premium forwards, the
+exact players the term exists to identify, pinned at the same capped value. A tiebreak that
+returns the same number for all of its own candidates is dead weight, the same class of fault as
+a comparison sitting behind a `||` that never fires.
+
+The cap is now **1.25** - the model's own measured typical miss. That sizing is the point: a
+difference in expected points smaller than a typical miss is not evidence of anything, so upside
+is allowed to decide inside roughly that band and nowhere beyond it. It remains powerless against
+a clearly higher projection, which is the property the low cap was protecting.
+
+Worth stating plainly: this was **not** tuned to produce a particular captain. Re-running the
+gameweek-4 decision through the fixed term still picks the same player it picked then. The fault
+being repaired is that the term did nothing, not that it gave an answer somebody disliked. Only
+the captaincy changes, so `modelVersion` does not move and calibration keeps accumulating.
+
+### Captain shortlist
+
+Naming one captain gives a reader no way to disagree usefully, which is why the same question
+kept coming back. The shortlist shows the top five candidates ranked by exactly the value the
+optimiser maximised - so it is the decision it made, not a second opinion beside it - with the
+average week, the good week, and the chance of a double-figure haul side by side. For a doubled
+pick the last of those is closer to what is being bought than the average is.
+
+### Managers worth watching
+
+A specific rival can now be tracked (`app.rivalTeamIds`), and it is deliberately not a list of
+his players. Copied wholesale that is cargo-culting; ignored entirely it throws away the one
+signal you have about someone ahead of you. So the page shows the **disagreement** between his
+squad and this model, in three groups:
+
+- **You have missed these** - he owns them, the model rates them, you do not own them. The model
+  already agrees, so these are the only ones worth acting on quickly.
+- **His call, not ours** - he owns them, the model does not rate them. Either he knows something
+  the model does not or he got lucky, and those look identical for several weeks.
+- **Yours, not his** - so the comparison runs both ways instead of only flattering him.
+
+The split is the whole value: without it the two kinds of difference blur, and copying the second
+group is copying his variance as much as his judgement. Squads are only public once a gameweek
+has started, the same API blind spot that applies to your own team, and a rival who cannot be
+read never takes the rest of the refresh down with them.
+
 ### Measuring against something, at last
 
 Four graded gameweeks produced a typical miss of 1.31 points per player and no way to know

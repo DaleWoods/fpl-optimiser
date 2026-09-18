@@ -424,6 +424,15 @@ export const modelWeightsSchema = z.strictObject({
 export const appConfigSchema = z.strictObject({
   /** FPL entry ID. null until the user supplies it; squad commands fail with a clear message. */
   teamId: positiveInt.nullable(),
+  /**
+   * Other managers worth watching - typically the one in your mini-league who keeps winning.
+   *
+   * Tracked to be disagreed with, not copied. What the app does with them is find where their
+   * squad and this model differ: a player they own that the model also rates highly is one you
+   * have simply missed, while one the model rates poorly is either their edge or their luck.
+   * Those need telling apart, and a list of names on its own cannot do it.
+   */
+  rivalTeamIds: z.array(positiveInt).default([]),
   api: z.strictObject({
     baseUrl: z.url(),
     userAgent: z.string().min(1),

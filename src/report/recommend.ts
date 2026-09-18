@@ -28,6 +28,8 @@ import {
   loadConfirmedTransfers,
   type ConfirmedTransfer,
 } from '../model/confirmedTransfers.js';
+import { captainCeilingBonusFor } from '../optimise/squad.js';
+import { compareRivals, type RivalComparison } from '../model/rivals.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
 import { selectBestEleven, selectBestSquad, selectBestTransferPlan } from '../optimise/squad.js';
@@ -300,6 +302,11 @@ export interface Recommendation {
    * page was stating the pick most confidently. Presenting an arbitrary winner as a verdict is
    * the same mistake the chip advisor already refuses to make with a tied gameweek.
    */
+  /**
+   * Where a tracked rival's squad and this model disagree. Empty unless rivals are configured
+   * and their picks have gone public, which only happens once a gameweek has started.
+   */
+  rivals: RivalComparison[];
   captaincy: {
     runnerUpName: string;
     runnerUpXPts: number;
@@ -325,6 +332,21 @@ export interface Recommendation {
      * ever mentioning it. That is not an error in the total, but it is a fact about the bet.
      */
     fixtureShare: { label: string; players: number; xPts: number } | null;
+    /**
+     * The candidates the armband was actually chosen between, with the numbers behind each.
+     *
+     * The page only ever named a winner, which is why "should I captain X or Y?" kept coming
+     * back - a single name gives no way to disagree with it usefully. Ranked by the same value
+     * the optimiser maximised, so this is genuinely the decision it made rather than a separate
+     * opinion rendered beside it.
+     */
+    shortlist: {
+      name: string;
+      xPts: number;
+      ceiling: number | null;
+      haulProbability: number | null;
+      chosen: boolean;
+    }[];
   } | null;
 
   /** Where the evidence behind these projections came from. */
@@ -1303,7 +1325,8 @@ export async function recommend(
       notes,
       playersConsidered: projections.length,
       lowConfidence,
-      captaincy: describeCaptaincy(selection.eleven, weights),
+      rivals: [],
+      captaincy: describeCaptaincy(selection.eleven, weights, rules),
       evidence,
     };
   }
@@ -1523,7 +1546,14 @@ export async function recommend(
     notes,
     playersConsidered: projections.length,
     lowConfidence,
-    captaincy: describeCaptaincy(eleven, weights),
+    // Compared against the squad you own, so "missed" genuinely means missed.
+    rivals: compareRivals(
+      db,
+      event.id,
+      projections,
+      new Set(owned.squad.map((player) => player.playerId)),
+    ),
+    captaincy: describeCaptaincy(eleven, weights, rules),
     evidence,
   };
 }
@@ -1540,7 +1570,8 @@ export async function recommend(
 export const describeCaptaincyForTest = (
   eleven: Parameters<typeof describeCaptaincy>[0],
   weights: ModelWeights,
-): Recommendation['captaincy'] => describeCaptaincy(eleven, weights);
+  rules: Rules,
+): Recommendation['captaincy'] => describeCaptaincy(eleven, weights, rules);
 
 function describeCaptaincy(
   eleven: {
@@ -1549,6 +1580,7 @@ function describeCaptaincy(
     starters: readonly ProjectedPlayer[];
   },
   weights: ModelWeights,
+  rules: Rules,
 ): Recommendation['captaincy'] {
   const margin = eleven.captain.xPts - eleven.viceCaptain.xPts;
 
@@ -1566,11 +1598,29 @@ function describeCaptaincy(
       ? []
       : eleven.starters.filter((player) => fixtureKey(player) === captainKey);
 
+  // Ranked by exactly what the optimiser maximised for the armband, so the order shown is the
+  // order it actually considered - not a second opinion that might disagree with its own pick.
+  const shortlist = [...eleven.starters]
+    .map((player) => ({
+      player,
+      value: player.xPts * (rules.captain.multiplier - 1) + captainCeilingBonusFor(player, weights),
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5)
+    .map(({ player }) => ({
+      name: player.name,
+      xPts: round(player.xPts),
+      ceiling: player.ceiling ?? null,
+      haulProbability: player.haulProbability ?? null,
+      chosen: player.playerId === eleven.captain.playerId,
+    }));
+
   return {
     runnerUpName: eleven.viceCaptain.name,
     runnerUpXPts: round(eleven.viceCaptain.xPts),
     margin: round(margin),
     tooClose: margin <= weights.captain.tooCloseMargin,
+    shortlist,
     sameFixture: captainKey !== null && captainKey === fixtureKey(eleven.viceCaptain),
     fixtureShare:
       captainKey === null
