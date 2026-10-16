@@ -639,6 +639,42 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### A 1 GB disk is ~29x more than this needs
+
+Worth stating plainly, because the obvious response to a full disk is to buy a bigger one and
+that would have been the wrong call here. Costed out, a **whole season** is about:
+
+| | |
+|---|---|
+| `player_fixture_history` | 20.3 MB |
+| `projection` (pruned) | 5.6 MB |
+| `player_snapshot` (pruned, payload gone) | 2.1 MB |
+| everything else | ~7 MB |
+| **total** | **~35 MB** |
+
+The volume was not too small. It was full of a column nothing reads, and the app could not clear
+it because of a bind in how SQLite reclaims space.
+
+**`VACUUM` cannot run on the disk it needs to free.** It builds a complete second copy beside the
+original before swapping, so it wants roughly twice the file size free - and a 1 GB database that
+has filled a 1 GB volume will never have that. Pruning frees pages *inside* the file, which is
+enough to let the app write again, but the file on disk stays the size it grew to for ever.
+
+The way out is that the second copy does not have to live on the same volume. `VACUUM INTO`
+writes a consistent database to any path, and after pruning that copy is small, so it goes to
+scratch space outside the volume, the bloated original is deleted, and the small copy is moved
+back. This runs automatically at start-up, **before the database is opened**, and only when the
+volume is genuinely starved - under 50 MB free. `fpl reclaim --force` does it on demand.
+
+The order is the whole design, because there is a moment when the only copy is the scratch one.
+The replacement is opened and must pass `integrity_check`, contain the tables the app cannot run
+without, and **contain players** before anything is deleted - that last one matters because
+`integrity_check` passes happily on a structurally valid empty file, and swapping a blank
+database in while deleting the real one is the worst outcome this feature could possibly have.
+If any check fails the original is left exactly as it was: a full disk is recoverable, a database
+destroyed while recovering one is not. That guard is exported and tested directly rather than
+only through the paths that happen to reach it.
+
 ### The column that caused it, and the check that never ran
 
 Two faults, one of them mine from the previous fix.

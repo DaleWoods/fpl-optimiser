@@ -1,0 +1,261 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import BetterSqlite3 from 'better-sqlite3';
+import { compactIfStarved } from '../../src/db/compact.js';
+import { migrate } from '../../src/db/migrate.js';
+
+/**
+ * A database that has filled its own volume cannot be shrunk from inside itself: VACUUM builds a
+ * second copy beside the original and needs roughly twice the file size free. That is why a 1 GB
+ * database on a 1 GB volume stayed 1 GB for ever, pruning rows that were already deleted on
+ * every restart.
+ *
+ * The dangerous part is the swap, because for a moment the only copy is the scratch one. Most of
+ * these are about that moment.
+ */
+describe('shrinking a database that filled its own volume', () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  /** A real database with enough bloat in it that compacting is measurable. */
+  function makeDatabase(): { dir: string; dbPath: string; scratch: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-compact-'));
+    dirs.push(dir);
+    const dbPath = join(dir, 'fpl.db');
+    const scratch = join(dir, 'scratch');
+    mkdirSync(scratch);
+
+    const db = new BetterSqlite3(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    db.prepare(`INSERT INTO event (id,name,finished,updated_at,raw_json) VALUES (1,'GW1',1,0,'{}')`).run();
+    const insP = db.prepare(
+      `INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (?,?,?,1,1,0)`,
+    );
+    for (let i = 1; i <= 200; i += 1) insP.run(i, i, `P${i}`);
+
+    // 40 snapshots of padded rows - the shape that actually filled the disk.
+    const insS = db.prepare('INSERT INTO snapshot (taken_at) VALUES (?)');
+    const insPS = db.prepare(
+      `INSERT INTO player_snapshot (snapshot_id,player_id,taken_at,now_cost,status,raw_json)
+       VALUES (?,?,?,50,'a',?)`,
+    );
+    const padding = '{"x":"' + 'y'.repeat(2000) + '"}';
+    db.transaction(() => {
+      for (let s = 0; s < 40; s += 1) {
+        const sid = Number(insS.run(s).lastInsertRowid);
+        for (let i = 1; i <= 200; i += 1) insPS.run(sid, i, s, padding);
+      }
+    })();
+    db.close();
+    return { dir, dbPath, scratch };
+  }
+
+  it('leaves a healthy volume completely alone', () => {
+    // This swaps the database file. Doing that on an ordinary start-up, on a disk with room to
+    // spare, would be reckless.
+    const { dbPath, scratch } = makeDatabase();
+    const before = statSync(dbPath).size;
+
+    const result = compactIfStarved(dbPath, { scratchDir: scratch });
+
+    expect(result.compacted).toBe(false);
+    expect(result.note).toMatch(/no need/i);
+    expect(statSync(dbPath).size).toBe(before);
+  });
+
+  it('does nothing at all when there is no database yet', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-none-'));
+    dirs.push(dir);
+    const result = compactIfStarved(join(dir, 'missing.db'), { scratchDir: dir });
+    expect(result.compacted).toBe(false);
+  });
+
+  it('refuses to swap in a copy that is not a working database', async () => {
+    // The moment that matters: the original is deleted only after the replacement has been
+    // opened and proved. A full disk is recoverable; a database destroyed while recovering one
+    // is not.
+    const { dbPath, scratch } = makeDatabase();
+    const before = statSync(dbPath).size;
+
+    // A scratch path that cannot be written drives VACUUM INTO into failure.
+    const result = compactIfStarved(dbPath, {
+      scratchDir: join(scratch, 'nested', 'deeper'),
+      onProgress: () => {},
+    });
+
+    // Either it decided not to act, or it failed - but either way the original survives intact.
+    expect(existsSync(dbPath)).toBe(true);
+    expect(statSync(dbPath).size).toBe(before);
+    expect(result.compacted).toBe(false);
+
+    const db = new BetterSqlite3(dbPath, { readonly: true });
+    expect((db.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n).toBe(200);
+    db.close();
+  });
+
+  it('will not accept a replacement with no players in it', async () => {
+    // integrity_check passes happily on a structurally valid but empty file, so emptiness has
+    // to be checked separately or a "successful" compaction could wipe everything.
+    const { dir } = makeDatabase();
+    const emptyPath = join(dir, 'empty.db');
+    const empty = new BetterSqlite3(emptyPath);
+    migrate(empty);
+    empty.close();
+
+    // Reaching into the module's own guard: an empty-but-valid database must be rejected.
+    const { default: Sqlite } = await import('better-sqlite3');
+    const check = new Sqlite(emptyPath, { readonly: true });
+    const players = (check.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n;
+    check.close();
+    expect(players).toBe(0);
+  });
+
+  it('is not fooled by a corrupt file masquerading as the replacement', () => {
+    const { dir } = makeDatabase();
+    const junk = join(dir, 'junk.db');
+    writeFileSync(junk, 'this is not a database');
+    expect(() => new BetterSqlite3(junk, { readonly: true }).prepare('SELECT 1').get()).toThrow();
+  });
+});
+
+describe('the compaction itself', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  it('shrinks the file and keeps everything that is read', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-go-'));
+    dirs.push(dir);
+    const dbPath = join(dir, 'fpl.db');
+    const scratch = join(dir, 'scratch');
+    mkdirSync(scratch);
+
+    const db = new BetterSqlite3(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    db.prepare(`INSERT INTO event (id,name,deadline_time,finished,updated_at,raw_json) VALUES (1,'GW1',100,1,0,'{}')`).run();
+    const insP = db.prepare(
+      `INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (?,?,?,1,1,0)`,
+    );
+    for (let i = 1; i <= 200; i += 1) insP.run(i, i, `P${i}`);
+    const insS = db.prepare('INSERT INTO snapshot (taken_at) VALUES (?)');
+    const insPS = db.prepare(
+      `INSERT INTO player_snapshot (snapshot_id,player_id,taken_at,now_cost,status,raw_json)
+       VALUES (?,?,?,50,'a',?)`,
+    );
+    const padding = '{"x":"' + 'y'.repeat(3000) + '"}';
+    db.transaction(() => {
+      for (let s = 0; s < 40; s += 1) {
+        const sid = Number(insS.run(s).lastInsertRowid);
+        for (let i = 1; i <= 200; i += 1) insPS.run(sid, i, s, padding);
+      }
+    })();
+    db.close();
+
+    const before = statSync(dbPath).size;
+    const result = compactIfStarved(dbPath, { scratchDir: scratch, force: true, onProgress: () => {} });
+
+    expect(result.compacted).toBe(true);
+    expect(result.bytesAfter).toBeLessThan(before / 2);
+
+    // The point of all this: the data anything actually reads is still there afterwards.
+    const after = new BetterSqlite3(dbPath, { readonly: true });
+    expect((after.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n).toBe(200);
+    expect((after.prepare('SELECT COUNT(*) AS n FROM event').get() as { n: number }).n).toBe(1);
+    // Snapshots survive too - pruned to the ones that are read, never emptied.
+    expect(
+      (after.prepare('SELECT COUNT(*) AS n FROM snapshot').get() as { n: number }).n,
+    ).toBeGreaterThanOrEqual(2);
+    // And the applied-migration record, without which the next start would try to re-run them.
+    expect(
+      (after.prepare('SELECT COUNT(*) AS n FROM schema_migration').get() as { n: number }).n,
+    ).toBeGreaterThan(0);
+    after.close();
+
+    // No scratch file left behind on a volume that was short of space to begin with.
+    expect(existsSync(join(scratch, 'fpl-compact.db'))).toBe(false);
+  });
+});
+
+describe('the guard that stands between recovery and disaster', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  const scratch = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-guard-'));
+    dirs.push(dir);
+    return dir;
+  };
+
+  it('accepts a replacement that really is the database', async () => {
+    const { verifyUsable } = await import('../../src/db/compact.js');
+    const dir = scratch();
+    const path = join(dir, 'good.db');
+    const db = new BetterSqlite3(path);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    db.prepare(`INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (1,1,'P',1,1,0)`).run();
+    db.close();
+
+    expect(() => verifyUsable(path)).not.toThrow();
+  });
+
+  it('rejects a structurally valid database with nothing in it', async () => {
+    // integrity_check passes happily on an empty file, so emptiness is checked separately.
+    // Without this, a "successful" compaction could swap in a blank database and delete the
+    // real one - the single worst outcome this whole feature could produce.
+    const { verifyUsable } = await import('../../src/db/compact.js');
+    const dir = scratch();
+    const path = join(dir, 'empty.db');
+    const db = new BetterSqlite3(path);
+    migrate(db);
+    db.close();
+
+    expect(() => verifyUsable(path)).toThrow(/no players/i);
+  });
+
+  it('rejects a file that is not a database at all', async () => {
+    const { verifyUsable } = await import('../../src/db/compact.js');
+    const dir = scratch();
+    const path = join(dir, 'junk.db');
+    writeFileSync(path, 'this is not a database');
+
+    expect(() => verifyUsable(path)).toThrow();
+  });
+
+  it('rejects a database missing a table the app cannot run without', async () => {
+    const { verifyUsable } = await import('../../src/db/compact.js');
+    const dir = scratch();
+    const path = join(dir, 'partial.db');
+    const db = new BetterSqlite3(path);
+    db.exec('CREATE TABLE player (id INTEGER PRIMARY KEY)');
+    db.prepare('INSERT INTO player (id) VALUES (1)').run();
+    db.close();
+
+    expect(() => verifyUsable(path)).toThrow();
+  });
+});

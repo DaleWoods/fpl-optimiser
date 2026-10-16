@@ -10,6 +10,8 @@ import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
 import { adviseChips } from '../optimise/chips.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { checkReadiness, recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
+import { compactIfStarved } from '../db/compact.js';
+import { freeDiskBytes } from '../db/maintenance.js';
 import { startServer } from './server.js';
 import { formatDuration, formatMoney, getStateOfPlay } from './state.js';
 
@@ -561,6 +563,39 @@ async function commandChips(flags: Map<string, string | true>): Promise<number> 
   return 0;
 }
 
+
+/**
+ * Shrink the database file by hand.
+ *
+ * The escape hatch for a volume so full that the server cannot get far enough to do it itself.
+ * Takes no arguments and is safe to run repeatedly: on a volume with room to spare it looks,
+ * says so, and changes nothing.
+ */
+async function commandReclaim(flags: Map<string, string | boolean>): Promise<number> {
+  const config = loadConfig();
+  const before = freeDiskBytes(config.app.database.path);
+  console.log(
+    before === null
+      ? 'Free space: unknown.'
+      : `Free space before: ${(before / 1024 / 1024).toFixed(0)} MB`,
+  );
+
+  const result = compactIfStarved(config.app.database.path, {
+    cacheDir: config.app.api.cacheDir,
+    onProgress: (message) => console.log(message),
+    force: flags.get('force') === true || flags.get('force') === 'true',
+  });
+
+  console.log(result.note);
+  if (result.compacted) {
+    console.log(
+      `Database: ${(result.bytesBefore / 1024 / 1024).toFixed(0)} MB -> ` +
+        `${(result.bytesAfter / 1024 / 1024).toFixed(0)} MB`,
+    );
+  }
+  return 0;
+}
+
 async function commandServe(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
   const portFlag = flags.get('port');
@@ -595,6 +630,8 @@ async function main(): Promise<number> {
       return commandOptimise(flags);
     case 'serve':
       return commandServe(flags);
+    case 'reclaim':
+      return commandReclaim(flags);
     case 'help':
     case '--help':
     case '-h':

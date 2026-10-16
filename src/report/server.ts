@@ -13,6 +13,7 @@ import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from
 import { loadIntel } from '../model/intel.js';
 import { benchmarkSeason } from '../model/benchmark.js';
 import { freeDiskBytes, isDiskSpaceFailure, pruneHistory, spaceReport } from '../db/maintenance.js';
+import { compactIfStarved } from '../db/compact.js';
 import { ingestRivals } from '../ingest/rivals.js';
 import { compareRivals } from '../model/rivals.js';
 import {
@@ -109,6 +110,18 @@ export function shouldPrimeOnBoot(db: Database, ingestIntervalMinutes: number): 
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const { config } = options;
+  // Before the database is opened at all, because a file that has filled its own volume cannot
+  // be shrunk from inside itself: VACUUM needs room for a second copy beside the original, and
+  // there is none. This writes that copy to scratch space outside the volume instead, and only
+  // when the volume is genuinely starved.
+  {
+    const compaction = compactIfStarved(config.app.database.path, {
+      cacheDir: config.app.api.cacheDir,
+      onProgress: (message) => console.warn(`[db] ${message}`),
+    });
+    if (compaction.compacted) console.warn(`[db] ${compaction.note}`);
+  }
+
   // The HTTP cache sits on the same disk and is pure disposable copy, so it is what gets
   // sacrificed if the database cannot open for want of space.
   const db: Database = openDatabase({
