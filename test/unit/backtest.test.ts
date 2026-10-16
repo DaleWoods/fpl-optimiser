@@ -213,3 +213,128 @@ describe('the replay must not be able to see the future', () => {
     expect(picker.slice(0, 500)).toMatch(/ORDER BY s\.taken_at DESC/);
   });
 });
+
+describe('not mistaking missing data for a bad model', () => {
+  /**
+   * The flaw the first live run exposed. A player with no recorded result scores zero in every
+   * replay - but "what you played" was being taken from the real FPL total, which suffers none
+   * of that. So every gap in the results import landed entirely on the replayed side of the
+   * comparison and made the model look worse than it is.
+   *
+   * Two corrections: your own XI is now scored from exactly the same results map, and a week
+   * with large gaps is left out and named rather than scored against them.
+   */
+  let db: Database;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({ events: [1, 2].map((id) => fakeEvent(id, { finished: true })) }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [1, 2].map((gw) =>
+          fakeFixture(gw, gw, 1, 2, { team_h_score: 1, team_a_score: 1, finished: true }),
+        ),
+      }),
+    );
+    for (const gw of [1, 2]) {
+      db.prepare('UPDATE event SET deadline_time = ? WHERE id = ?').run(nowSeconds() + gw, gw);
+    }
+  });
+
+  function squadOf15(): { id: number; position: string }[] {
+    const all = db
+      .prepare(
+        `SELECT p.id AS id, pos.short_name AS position FROM player p
+         JOIN position pos ON pos.id = p.position_id ORDER BY p.id`,
+      )
+      .all() as { id: number; position: string }[];
+    const take = (position: string, n: number) =>
+      all.filter((p) => p.position === position).slice(0, n);
+    return [...take('GKP', 2), ...take('DEF', 5), ...take('MID', 5), ...take('FWD', 3)];
+  }
+
+  function storeSquad(eventIds: number[], squad: { id: number; position: string }[]): void {
+    for (const eventId of eventIds) {
+      db.prepare(
+        `INSERT INTO recommendation (created_at, event_id, entry_id, kind, model_version, summary, detail_json)
+         VALUES (?, ?, NULL, 'xi', 'test', 'test', ?)`,
+      ).run(
+        nowSeconds(),
+        eventId,
+        JSON.stringify({ squad: squad.map((p) => ({ playerId: p.id, position: p.position })) }),
+      );
+    }
+  }
+
+  function seedResults(eventId: number, playerIds: number[]): void {
+    const insert = db.prepare(
+      `INSERT INTO actual_points (player_id, event_id, points, minutes, source, recorded_at)
+       VALUES (?, ?, 4, 90, 'test', ?)
+       ON CONFLICT (player_id, event_id) DO NOTHING`,
+    );
+    for (const id of playerIds) insert.run(id, eventId, nowSeconds());
+  }
+
+  it('leaves out a gameweek whose results are mostly missing, and says so', () => {
+    const squad = squadOf15();
+    storeSquad([1, 2], squad);
+    seedResults(1, squad.map((p) => p.id));           // complete
+    seedResults(2, squad.slice(0, 5).map((p) => p.id)); // only a third have results
+
+    const result = runBacktest(db, rules, weights);
+
+    expect(result.weeks.map((w) => w.eventId)).toEqual([1]);
+    expect(result.notes.join(' ')).toMatch(/Gameweek 2: only 5 of 15 squad players/);
+  });
+
+  it('reports how complete each replayed week was', () => {
+    const squad = squadOf15();
+    storeSquad([1], squad);
+    seedResults(1, squad.map((p) => p.id));
+
+    const week = runBacktest(db, rules, weights).weeks[0]!;
+    expect(week.coverage).toBe(1);
+  });
+
+  it('scores your XI from the same results map, not from an external total', () => {
+    // The bias being removed. Your real FPL total knows about players this database has no
+    // result for; a replay does not. Pairing one against the other puts every gap on one side.
+    const squad = squadOf15();
+    storeSquad([1], squad);
+    seedResults(1, squad.map((p) => p.id));
+
+    const state = Number(
+      db
+        .prepare(
+          `INSERT INTO manager_state (entry_id, captured_at, event_id) VALUES (1, ?, 1)`,
+        )
+        .run(nowSeconds()).lastInsertRowid,
+    );
+    const insertPick = db.prepare(
+      `INSERT INTO squad_pick (manager_state_id, player_id, slot, multiplier, is_captain, is_vice_captain)
+       VALUES (?, ?, ?, ?, ?, 0)`,
+    );
+    squad.forEach((p, index) =>
+      insertPick.run(state, p.id, index + 1, index < 11 ? 1 : 0, index === 0 ? 1 : 0),
+    );
+
+    // A wildly wrong real total, which must NOT be what the comparison uses.
+    db.prepare(
+      `INSERT INTO gameweek_result (entry_id, event_id, actual_points, recorded_at)
+       VALUES (1, 1, 9999, ?)`,
+    ).run(nowSeconds());
+
+    const result = runBacktest(db, rules, weights);
+    const you = result.policies.find((p) => p.key === 'you')!;
+
+    expect(you.total).toBeLessThan(500);
+    expect(you.label).toMatch(/XI you played/);
+  });
+});

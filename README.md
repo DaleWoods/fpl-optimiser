@@ -1030,6 +1030,28 @@ group is copying his variance as much as his judgement. Squads are only public o
 has started, the same API blind spot that applies to your own team, and a rival who cannot be
 read never takes the rest of the refresh down with them.
 
+### The first live backtest found a flaw in the backtest
+
+Running it on real data produced a footnote that mattered more than the result:
+*"7 of the recommended XI have no recorded result, so the actual total is understated."*
+
+A player with no recorded result scores **zero** in a replay. Meanwhile "what you played" was
+being taken from the real FPL total, which knows about those players perfectly well. So every gap
+in the results import landed **entirely on the replayed side** of the comparison, and the model
+was being charged for data this database happens not to have.
+
+Two corrections, both of which change what the number means:
+
+- **Your own XI is now scored from the same results map**, from the picks stored for that
+  gameweek. Your real FPL total is kept for context, but it is not the thing being compared
+  against - it includes hits and chips and suffers none of the missing-result problem.
+- **A gameweek with large gaps is left out and named** rather than scored against them. Below
+  90% squad coverage the replay is measuring how complete the import is, not how good a policy
+  is, and reporting that as model quality would be worse than reporting nothing.
+
+Both are verified to fail when removed: disabling the coverage gate, or pairing against the
+external total, each breaks a test that exists for exactly that reason.
+
 ### Replaying the season in points
 
 Every figure on the Accuracy page measures **error** - how far a projection was from an outcome.

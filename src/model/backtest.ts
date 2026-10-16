@@ -31,6 +31,14 @@ import { simulateAutoSubs } from './accuracy.js';
  * the armband evidence says is costing the most.
  */
 
+/**
+ * How much of a squad must have a recorded result before a week is worth scoring.
+ *
+ * Not a tuning knob. Below this the replay is measuring how complete the results import is, and
+ * reporting that as model quality would be worse than reporting nothing.
+ */
+const MINIMUM_COVERAGE = 0.9;
+
 export interface PolicyScore {
   key: 'model' | 'you' | 'fpl' | 'hold';
   label: string;
@@ -43,6 +51,8 @@ export interface PolicyScore {
 export interface BacktestWeek {
   eventId: number;
   squadSize: number;
+  /** Share of the squad with a recorded result. Below MINIMUM_COVERAGE the week is skipped. */
+  coverage: number;
   scores: Record<PolicyScore['key'], number>;
   captainByPolicy: Record<PolicyScore['key'], string | null>;
 }
@@ -72,6 +82,40 @@ export interface BacktestResult {
 interface SquadMember {
   playerId: number;
   position: string;
+}
+
+/** The XI you actually fielded, from the picks stored for that gameweek. */
+function yourPicks(
+  db: Database,
+  eventId: number,
+): { starters: SquadMember[]; bench: SquadMember[]; captainId: number | null } | null {
+  const rows = db
+    .prepare(
+      `SELECT sp.player_id AS playerId, pos.short_name AS position, sp.slot AS slot,
+              sp.multiplier AS multiplier, sp.is_captain AS isCaptain
+       FROM squad_pick sp
+       JOIN manager_state ms ON ms.id = sp.manager_state_id
+       JOIN player p ON p.id = sp.player_id
+       JOIN position pos ON pos.id = p.position_id
+       WHERE ms.event_id = ?
+         AND ms.id = (SELECT id FROM manager_state WHERE event_id = ?
+                      ORDER BY captured_at DESC, id DESC LIMIT 1)
+       ORDER BY sp.slot ASC`,
+    )
+    .all(eventId, eventId) as {
+    playerId: number;
+    position: string;
+    slot: number;
+    multiplier: number;
+    isCaptain: number;
+  }[];
+
+  if (rows.length === 0) return null;
+  return {
+    starters: rows.filter((row) => row.slot <= 11).map(({ playerId, position }) => ({ playerId, position })),
+    bench: rows.filter((row) => row.slot > 11).map(({ playerId, position }) => ({ playerId, position })),
+    captainId: rows.find((row) => row.isCaptain === 1)?.playerId ?? null,
+  };
 }
 
 /** The squad actually held going into a gameweek, from the advice stored before that deadline. */
@@ -223,6 +267,20 @@ export function runBacktest(
       ).map((row) => [row.playerId, row.ep ?? 0]),
     );
 
+    // Missing results are scored as zero by every replay, so a week with large gaps measures
+    // how complete the data is rather than how good any policy is - and it does so unevenly,
+    // because the policies pick different players. Worse, a real FPL total taken from elsewhere
+    // suffers none of it, so the gaps land entirely on the replayed side of the comparison.
+    const covered = squad.filter((player) => actual.has(player.playerId)).length;
+    const coverage = squad.length > 0 ? covered / squad.length : 0;
+    if (coverage < MINIMUM_COVERAGE) {
+      notes.push(
+        `Gameweek ${eventId}: only ${covered} of ${squad.length} squad players have a recorded ` +
+          'result, so it is left out rather than scored against missing data.',
+      );
+      continue;
+    }
+
     const positionById = new Map(squad.map((player) => [player.playerId, player.position]));
     const score = (picked: ReturnType<typeof pickEleven>): number =>
       simulateAutoSubs(
@@ -237,11 +295,17 @@ export function runBacktest(
 
     const modelXi = pickEleven(squad, (id) => projected.get(id) ?? 0, rules);
     const fplXi = pickEleven(squad, (id) => epNext.get(id) ?? 0, rules);
+    // Your real FPL total is kept for context, but it is NOT what the comparison uses: it comes
+    // from your entry history, includes hits and chips, and crucially suffers none of the
+    // missing-result problem above. Comparing a replay against it puts every data gap on one
+    // side of the scales. Your own XI, scored from exactly the same results map, is the honest
+    // pairing.
     const yourTotal = (
       db
         .prepare('SELECT actual_points AS pts FROM gameweek_result WHERE event_id = ? LIMIT 1')
         .get(eventId) as { pts: number | null } | undefined
     )?.pts;
+    const yourXi = yourPicks(db, eventId);
 
     // Holding means fielding last week's XI again, which is only possible from week two, and
     // only for players still in the squad.
@@ -257,12 +321,12 @@ export function runBacktest(
     weeks.push({
       eventId,
       squadSize: squad.length,
+      coverage: round(coverage),
       scores: {
         model: score(modelXi),
         fpl: score(fplXi),
         hold: score(holdXi),
-        // Your real total, including hits and chips - the honest benchmark, not a reconstruction.
-        you: yourTotal ?? score(modelXi),
+        you: yourXi ? score(yourXi) : (yourTotal ?? score(modelXi)),
       },
       captainByPolicy: {
         model: nameOf(modelXi.captainId),
@@ -272,9 +336,10 @@ export function runBacktest(
       },
     });
 
-    if (yourTotal === null || yourTotal === undefined) {
+    if (!yourXi) {
       notes.push(
-        `Gameweek ${eventId}: your own score is not recorded, so that column repeats the model's.`,
+        `Gameweek ${eventId}: your own picks are not stored, so that column falls back to your ` +
+          'real FPL total, which is not scored the same way and is only roughly comparable.',
       );
     }
 
@@ -283,7 +348,7 @@ export function runBacktest(
 
   const labels: Record<PolicyScore['key'], string> = {
     model: 'This model',
-    you: 'What you played',
+    you: 'The XI you played',
     fpl: "FPL's own number",
     hold: 'Last week again',
   };

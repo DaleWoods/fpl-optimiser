@@ -1842,6 +1842,13 @@ function renderBacktest(backtest: BacktestResult | null): string {
     <tbody>${comparisons}</tbody></table></div></div>
 
   ${
+    backtest.notes.length > 0
+      ? `<p class="muted" style="font-size:.88rem;margin:.5rem 0 0">${backtest.notes
+          .map((note) => escapeHtml(note))
+          .join('<br>')}</p>`
+      : ''
+  }
+  ${
     backtest.detectableEdge === null
       ? ''
       : `<p class="muted" style="font-size:.88rem;margin:.5rem 0 0">With
@@ -1861,6 +1868,11 @@ function renderBacktest(backtest: BacktestResult | null): string {
       <p>Scored with FPL's real auto-substitution and vice-captain rules. <strong>Last week
       again</strong> is the cost of not deciding; <strong>FPL's own number</strong> is
       <code>ep_next</code>, free from the API.</p>
+      <p>Your own XI is scored from the <em>same</em> results table as every replay, not from
+      your real FPL total. That total knows about players this database has no record for, and
+      pairing one against the other would put every gap in the data on the replayed side of the
+      scales. A gameweek where too much of the squad has no recorded result is left out and
+      named, rather than scored against missing data.</p>
       <p>Transfers are deliberately out of scope: simulating one changes the squad, and from the
       next gameweek onward nothing would be comparable to anything. This isolates the XI and the
       armband &mdash; the decision made every week.</p>
