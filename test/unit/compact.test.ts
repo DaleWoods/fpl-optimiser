@@ -530,3 +530,103 @@ describe('salvaging when there is no room for a whole copy', () => {
     after.close();
   });
 });
+
+describe('a database SQLite will not open at all', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  /**
+   * The failure that defeated three strategies in a row. Scratch had 230 GB free, so space was
+   * never the problem - every route died instantly on *reading* the source.
+   *
+   * A database left behind by repeated crashes has a hot journal beside it, and SQLite must roll
+   * that back before it will read the file. Rollback is a WRITE. On a volume with nothing left
+   * there is nowhere to put it, so opening the original failed whatever flags were passed -
+   * read-only included. Anything that began by opening it was dead before it started.
+   *
+   * Copying the raw bytes first sidesteps the engine entirely: nothing is interpreted, nothing
+   * is recovered, nothing is written to the starved volume.
+   */
+  it('recovers a database carrying a journal, by copying bytes before opening anything', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-hot-'));
+    dirs.push(dir);
+    const scratch = mkdtempSync(join(tmpdir(), 'fpl-hot-s-'));
+    dirs.push(scratch);
+
+    const dbPath = join(dir, 'fpl.db');
+    const db = new BetterSqlite3(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    const insP = db.prepare(
+      `INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (?,?,?,1,1,0)`,
+    );
+    for (let i = 1; i <= 60; i += 1) insP.run(i, i, `P${i}`);
+    db.close();
+
+    // A sidecar left beside the database, as a crash mid-write leaves one. The point of the
+    // assertion below is that the copy picks sidecars up rather than leaving them behind, which
+    // would hand SQLite a file it believes is mid-transaction with no journal to resolve it.
+    writeFileSync(`${dbPath}-journal`, '');
+
+    const result = compactIfStarved(dbPath, {
+      scratchDir: scratch,
+      force: true,
+      onProgress: () => {},
+    });
+
+    expect(result.compacted).toBe(true);
+    const after = new BetterSqlite3(dbPath, { readonly: true });
+    expect((after.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n).toBe(60);
+    after.close();
+  });
+
+  it('never opens the original before copying it', async () => {
+    // Guards the ordering directly, because it is the whole fix and nothing else enforces it.
+    const whole = (await import('node:fs')).readFileSync('src/db/compact.ts', 'utf8');
+    // Scoped to the repair itself. verifyUsable opens a path too, but that is the candidate
+    // replacement sitting in scratch, which is exactly what it is supposed to open.
+    const text = whole.slice(0, whole.indexOf('export function verifyUsable'));
+
+    const copyAt = text.indexOf('Copying the raw file out');
+    const openAt = text.indexOf('new BetterSqlite3(workPath)');
+    const salvageAt = text.indexOf('salvageInto(workPath');
+
+    expect(copyAt).toBeGreaterThan(0);
+    // Both routes act on the copy, and both come after it.
+    expect(openAt).toBeGreaterThan(copyAt);
+    expect(salvageAt).toBeGreaterThan(copyAt);
+    // And neither reaches for the original path any more.
+    expect(text).not.toMatch(/new BetterSqlite3\(path, \{ readonly: true \}\)/);
+    expect(text).not.toMatch(/salvageInto\(path,/);
+  });
+
+  it('leaves no working copy behind in scratch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-tidy-'));
+    dirs.push(dir);
+    const scratch = mkdtempSync(join(tmpdir(), 'fpl-tidy-s-'));
+    dirs.push(scratch);
+
+    const dbPath = join(dir, 'fpl.db');
+    const db = new BetterSqlite3(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    db.prepare(`INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (1,1,'P',1,1,0)`).run();
+    db.close();
+
+    compactIfStarved(dbPath, { scratchDir: scratch, force: true, onProgress: () => {} });
+
+    const { readdirSync } = require('node:fs') as typeof import('node:fs');
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+});

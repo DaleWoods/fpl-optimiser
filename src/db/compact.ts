@@ -88,6 +88,7 @@ export function compactIfStarved(
   const scratchDir = resolve(options.scratchDir ?? tmpdir());
   const rawPath = resolve(scratchDir, 'fpl-raw.db');
   const finalPath = resolve(scratchDir, 'fpl-final.db');
+  const workPath = resolve(scratchDir, 'fpl-work.db');
 
   try {
     // Inside the try, because preparing scratch can fail too - an unusable path, a read-only
@@ -110,28 +111,39 @@ export function compactIfStarved(
         ' free.',
     );
 
+    // Step one, and it does not involve SQLite at all: copy the raw bytes somewhere with room.
+    //
+    // Both earlier strategies failed instantly on a volume with 230 GB of scratch available,
+    // which ruled out space and pointed at the file itself. A database left behind by repeated
+    // crashes has a hot journal beside it, and SQLite must roll that back before it will read
+    // the file - rollback is a WRITE, and there is nowhere to put it. So every route that
+    // started by opening the original was dead before it began, read-only or not.
+    //
+    // A byte-for-byte file copy has no such requirement. Nothing is interpreted, nothing is
+    // recovered, nothing is written to the starved volume. Once the copy and its sidecars are
+    // somewhere with space, SQLite can roll the journal back there and the rest proceeds
+    // normally.
+    report('Copying the raw file out, bytes only, no database engine involved.');
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      const from = `${path}${suffix}`;
+      if (!existsSync(from)) continue;
+      copyFileSync(from, `${workPath}${suffix}`);
+    }
+
     // Two ways to produce a small database, and which one is possible depends entirely on how
     // much scratch there is. VACUUM INTO is the exact, boring, well-tested one - but it copies
     // the file whole, so it needs more room than the file itself. Scratch on a hosted container
     // is ephemeral and modest, and this very deploy failed because a 931 MB copy would not fit.
     const roomForWholeCopy =
-      !options.preferSalvage && scratchFree !== null && scratchFree > bytesBefore * 1.2;
+      !options.preferSalvage && scratchFree !== null && scratchFree > bytesBefore * 2.2;
     let usedSalvage = false;
 
     if (roomForWholeCopy) {
       try {
-        report('Copying the database out, read-only, then pruning the copy.');
-        const source = new BetterSqlite3(path, { readonly: true });
-        try {
-          // Sorting during the copy must not spill temporary files back onto the volume being
-          // rescued, which would fail for the same reason everything else does.
-          source.pragma('temp_store = MEMORY');
-          source.exec(`VACUUM INTO '${rawPath.replace(/'/g, "''")}'`);
-        } finally {
-          source.close();
-        }
-
-        const copy = new BetterSqlite3(rawPath);
+        report('Pruning the copy, then compacting it.');
+        // Opened read-write on purpose: this is the copy, on a disk with room, so SQLite can
+        // finally roll back whatever journal the crashes left behind.
+        const copy = new BetterSqlite3(workPath);
         try {
           copy.pragma('temp_store = MEMORY');
           const pruned = pruneHistory(copy, { cacheDir: options.cacheDir });
@@ -143,7 +155,6 @@ export function compactIfStarved(
         } finally {
           copy.close();
         }
-        rmSync(rawPath, { force: true });
       } catch (cause) {
         report(
           `Whole-file copy failed (${cause instanceof Error ? cause.message : 'unknown'}), ` +
@@ -157,8 +168,16 @@ export function compactIfStarved(
     }
 
     if (usedSalvage) {
-      rmSync(rawPath, { force: true });
-      salvageInto(path, finalPath, report);
+      // Salvage reads the copy too, for exactly the same reason.
+      salvageInto(workPath, finalPath, report);
+    }
+
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      try {
+        rmSync(`${workPath}${suffix}`, { force: true });
+      } catch {
+        // Scratch is ephemeral; a leftover there costs nothing.
+      }
     }
 
     const compactSize = statSync(finalPath).size;
@@ -197,7 +216,7 @@ export function compactIfStarved(
     // Cleanup that can throw is not cleanup. These paths may be unusable - that is often why we
     // are in here - and an exception raised while reporting a failure replaces a clear message
     // with a crash, in the boot sequence, which is exactly the fault being recovered from.
-    for (const leftover of [rawPath, finalPath]) {
+    for (const leftover of [rawPath, finalPath, workPath, `${workPath}-wal`, `${workPath}-shm`, `${workPath}-journal`]) {
       try {
         rmSync(leftover, { force: true, recursive: true });
       } catch {

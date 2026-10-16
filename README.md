@@ -639,6 +639,38 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### The one that actually worked: copy the bytes, not the database
+
+Three strategies failed in a row, and the log that explained why was the one showing **230 GB of
+scratch free**:
+
+```
+[db] Only 0 MB free and the database is 931 MB. Compacting it.
+[db] Scratch at /tmp has 230553 MB free.
+[db] Whole-file copy failed (disk I/O error), salvaging the rows that matter instead.
+[db] Could not compact: disk I/O error.
+```
+
+Space was never the constraint. Both routes died instantly on *reading* the source, which rules
+out everything except the file itself.
+
+A database left behind by repeated crashes has a **hot journal** beside it, and SQLite must roll
+that back before it will read the file at all. Rollback is a **write**. On a volume with nothing
+left there is nowhere to put it - so opening the original failed whatever flags were passed,
+`readonly: true` included. Every strategy that began by opening it was dead before it started,
+and I wrote three of them.
+
+The fix is to stop asking a database engine to do a filesystem's job. `copyFileSync` moves the
+bytes - and the `-wal`, `-shm` and `-journal` sidecars with them - to scratch. Nothing is
+interpreted, nothing is recovered, nothing is written to the starved volume. Once the copy is
+somewhere with room, SQLite rolls the journal back *there*, and pruning, compacting and verifying
+all proceed normally against a database it can actually open. Only then is the original deleted
+and the small result moved back.
+
+The ordering is the entire fix, so a test asserts it directly against the source text: the raw
+copy must come before any `new BetterSqlite3`, and neither route may reach for the original path.
+It fails if that order is reversed.
+
 ### Why it broke during the weeks nobody was using it
 
 The most reasonable question asked of this app: *"I had not touched it for ages, and now it is
