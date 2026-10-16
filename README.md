@@ -639,6 +639,37 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### A gameweek that finished while the app was down never came back
+
+Gameweek 6 finished during the crash loop above and then would not grade, however many times
+the refresh was pressed. The trigger that fetches per-player results asked the wrong question,
+in two separate ways, and both were live:
+
+```js
+// before
+const latestFinished = /* the single most recent finished gameweek */;
+const notYetCaptured = COUNT(player_fixture_history WHERE event_id = latestFinished) === 0;
+```
+
+- **Wrong table.** Grading needs `actual_points`; this checked `player_fixture_history`. A
+  gameweek whose match history arrived but never became results - a crash, a restart, a full
+  disk in between those two steps - looked captured from then on, and nothing retried.
+- **Wrong scope.** Only the most recent finished gameweek was ever examined. Anything that
+  finished while the app was down was written off the moment a later one arrived.
+
+It now asks the question the Accuracy page asks - *which finished gameweeks cannot be graded?* -
+across every finished gameweek, not just the newest.
+
+The cheap half of the repair matters as much. `syncActualPointsFromFixtureHistory` turns stored
+history into gradeable results with one idempotent statement and no network requests at all, and
+it used to run only *inside* the 700-request fetch it was buried in. It now runs on every
+refresh, so the common case - history on disk, results missing because something died between
+the two steps - costs nothing to fix.
+
+A standing lesson from this one and the crash loop before it: **recovery triggered by an event
+only works if you were running when the event happened.** Anything that has to survive an outage
+has to be driven by what the data looks like now, not by what just happened.
+
 ### A crash loop cannot be fixed from a page the crashed process never served
 
 The disk-full fix above was right about the cause and wrong about the cure. It put the recovery

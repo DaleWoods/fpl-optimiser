@@ -87,6 +87,30 @@ export async function ingestPlayerSummaries(
  * actuals sooner (element-summary tends to be a little behind full-time), but this catches up
  * and then keeps agreeing with the API from here on.
  */
+/**
+ * Finished gameweeks that still cannot be graded, and so are worth paying 700 requests for.
+ *
+ * Deliberately asks the same question the Accuracy page asks - "is there a result for this
+ * gameweek?" - rather than a proxy for it. The previous trigger checked whether match history
+ * existed, which is a different table and a different question: history that arrived but never
+ * became results satisfied it forever, and the gameweek stayed ungraded with nothing retrying.
+ *
+ * Covers every finished gameweek, not just the most recent. Two can finish while the app is
+ * down, and the older one must not be written off because a newer one has since arrived.
+ */
+export function gameweeksMissingResults(db: Database): number[] {
+  return (
+    db
+      .prepare(
+        `SELECT e.id FROM event e
+         WHERE e.finished = 1
+           AND NOT EXISTS (SELECT 1 FROM actual_points a WHERE a.event_id = e.id)
+         ORDER BY e.id`,
+      )
+      .all() as { id: number }[]
+  ).map((row) => row.id);
+}
+
 export function syncActualPointsFromFixtureHistory(db: Database): number {
   const result = db
     .prepare(

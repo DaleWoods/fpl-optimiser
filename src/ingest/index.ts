@@ -5,7 +5,12 @@ import { ingestBootstrap, type BootstrapIngestResult } from './bootstrap.js';
 import { ingestEliteOwnership, type EliteIngestResult } from './elite.js';
 import { ingestEntry, type EntryIngestResult } from './entry.js';
 import { ingestFixtures, type FixturesIngestResult } from './fixtures.js';
-import { ingestPlayerSummaries, type SummariesIngestResult } from './playerSummaries.js';
+import {
+  gameweeksMissingResults,
+  ingestPlayerSummaries,
+  syncActualPointsFromFixtureHistory,
+  type SummariesIngestResult,
+} from './playerSummaries.js';
 
 export * from './bootstrap.js';
 export * from './elite.js';
@@ -61,21 +66,29 @@ export async function ingestAll(
   report(`  ${fixtures.rowsWritten} fixtures${fixtures.skipped ? `, ${fixtures.skipped} skipped` : ''}`);
 
   let summaries: SummariesIngestResult | null = null;
+
+  // Copy whatever match history is already stored into gradeable results, every single refresh.
+  // One idempotent statement, and it is the cheap half of the job: if the history landed but the
+  // step that turns it into results did not - a crash, a full disk, a restart in between - this
+  // alone fixes it, with no requests at all.
+  const synced = syncActualPointsFromFixtureHistory(db);
+  if (synced > 0) report(`Recorded ${synced} actual result(s) from match history already stored`);
+
   // Element-summary is the slowest ingestion by far (one request per player), so it is not run
   // on every refresh - but it is also the only source of the exact per-gameweek actual points
   // this app grades projections against, so it must not sit waiting for someone to ask for it
-  // either. The fix: run it automatically, but only when there is a genuine reason to -
-  // self-throttling, not a fixed schedule.
-  const latestFinished = db
-    .prepare('SELECT id FROM event WHERE finished = 1 ORDER BY id DESC LIMIT 1')
-    .get() as { id: number } | undefined;
-  const notYetCaptured =
-    latestFinished !== undefined &&
-    (
-      db
-        .prepare('SELECT COUNT(*) AS n FROM player_fixture_history WHERE event_id = ?')
-        .get(latestFinished.id) as { n: number }
-    ).n === 0;
+  // either. Run it automatically, but only when there is a genuine reason to.
+  //
+  // That reason used to be "the most recently finished gameweek has no match history at all",
+  // and both halves of it were wrong. It asked about `player_fixture_history` while what
+  // grading actually needs is `actual_points`, so a gameweek whose history arrived but never
+  // became results looked captured forever. And it only ever examined the single latest
+  // finished gameweek, so anything that finished while the app was down - a crash loop, a full
+  // disk, a long deploy - was skipped the moment a later one finished and never came back.
+  //
+  // Asking the question the page asks instead: which finished gameweeks cannot be graded?
+  const ungraded = gameweeksMissingResults(db);
+  const notYetCaptured = ungraded.length > 0;
 
   // The other reason to run it: last season's history (element-summary's history_past) has
   // never been captured at all. This is what makes the pre-season "last season's stats" import
@@ -89,7 +102,9 @@ export async function ingestAll(
   const reason = options.includePlayerSummaries
     ? 'Ingesting per-player match history (one request per player, throttled)...'
     : notYetCaptured
-      ? `Gameweek ${latestFinished!.id} just finished - fetching each player's actual result...`
+      ? `Gameweek ${ungraded.join(', ')} ${ungraded.length === 1 ? 'has' : 'have'} no results ` +
+        "yet - fetching each player's actual result..."
+
       : neverCapturedLastSeason
         ? "No last season's history yet - fetching it automatically, one request per player..."
         : null;

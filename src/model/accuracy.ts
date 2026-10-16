@@ -843,9 +843,9 @@ export function evaluateSeason(db: Database, rules: Rules, entryId: number | nul
           eventId,
           reason:
             'finished, but the per-player results have not been fetched yet. They come from ' +
-            'each player\'s own match history, which the background refresh pulls once a ' +
-            'gameweek is marked complete - press Fetch latest now on the Dashboard to bring ' +
-            'it forward',
+            "each player's own match history - one request per player, so it takes a few " +
+            'minutes and runs on the next background refresh. Press Fetch latest now on ' +
+            'Import Data to start it, and give it ten minutes before expecting this to clear',
         };
       }
       return {
