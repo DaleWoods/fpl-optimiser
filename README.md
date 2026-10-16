@@ -639,6 +639,39 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### The column that caused it, and the check that never ran
+
+Two faults, one of them mine from the previous fix.
+
+**`freeDiskBytes` never worked.** It called `require('node:fs')` inside an ES module, where
+`require` is not defined at all - so it threw on every call, the `catch` swallowed it, and it
+returned `null` for ever. Its only caller reads `null` as "cannot tell" and skips, so the
+boot-time prune written specifically to catch a filling disk **never ran a single time**. A
+silent failure inside error handling, which is the worst place for one: nothing is watching the
+thing that is meant to be watching.
+
+**`player_snapshot.raw_json` is never read.** Grep the repository for a `SELECT` of it and there
+is none - every query uses the parsed columns beside it. It is a verbatim copy of the API payload
+written for ~700 players every three hours, and measured, it is where the volume went:
+
+| | before | after |
+|---|---|---|
+| one snapshot | 0.94 MB | **0.05 MB** |
+| per day | 7.5 MB | **0.44 MB** |
+
+Seventeen times smaller. It is now written empty on `player_snapshot` only - the small bounded
+tables (team, position, event, season history) keep theirs, where a verbatim record of what the
+API said costs a few hundred rows once and is how a schema change gets diagnosed. Pruning also
+empties it on the snapshots it keeps, so an existing database shrinks rather than merely stopping
+its growth.
+
+**Pruning can now run on a full volume.** The bind that made this unrecoverable: SQLite cannot
+delete a row without somewhere to write its undo journal, so the one operation that frees space
+is the one a lack of space forbids. After an ordinary prune fails for want of room, it retries
+with `journal_mode = MEMORY`, which removes that requirement. A genuine trade - a crash midway
+leaves the database inconsistent, which is why it is not how this normally runs - and it is only
+reached when the alternative is an application that cannot start.
+
 ### "Stale" was hiding the reason, which was in the database all along
 
 A source failed on every refresh for a week and the Dashboard said **stale** - the same word it

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, statfsSync, statSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Database } from 'better-sqlite3';
 
@@ -144,6 +144,7 @@ export interface PruneResult {
 
 export function pruneHistory(db: Database, options: PruneOptions = {}): PruneResult {
   const keepSnapshots = Math.max(2, options.keepSnapshots ?? 8);
+  let note: string | null = null;
   const bytesBefore = spaceReport(db).databaseBytes;
 
   // First, because on a full disk the database cannot delete anything either.
@@ -182,6 +183,12 @@ export function pruneHistory(db: Database, options: PruneOptions = {}): PruneRes
   let projectionsDeleted = 0;
   let ingestRunsDeleted = 0;
 
+  // Reclaim the column that caused all this on the snapshots being kept, not just the ones
+  // being deleted. Cheap relative to what it frees, and it means an existing database shrinks
+  // rather than merely stopping its growth.
+  const blankRawJson = () =>
+    db.prepare("UPDATE player_snapshot SET raw_json = '' WHERE raw_json != ''").run().changes;
+
   const work = db.transaction(() => {
     // Chunked: SQLite has a hard limit on how many parameters one statement may carry, and a
     // season's worth of snapshots goes past it.
@@ -211,20 +218,51 @@ export function pruneHistory(db: Database, options: PruneOptions = {}): PruneRes
     ingestRunsDeleted = db.prepare(
       'DELETE FROM ingest_run WHERE id NOT IN (SELECT id FROM ingest_run ORDER BY id DESC LIMIT 200)',
     ).run().changes;
+
+    blankRawJson();
   });
-  work();
+
+  try {
+    work();
+  } catch (cause) {
+    // The bind this is written for. On a genuinely full volume SQLite cannot delete a row
+    // either: a DELETE writes its undo journal first, and there is nowhere to put it. So the
+    // one operation that would free space is the one the lack of space forbids, and the app
+    // stays dead until somebody resizes the disk by hand.
+    //
+    // Journalling to memory removes that requirement. It is a real trade - a crash midway
+    // through leaves the database inconsistent, which is exactly why it is not how this
+    // normally runs - but it is only reached once an ordinary prune has already failed for
+    // want of space, and the alternative at that point is an application that cannot start.
+    if (!isDiskSpaceFailure(cause)) throw cause;
+
+    const previous = db.pragma('journal_mode', { simple: true });
+    try {
+      db.pragma('journal_mode = MEMORY');
+      work();
+      note =
+        'The disk was too full to delete anything the usual way, so this ran without an undo ' +
+        'journal. It worked, but the volume is genuinely out of room - give it more space.';
+    } finally {
+      try {
+        db.pragma(`journal_mode = ${String(previous)}`);
+      } catch {
+        // Restoring the old mode needs a write too. Leaving it is survivable; the next start
+        // sets it again, and failing here would throw away a prune that just succeeded.
+      }
+    }
+  }
 
   // Deleting rows already frees pages inside the file for reuse, which is what actually unblocks
   // writing again. VACUUM only shrinks the file on disk, and it needs room for a second copy to
   // do it - so on the full disk that caused all this, it is expected to fail and must not be
   // allowed to turn a successful prune into an error.
   let reclaimed = false;
-  let note: string | null = null;
   try {
     db.exec('VACUUM');
     reclaimed = true;
   } catch (cause) {
-    note =
+    note ??=
       `Rows were deleted and that space is free for the database to reuse, but the file could ` +
       `not be shrunk on disk (${cause instanceof Error ? cause.message : 'unknown error'}). ` +
       `That needs room for a temporary second copy. Importing should work again regardless.`;
@@ -252,8 +290,11 @@ export function pruneHistory(db: Database, options: PruneOptions = {}): PruneRes
  */
 export function freeDiskBytes(path: string): number | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { statfsSync } = require('node:fs') as typeof import('node:fs');
+    // Statically imported, not required. This was a `require('node:fs')` inside an ES module,
+    // where `require` is not defined at all - so it threw on every call, the catch below
+    // swallowed it, and the function returned null for ever. Silently: the one caller treats
+    // null as "cannot tell" and skips, so the boot-time prune this exists to trigger never ran
+    // a single time while the disk filled.
     if (typeof statfsSync !== 'function') return null;
     const stats = statfsSync(resolve(path));
     return stats.bavail * stats.bsize;

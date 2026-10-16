@@ -346,7 +346,20 @@ export function ingestBootstrapPayload(
         defensive_contribution: element.defensive_contribution,
         transfers_in_event: element.transfers_in_event,
         transfers_out_event: element.transfers_out_event,
-        raw_json: JSON.stringify(element),
+        // Deliberately empty, and this is the single biggest thing the database stores.
+        //
+        // A snapshot of ~700 players costs 0.94 MB, almost all of it this column - a verbatim
+        // copy of the API payload whose every field is already parsed into the columns beside
+        // it. Written every three hours, it was ~7.5 MB a day, and it filled a 1 GB volume
+        // twice. Nothing has ever read it back: grep the repository for a SELECT of
+        // player_snapshot.raw_json and there is none, because the parsed columns are what every
+        // query uses.
+        //
+        // Kept on the small, bounded tables (team, position, event, season history), where a
+        // verbatim record of what the API said is genuinely useful for diagnosing a schema
+        // change and costs a few hundred rows once. On the one table that grows for ever it is
+        // a liability, and emptying it cuts the cost of a snapshot by roughly ninety per cent.
+        raw_json: '',
       });
     }
 

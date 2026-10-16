@@ -316,3 +316,59 @@ describe('starting up on a disk that is already full', () => {
     expect(freeDiskBytes('/no/such/path/anywhere')).toBeNull();
   });
 });
+
+describe('reclaiming the column that caused the outage', () => {
+  it('empties the duplicated payload on the snapshots it keeps', async () => {
+    // Pruning old snapshots stops growth; emptying this on the survivors is what makes an
+    // existing database actually shrink. Nothing reads it - grep for a SELECT of
+    // player_snapshot.raw_json and there is none.
+    const db = openTestDatabase();
+    const { StubFplApi: Stub } = await import('../../src/api/replayClient.js');
+    const { ingestBootstrap: boot } = await import('../../src/ingest/index.js');
+    await boot(db, new Stub({ bootstrap: fakeBootstrap({ events: [fakeEvent(1)] }) }), rules);
+
+    const snapshotId = Number(
+      db.prepare('INSERT INTO snapshot (taken_at) VALUES (1)').run().lastInsertRowid,
+    );
+    db.prepare(
+      `INSERT INTO player_snapshot (snapshot_id, player_id, taken_at, now_cost, status, raw_json)
+       SELECT ?, id, 1, 50, 'a', ? FROM player`,
+    ).run(snapshotId, '{"padding":"' + 'x'.repeat(1000) + '"}');
+
+    const before = (
+      db.prepare('SELECT SUM(LENGTH(raw_json)) AS n FROM player_snapshot').get() as { n: number }
+    ).n;
+    expect(before).toBeGreaterThan(1000);
+
+    pruneHistory(db, { keepSnapshots: 50 });
+
+    const after = (
+      db.prepare('SELECT COALESCE(SUM(LENGTH(raw_json)), 0) AS n FROM player_snapshot').get() as { n: number }
+    ).n;
+    expect(after).toBe(0);
+    // And the rows themselves survive - this reclaims a column, it does not delete history.
+    expect(
+      (db.prepare('SELECT COUNT(*) AS n FROM player_snapshot').get() as { n: number }).n,
+    ).toBeGreaterThan(0);
+  });
+
+  it('stops writing the duplicated payload on new snapshots', async () => {
+    // The fix that matters going forward: a snapshot used to cost 0.94 MB, almost all of it
+    // this column, every three hours.
+    const db = openTestDatabase();
+    const { StubFplApi: Stub } = await import('../../src/api/replayClient.js');
+    const { ingestBootstrap: boot } = await import('../../src/ingest/index.js');
+    await boot(db, new Stub({ bootstrap: fakeBootstrap({ events: [fakeEvent(1)] }) }), rules);
+
+    const total = (
+      db.prepare('SELECT COALESCE(SUM(LENGTH(raw_json)), 0) AS n FROM player_snapshot').get() as { n: number }
+    ).n;
+    expect(total).toBe(0);
+
+    // The small, bounded tables keep theirs - a verbatim record of what the API said is worth
+    // a few hundred rows once, and is how a schema change gets diagnosed.
+    expect(
+      (db.prepare('SELECT COALESCE(SUM(LENGTH(raw_json)), 0) AS n FROM team').get() as { n: number }).n,
+    ).toBeGreaterThan(0);
+  });
+});
