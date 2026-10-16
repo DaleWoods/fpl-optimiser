@@ -100,7 +100,7 @@ function buildApi(config: ReturnType<typeof loadConfig>, flags: Map<string, stri
 
 async function commandIngest(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
   const api = buildApi(config, flags);
 
   const result = await ingestAll(db, api, config.rules, {
@@ -127,7 +127,7 @@ async function commandIngest(flags: Map<string, string | true>): Promise<number>
 
 function commandStatus(): number {
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
   const state = getStateOfPlay(db, {
     teamId: config.app.teamId,
     staleAfterSeconds: config.app.staleness.warnAfterSeconds,
@@ -208,7 +208,7 @@ async function commandImport(files: string[]): Promise<number> {
   const { resolve, basename } = await import('node:path');
 
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
 
   // Expand any directories, and import bootstrap first: fixtures and histories reference
   // clubs and players, so importing them the other way round drops rows.
@@ -263,7 +263,7 @@ async function commandImport(files: string[]): Promise<number> {
 
 async function commandOptimise(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
 
   // Same gate as the web app: a team built from a subset of the evidence quietly degrades
   // rather than failing, so generation refuses until the required imports are in.
@@ -378,7 +378,7 @@ async function commandOptimise(flags: Map<string, string | true>): Promise<numbe
 
 function commandAccuracy(flags: Map<string, string | true>): number {
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
 
   const gwFlag = flags.get('gw');
   const season = evaluateSeason(db, config.rules, config.app.teamId);
@@ -453,7 +453,7 @@ function commandAccuracy(flags: Map<string, string | true>): number {
 
 function commandReset(flags: Map<string, string | true>): number {
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
 
   const scopeFlag = flags.get('scope');
   const scope = (typeof scopeFlag === 'string' ? scopeFlag : 'squad') as ResetScope;
@@ -501,7 +501,7 @@ function commandReset(flags: Map<string, string | true>): number {
 
 async function commandChips(flags: Map<string, string | true>): Promise<number> {
   const config = loadConfig();
-  const db = openDatabase({ path: config.app.database.path });
+  const db = openDatabase({ path: config.app.database.path, freeSpaceDir: config.app.api.cacheDir });
 
   const event = resolveTargetEvent(db);
   if (!event) {

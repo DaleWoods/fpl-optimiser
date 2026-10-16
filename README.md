@@ -639,6 +639,44 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### A crash loop cannot be fixed from a page the crashed process never served
+
+The disk-full fix above was right about the cause and wrong about the cure. It put the recovery
+behind a button on the Import Data tab - and the next failure was not an import erroring, it was
+the process dying in `openDatabase` before the server ever listened:
+
+```
+SqliteError: disk I/O error
+  at Database.pragma (.../better-sqlite3/lib/methods/pragma.js)
+  at openDatabase (dist/db/index.js)
+  at startServer (dist/report/server.js)
+```
+
+`journal_mode = WAL` rewrites the database header, so it is the first thing a full disk refuses.
+The service then restarted, failed identically, and looped - with the one screen offering to free
+space unreachable the entire time. **Recovery that lives inside the app has to run before the app
+needs the disk, or it may as well not exist.**
+
+Three changes, in the order they now happen:
+
+1. **Boot prunes when the volume is tight.** Under 100 MB free, the app prunes immediately and
+   says so in the log, rather than waiting for the next refresh to discover it the hard way.
+2. **A failed open frees disposable files and retries once.** Only for a space failure - any
+   other fault is made no better by deleting a warm cache, and a bad day should not also cost a
+   few hundred needless API calls. If freeing nothing was possible, it does **not** retry: an
+   open that cannot succeed is how a crash loop becomes a faster crash loop.
+3. **`journal_mode` is no longer allowed to be fatal.** It and `synchronous` are performance
+   settings; without them SQLite falls back to a rollback journal and everything still works,
+   slightly slower. Losing the whole app because it could not go faster is the wrong trade.
+   `migrate()` is deliberately *not* caught - a half-applied schema is a correctness problem, and
+   carrying on with one corrupts data rather than merely slowing it down.
+
+The decision in (2) is a separate exported function rather than an `if` buried in the opener,
+because it is a policy with real consequences and because a full disk cannot be conjured up in a
+unit test while a policy can be called directly. Worth being plain about the limit of that: the
+`journal_mode` fallback in (3) is defence in depth that **is not covered by a test**, since
+reproducing it needs a genuinely full filesystem rather than a read-only one.
+
 ### The database was eating its own disk
 
 Imports started failing with **"disk I/O error"**, which reads like failing hardware. It is

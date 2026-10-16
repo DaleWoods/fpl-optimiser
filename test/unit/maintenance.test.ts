@@ -231,3 +231,88 @@ describe('recovering a disk that is already full', () => {
     expect(readdirSync(dir)).toEqual(['aaa.json']);
   });
 });
+
+describe('starting up on a disk that is already full', () => {
+  /**
+   * The failure this exists for was not an import erroring - it was the process dying inside
+   * openDatabase before the server ever listened, so the one screen offering to free space
+   * could never be served and the host sat in a restart loop nothing inside the app could
+   * break. A full disk cannot be conjured up in a unit test, so the decision it turns on is
+   * tested directly instead of being inferred from a simulation that is not really one.
+   */
+
+  it('frees disposable files and retries when the disk is the problem', async () => {
+    const { planDiskRecovery } = await import('../../src/db/maintenance.js');
+    const cleared: string[] = [];
+
+    const plan = planDiskRecovery(new Error('disk I/O error'), '/cache', (dir) => {
+      cleared.push(dir);
+      return { filesDeleted: 12, bytesFreed: 5 * 1024 * 1024 };
+    });
+
+    expect(cleared).toEqual(['/cache']);
+    expect(plan.retry).toBe(true);
+    expect(plan.message).toMatch(/disk is full/i);
+    expect(plan.message).toMatch(/12 cached file/);
+  });
+
+  it('does not sacrifice the cache for a failure that is not about space', async () => {
+    // Throwing away a warm cache whenever anything goes wrong makes a bad day worse and
+    // hammers the FPL API for no reason.
+    const { planDiskRecovery } = await import('../../src/db/maintenance.js');
+    let cleared = false;
+
+    const plan = planDiskRecovery(new Error('unable to open database file'), '/cache', () => {
+      cleared = true;
+      return { filesDeleted: 5, bytesFreed: 1 };
+    });
+
+    expect(cleared).toBe(false);
+    expect(plan.retry).toBe(false);
+    expect(plan.message).toBeNull();
+  });
+
+  it('does not loop when freeing space freed nothing', async () => {
+    // Retrying an open that cannot succeed is how a crash loop becomes a faster crash loop.
+    const { planDiskRecovery } = await import('../../src/db/maintenance.js');
+
+    const plan = planDiskRecovery(new Error('database or disk is full'), '/cache', () => ({
+      filesDeleted: 0,
+      bytesFreed: 0,
+    }));
+
+    expect(plan.retry).toBe(false);
+    expect(plan.message).toMatch(/no cached data left/i);
+  });
+
+  it('does nothing at all when no disposable directory was given', async () => {
+    const { planDiskRecovery } = await import('../../src/db/maintenance.js');
+    expect(planDiskRecovery(new Error('disk I/O error'), undefined)).toEqual({
+      retry: false,
+      message: null,
+    });
+  });
+
+  it('still enables write-ahead logging on a healthy disk', async () => {
+    // The fallback must not quietly become the default: journal_mode is only allowed to be
+    // skipped when the disk refuses it.
+    const { openDatabase } = await import('../../src/db/index.js');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-ok-'));
+    const db = openDatabase({ path: join(dir, 'fpl.db'), migrateOnOpen: false });
+    expect(String(db.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('wal');
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports free disk space, or says it cannot', async () => {
+    const { freeDiskBytes } = await import('../../src/db/maintenance.js');
+    const here = freeDiskBytes(process.cwd());
+    // Either a real number or an honest null - never a guess, and never a throw.
+    expect(here === null || here > 0).toBe(true);
+    expect(freeDiskBytes('/no/such/path/anywhere')).toBeNull();
+  });
+});

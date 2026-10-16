@@ -244,6 +244,60 @@ export function pruneHistory(db: Database, options: PruneOptions = {}): PruneRes
 }
 
 /**
+ * How much room is left on the volume holding a given path.
+ *
+ * Checked at boot so a filling disk is a warning while it is still fixable, rather than a crash
+ * loop once it is not. `statfs` is not available on every platform or filesystem, and a missing
+ * answer is not an emergency - it simply means this particular check has nothing to say.
+ */
+export function freeDiskBytes(path: string): number | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { statfsSync } = require('node:fs') as typeof import('node:fs');
+    if (typeof statfsSync !== 'function') return null;
+    const stats = statfsSync(resolve(path));
+    return stats.bavail * stats.bsize;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What to do when opening the database failed.
+ *
+ * Separated from the opening itself because it is a policy decision with real consequences -
+ * throwing away a warm cache - and because a full disk cannot be conjured up in a test while
+ * this can be exercised directly.
+ */
+export function planDiskRecovery(
+  cause: unknown,
+  freeSpaceDir: string | undefined,
+  clear: (dir: string) => { filesDeleted: number; bytesFreed: number } = clearHttpCache,
+): { retry: boolean; message: string | null } {
+  // Only a space failure justifies deleting anything. Any other fault - a missing file, a
+  // corrupt header, a path that is really a directory - is made no better by it, and a bad day
+  // should not also cost a warm cache and a few hundred needless API calls.
+  if (!isDiskSpaceFailure(cause) || !freeSpaceDir) return { retry: false, message: null };
+
+  const freed = clear(freeSpaceDir);
+  if (freed.filesDeleted === 0) {
+    return {
+      retry: false,
+      message:
+        'The disk is full and there was no cached data left to delete. Free space on the volume ' +
+        'itself, or give it more room, before this can start.',
+    };
+  }
+
+  return {
+    retry: true,
+    message:
+      `Could not open the database because the disk is full. Deleted ${freed.filesDeleted} ` +
+      `cached file(s) (${(freed.bytesFreed / 1024 / 1024).toFixed(1)} MB) and retrying.`,
+  };
+}
+
+/**
  * Whether a failure was the disk rather than the code.
  *
  * SQLite reports a full or unwritable disk as "disk I/O error", which reads like a hardware

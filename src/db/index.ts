@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveFromRoot } from '../config/load.js';
+import { isDiskSpaceFailure, planDiskRecovery } from './maintenance.js';
 import { migrate } from './migrate.js';
 
 export type { Database } from 'better-sqlite3';
@@ -12,6 +13,13 @@ export interface OpenOptions {
   /** Apply pending migrations on open. Default true. */
   migrateOnOpen?: boolean;
   readonly?: boolean;
+  /**
+   * Disposable files to delete if opening fails because the disk is full, before trying once
+   * more. The HTTP response cache, in practice: every file in it is a copy of something the API
+   * will serve again, and unlinking a file needs no free space at all.
+   */
+  freeSpaceDir?: string;
+  onWarning?: (message: string) => void;
 }
 
 /**
@@ -21,6 +29,23 @@ export interface OpenOptions {
  *  - busy_timeout, so a concurrent CLI invocation waits rather than throwing
  */
 export function openDatabase(options: OpenOptions): Database {
+  const warn = options.onWarning ?? ((message: string) => console.warn(`[db] ${message}`));
+
+  try {
+    return openOnce(options, warn);
+  } catch (cause) {
+    // A full disk used to kill the process here, before the server ever listened - which meant
+    // the one screen offering to free space could never be served, and the service sat in a
+    // restart loop that nothing inside the app could break. Recovery has to happen before the
+    // database opens, or it may as well not exist.
+    const recovery = planDiskRecovery(cause, options.freeSpaceDir);
+    if (recovery.message) warn(recovery.message);
+    if (!recovery.retry) throw cause;
+    return openOnce(options, warn);
+  }
+}
+
+function openOnce(options: OpenOptions, warn: (message: string) => void): Database {
   const isMemory = options.path === ':memory:';
   const path = isMemory ? options.path : resolveFromRoot(options.path);
 
@@ -33,11 +58,26 @@ export function openDatabase(options: OpenOptions): Database {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   if (!isMemory && !options.readonly) {
-    db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = NORMAL');
+    // Switching journal mode rewrites the database header, so on a full disk it is the first
+    // thing to fail - and it is the reason a crash loop looked like database corruption. These
+    // two are performance settings, not correctness ones: without them SQLite falls back to a
+    // rollback journal and everything still works, slightly slower. Losing the app entirely
+    // because it could not go faster is the wrong trade.
+    try {
+      db.pragma('journal_mode = WAL');
+      db.pragma('synchronous = NORMAL');
+    } catch (cause) {
+      if (!isDiskSpaceFailure(cause)) throw cause;
+      warn(
+        'The disk is full, so write-ahead logging could not be enabled. Running on the default ' +
+          'journal instead - slower, but working. Free up space on the Import Data tab.',
+      );
+    }
   }
 
   if (options.migrateOnOpen !== false && !options.readonly) {
+    // Deliberately not caught: a half-migrated schema is a correctness problem, and carrying on
+    // with one would corrupt data rather than merely slow it down.
     migrate(db);
   }
 

@@ -12,7 +12,7 @@ import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { loadIntel } from '../model/intel.js';
 import { benchmarkSeason } from '../model/benchmark.js';
-import { isDiskSpaceFailure, pruneHistory, spaceReport } from '../db/maintenance.js';
+import { freeDiskBytes, isDiskSpaceFailure, pruneHistory, spaceReport } from '../db/maintenance.js';
 import { ingestRivals } from '../ingest/rivals.js';
 import { compareRivals } from '../model/rivals.js';
 import {
@@ -109,7 +109,36 @@ export function shouldPrimeOnBoot(db: Database, ingestIntervalMinutes: number): 
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const { config } = options;
-  const db: Database = openDatabase({ path: config.app.database.path });
+  // The HTTP cache sits on the same disk and is pure disposable copy, so it is what gets
+  // sacrificed if the database cannot open for want of space.
+  const db: Database = openDatabase({
+    path: config.app.database.path,
+    freeSpaceDir: config.app.api.cacheDir,
+    onWarning: (message) => console.warn(`[db] ${message}`),
+  });
+
+  // Prune at boot when the volume is already tight, rather than waiting for the next scheduled
+  // refresh to discover it the hard way. A crash loop cannot be fixed from a page the crashed
+  // process never served, so the last chance to act is before anything else needs the disk.
+  {
+    const free = freeDiskBytes(config.app.database.path);
+    const LOW_WATER_BYTES = 100 * 1024 * 1024;
+    if (free !== null && free < LOW_WATER_BYTES) {
+      console.warn(
+        `[db] Only ${(free / 1024 / 1024).toFixed(0)} MB free on the database volume - pruning now.`,
+      );
+      try {
+        const pruned = pruneHistory(db, { cacheDir: config.app.api.cacheDir });
+        console.warn(
+          `[db] Pruned ${pruned.snapshotsDeleted} snapshot(s), ` +
+            `${pruned.projectionsDeleted} superseded projection(s) and ` +
+            `${pruned.cacheFilesDeleted} cached file(s).`,
+        );
+      } catch (cause) {
+        console.error(`[db] Boot prune failed: ${(cause as Error).message}`);
+      }
+    }
+  }
 
   let ingesting = false;
   let lastIngestError: string | null = null;
