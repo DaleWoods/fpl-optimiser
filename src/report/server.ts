@@ -142,6 +142,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   let ingesting = false;
   let lastIngestError: string | null = null;
+  let partialIngestFailures: string[] = [];
 
   const runIngest = async (): Promise<void> => {
     if (ingesting) return;
@@ -150,10 +151,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       const api = new HttpFplApi(config.app.api, {
         onWarning: (message) => console.warn(`[ingest] warning: ${message}`),
       });
-      await ingestAll(db, api, config.rules, {
+      const outcome = await ingestAll(db, api, config.rules, {
         teamId: config.app.teamId,
         onProgress: (message) => console.log(`[ingest] ${message}`),
       });
+      // Partial success is still success for everything that worked, but the parts that did not
+      // have to be nameable - the Dashboard shows each one against its own source.
+      partialIngestFailures = outcome.failures;
 
       // Rivals last and never fatally: their squads are a nice-to-have signal, and a manager who
       // has deleted their team or whose picks are not public yet must not take the whole refresh
@@ -187,7 +191,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         console.warn(`[ingest] prune failed: ${(cause as Error).message}`);
       }
 
-      lastIngestError = null;
+      lastIngestError = outcome.failures.length > 0 ? outcome.failures.join('; ') : null;
     } catch (cause) {
       // SQLite reports a full disk as "disk I/O error", which reads like failing hardware and
       // sends you looking in entirely the wrong place. Say what it is and what to do.

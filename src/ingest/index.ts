@@ -40,11 +40,44 @@ export interface FullIngestResult {
   summaries: SummariesIngestResult | null;
   entry: EntryIngestResult | null;
   elite: EliteIngestResult | null;
+  /** Steps that failed without stopping the rest, each already recorded against its source. */
+  failures: string[];
+}
+
+
+/**
+ * Run one ingest step without letting its failure end the refresh.
+ *
+ * Only for steps nothing downstream depends on. Bootstrap is deliberately not wrapped: every
+ * later step references the players and gameweeks it writes, so carrying on without it would
+ * produce a refresh that looks successful and leaves the data inconsistent.
+ */
+async function step<T>(
+  label: string,
+  report: (message: string) => void,
+  work: () => Promise<T>,
+  failures: string[],
+): Promise<T | null> {
+  try {
+    return await work();
+  } catch (cause) {
+    const message = `${label} failed: ${(cause as Error).message}`;
+    report(`  ${message}`);
+    failures.push(message);
+    return null;
+  }
 }
 
 /**
  * Run a full ingestion in dependency order: bootstrap first (it defines teams, positions,
  * events and players), then fixtures, then per-player history, then the manager's own squad.
+ *
+ * Order is a dependency, not a chain of command. Bootstrap genuinely must succeed - everything
+ * after it references the players and gameweeks it writes - but the later steps are independent
+ * of each other, and letting one abort the rest is how a single slow or flaky step took the
+ * whole refresh down with it: per-player results failed, so the squad after it never refreshed,
+ * so the Dashboard reported the squad stale and pointed at a button that would fail the same
+ * way. Each of those now records its own failure and the rest carries on.
  */
 export async function ingestAll(
   db: Database,
@@ -53,6 +86,7 @@ export async function ingestAll(
   options: FullIngestOptions = {},
 ): Promise<FullIngestResult> {
   const report = options.onProgress ?? (() => {});
+  const failures: string[] = [];
 
   report('Ingesting bootstrap-static (players, teams, positions, gameweeks)...');
   const bootstrap = await ingestBootstrap(db, api, rules);
@@ -111,23 +145,40 @@ export async function ingestAll(
 
   if (reason) {
     report(reason);
-    summaries = await ingestPlayerSummaries(db, api, {
-      playerIds: options.playerIds,
-      onProgress: (done, total) => {
-        if (done % 50 === 0 || done === total) report(`  ${done}/${total} players`);
-      },
-    });
-    report(
-      `  ${summaries.rowsWritten} match rows from ${summaries.playersIngested} players, ` +
-        `${summaries.actualPointsRecorded} actual score(s) recorded`,
+    summaries = await step(
+      "Per-player results",
+      report,
+      () =>
+        ingestPlayerSummaries(db, api, {
+          playerIds: options.playerIds,
+          onProgress: (done, total) => {
+            if (done % 50 === 0 || done === total) report(`  ${done}/${total} players`);
+          },
+        }),
+      failures,
     );
+    if (summaries) {
+      report(
+        `  ${summaries.rowsWritten} match rows from ${summaries.playersIngested} players, ` +
+          `${summaries.actualPointsRecorded} actual score(s) recorded`,
+      );
+    }
+    // Whatever did land becomes gradeable, even when the fetch died partway through. Without
+    // this a run that got 600 players in before failing recorded nothing at all.
+    const lateSync = syncActualPointsFromFixtureHistory(db);
+    if (lateSync > 0) report(`  ${lateSync} further actual result(s) recorded`);
   }
 
   let entry: EntryIngestResult | null = null;
   if (options.teamId != null) {
     report(`Loading squad for entry ${options.teamId}...`);
-    entry = await ingestEntry(db, api, options.teamId, rules);
-    for (const note of entry.notes) report(`  note: ${note}`);
+    entry = await step(
+      'Your squad',
+      report,
+      () => ingestEntry(db, api, options.teamId!, rules),
+      failures,
+    );
+    for (const note of entry?.notes ?? []) report(`  note: ${note}`);
   }
 
   let elite: EliteIngestResult | null = null;
@@ -155,5 +206,8 @@ export async function ingestAll(
     }
   }
 
-  return { bootstrap, fixtures, summaries, entry, elite };
+  // Reported rather than thrown. A refresh that got most of the way is far more useful than
+  // one that pretends nothing happened, and the caller needs to be able to say which part is
+  // broken instead of a single top-level message that names none of them.
+  return { bootstrap, fixtures, summaries, entry, elite, failures };
 }

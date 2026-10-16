@@ -639,6 +639,33 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### "Stale" was hiding the reason, which was in the database all along
+
+A source failed on every refresh for a week and the Dashboard said **stale** - the same word it
+uses for data nobody has got round to refreshing. Those call for opposite responses: one wants a
+button pressed, the other wants a fault fixed, and pressing the button at a failing source
+achieves nothing silently.
+
+The reason was recorded in `ingest_run.note` every single time. The freshness table just never
+asked for it - it queried `lastSuccessfulRun` only, so a failure was invisible by construction.
+It now also reads the last run *if that run failed and nothing has succeeded since*, shows the
+error against the source, and changes the banner: **"X failed to refresh. Pressing refresh again
+will not help until the reason is fixed."**
+
+Two faults underneath it, both of which made a failure look like success:
+
+- **One broken step took down every step after it.** Order in `ingestAll` is a dependency, not a
+  chain of command: bootstrap genuinely must succeed, since everything after references the
+  players and gameweeks it writes, but the later steps are independent. Per-player results
+  failing meant the squad refresh after it never ran - so the Dashboard reported the *squad*
+  stale and pointed at a button that would die in the same place. Each independent step now
+  records its own failure and the refresh carries on.
+- **Every player failing counted as a successful import.** Per-player failures are collected
+  rather than thrown, which is right - one departed player 404ing must not cost the other 700
+  histories. All of them failing is not that. It is an outage, and reporting it as success left
+  the Dashboard saying "updated just now" while nothing had been written and the gameweek stayed
+  ungraded with no error anywhere to explain it.
+
 ### A gameweek that finished while the app was down never came back
 
 Gameweek 6 finished during the crash loop above and then would not grade, however many times

@@ -1,12 +1,15 @@
 import type { Database } from 'better-sqlite3';
 import { nowSeconds } from '../db/index.js';
-import { lastSuccessfulRun } from '../ingest/run.js';
+import { lastFailedRun, lastSuccessfulRun } from '../ingest/run.js';
 
 export interface IngestFreshness {
   source: string;
   lastSuccessAt: number | null;
   ageSeconds: number | null;
   stale: boolean;
+  /** Why it is stale, when the last attempt failed and nothing has succeeded since. */
+  failure: string | null;
+  failedAt: number | null;
 }
 
 export interface SquadPlayerView {
@@ -111,11 +114,26 @@ export function getStateOfPlay(
         lastSuccessAt = run.startedAt;
       }
     }
+    // Why it is stale, when the answer is already recorded. A source failing every refresh used
+    // to be indistinguishable from one nobody had refreshed, which sends you looking for a
+    // button to press instead of at the error that was there all along.
+    let failure: string | null = null;
+    let failedAt: number | null = null;
+    for (const runSource of source.runs) {
+      const failed = lastFailedRun(db, runSource);
+      if (failed && (failedAt === null || failed.startedAt > failedAt)) {
+        failedAt = failed.startedAt;
+        failure = failed.note;
+      }
+    }
+
     const ageSeconds = lastSuccessAt === null ? null : now - lastSuccessAt;
     return {
       source: source.label,
       lastSuccessAt,
       ageSeconds,
+      failure,
+      failedAt,
       stale: source.oneOff ? lastSuccessAt === null : ageSeconds === null || ageSeconds > options.staleAfterSeconds,
     };
   });

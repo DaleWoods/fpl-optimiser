@@ -45,11 +45,19 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
     )
     .join('');
   const staleSources = state.freshness.filter((entry) => entry.stale).map((entry) => entry.source);
+  // A source that is failing every refresh is not the same problem as one nobody has refreshed,
+  // and telling someone to press a button that will fail again is worse than saying nothing.
+  const failing = state.freshness.filter((entry) => entry.failure !== null);
   const staleBanner =
-    staleSources.length > 0
-      ? `<div class="banner warn"><strong>Some data is stale: ${escapeHtml(staleSources.join(', '))}.</strong>
-         Refresh it before trusting a recommendation &mdash; see Data freshness below.</div>`
-      : '';
+    failing.length > 0
+      ? `<div class="banner warn"><strong>${escapeHtml(
+          failing.map((entry) => entry.source).join(', '),
+        )} failed to refresh.</strong> Pressing refresh again will not help until the reason is
+        fixed &mdash; it is shown against each one under Data freshness below.</div>`
+      : staleSources.length > 0
+        ? `<div class="banner warn"><strong>Some data is stale: ${escapeHtml(staleSources.join(', '))}.</strong>
+           Refresh it before trusting a recommendation &mdash; see Data freshness below.</div>`
+        : '';
 
   const deadline = state.nextDeadline
     ? `${escapeHtml(state.nextDeadline.name ?? `GW${state.nextDeadline.eventId}`)}
@@ -62,6 +70,11 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
       (entry) => `<tr class="${entry.stale ? 'stale' : ''}">
         <td>${escapeHtml(entry.source)}</td>
         <td>${entry.lastSuccessAt === null ? '<span class="muted">never</span>' : `${formatDuration(entry.ageSeconds)} ago`}</td>
+        <td>${
+          entry.failure === null
+            ? '<span class="muted">&mdash;</span>'
+            : `<span style="color:var(--danger)">${escapeHtml(entry.failure.slice(0, 300))}</span>`
+        }</td>
       </tr>`,
     )
     .join('');
@@ -146,7 +159,7 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
 
   <h2>Data freshness</h2>
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
-    <thead><tr><th>Source</th><th>Last successful import</th></tr></thead>
+    <thead><tr><th>Source</th><th>Last successful import</th><th>Last error</th></tr></thead>
     <tbody>${freshnessRows}</tbody></table></div></div>
 
   ${

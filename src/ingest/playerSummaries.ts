@@ -63,6 +63,18 @@ export async function ingestPlayerSummaries(
       options.onProgress?.(index + 1, playerIds.length, playerId);
     }
 
+    // A handful of failures is normal - a departed player 404s, and losing the other 700
+    // histories over that would be absurd, which is why they are collected rather than thrown.
+    // Every single one failing is not that. It is an outage, and swallowing it reports the
+    // source as freshly imported while nothing at all was written, so the Dashboard says
+    // "updated just now" and the gameweek stays ungraded with no error anywhere to explain it.
+    if (playerIds.length > 0 && playersIngested === 0) {
+      throw new Error(
+        `None of the ${playerIds.length} player histories could be fetched. ` +
+          `First reason: ${failures[0]?.reason ?? 'unknown'}`,
+      );
+    }
+
     const actualPointsRecorded = syncActualPointsFromFixtureHistory(db);
 
     return {

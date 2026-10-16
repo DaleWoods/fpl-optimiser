@@ -52,6 +52,32 @@ export interface LastRun {
   note: string | null;
 }
 
+/**
+ * The most recent run for a source that ended in failure, if it has not since succeeded.
+ *
+ * The freshness table only ever asked for the last *successful* run, so a source failing every
+ * single refresh read as "last updated 7 days ago" - identical to one nobody had got round to.
+ * The reason was recorded in `ingest_run.note` the whole time and simply never shown, which is
+ * how a week went by with the answer sitting in the database.
+ */
+export function lastFailedRun(db: Database, source: string): LastRun | null {
+  const row = db
+    .prepare(
+      `SELECT source, started_at AS startedAt, finished_at AS finishedAt, ok,
+              rows_written AS rowsWritten, note
+       FROM ingest_run
+       WHERE source = ?
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(source) as (Omit<LastRun, 'ok'> & { ok: number }) | undefined;
+
+  // Only interesting while it is still the latest word on that source. A failure followed by a
+  // success is history, not a problem.
+  if (!row || row.ok === 1) return null;
+  return { ...row, ok: false };
+}
+
 /** The most recent successful run for a source, or null if it has never succeeded. */
 export function lastSuccessfulRun(db: Database, source: string): LastRun | null {
   const row = db
