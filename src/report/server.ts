@@ -1,4 +1,9 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
 import type { Database } from 'better-sqlite3';
 import { HttpFplApi } from '../api/httpClient.js';
 import type { Config } from '../config/schema.js';
@@ -44,6 +49,17 @@ export interface ServerOptions {
   port: number;
   /** Minutes between background ingestions. 0 disables the scheduler. */
   ingestIntervalMinutes: number;
+  /**
+   * An HTTP server that is already listening, whose request handler this should take over.
+   *
+   * The host watches for a listening port and kills anything that has not bound one within a
+   * few minutes. Opening the database can fail outright on a starved volume, and repairing one
+   * means copying a near-gigabyte file; neither finishes inside that window. So the process
+   * died before it listened, the host killed it for not listening, and it restarted into the
+   * same race for ever - a repair that could not run because the thing it repairs had not
+   * finished running. Binding first removes the deadline.
+   */
+  server?: HttpServer;
 }
 
 /**
@@ -119,7 +135,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       cacheDir: config.app.api.cacheDir,
       onProgress: (message) => console.warn(`[db] ${message}`),
     });
-    if (compaction.compacted) console.warn(`[db] ${compaction.note}`);
+    // Logged either way. Only reporting success is how the last attempt failed in silence:
+    // the log showed it starting and then nothing, and the reason it gave up was thrown away.
+    console.warn(`[db] ${compaction.note}`);
   }
 
   // The HTTP cache sits on the same disk and is pure disposable copy, so it is what gets
@@ -568,7 +586,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     response.end(renderDashboard({ ...state, leagueTable: computeLeagueTable(db) }));
   };
 
-  const server = createServer((request, response) => {
+  const server = options.server ?? createServer();
+  // Whatever was answering while the slow work ran - a holding page, typically - hands over here.
+  server.removeAllListeners('request');
+  server.on('request', (request, response) => {
     void handler(request, response).catch((cause: unknown) => {
       console.error(`request failed: ${(cause as Error).message}`);
       if (!response.headersSent) {
@@ -594,7 +615,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   }
 
   return new Promise((resolve) => {
-    server.listen(options.port, () => {
+    const ready = (): void => {
       const address = server.address();
       const port = typeof address === 'object' && address !== null ? address.port : options.port;
       console.log(`fpl-optimiser listening on port ${port}`);
@@ -612,6 +633,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             });
           }),
       });
-    });
+    };
+
+    // Already bound by the caller, which held the port while the slow work above ran.
+    if (server.listening) ready();
+    else server.listen(options.port, ready);
   });
 }

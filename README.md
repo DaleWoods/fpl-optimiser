@@ -639,6 +639,40 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### The deadlock: a repair that could not run because the app had not started
+
+The recovery above was correct and still never completed, for two reasons that only show up on
+a real host.
+
+**It wrote to the volume it was rescuing.** The first version opened the database read-write and
+pruned it *before* copying. Pruning needs a write transaction, a write transaction needs
+somewhere to put its journal, and on a volume with zero bytes free there is nowhere - so the
+repair died at precisely the moment it was needed. `VACUUM INTO` only *reads* its source, and
+works from a read-only connection, so the copy now comes out first and every delete happens to
+the copy, on a disk with room. Not one byte is written to the starved volume until the original
+is deleted.
+
+**It ran before the port was bound.** Render kills a process that has not bound a port within a
+few minutes. Opening the database can fail outright on a starved volume, and repairing one means
+copying a near-gigabyte file - neither finishes inside that window. So the process died before
+it listened, the host killed it for not listening, and it restarted into the same race for ever:
+
+```
+SqliteError: disk I/O error   at ensureMigrationTable ... at startServer
+==> Instance restarted
+==> Port scan timeout reached, no open ports detected
+```
+
+The port is now bound **first**, by the CLI, with a holding page that says it is starting up and
+refreshes itself. `startServer` takes over that same already-listening socket rather than binding
+its own, so the process never stops listening and there is no deadline to lose. A visitor during
+a repair gets an honest "this is taking a few minutes" page instead of a refused connection.
+
+Two smaller faults found on the way, both in error handling, which is where they hurt most:
+the compaction logged only its *successes*, so the previous failure left the log showing it
+starting and then nothing; and the cleanup inside its `catch` could itself throw, which would
+replace a clear message with a second crash during boot.
+
 ### A 1 GB disk is ~29x more than this needs
 
 Worth stating plainly, because the obvious response to a full disk is to buy a bigger one and

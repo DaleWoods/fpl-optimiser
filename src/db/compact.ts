@@ -80,47 +80,80 @@ export function compactIfStarved(
           `${(bytesBefore / 1024 / 1024).toFixed(0)} MB. Compacting it.`,
   );
 
+  // tmpdir() on a hosted container is ephemeral local disk, deliberately NOT the mounted volume
+  // this is rescuing - which is the only reason there is anywhere to put the copy at all.
   const scratchDir = resolve(options.scratchDir ?? tmpdir());
-  mkdirSync(scratchDir, { recursive: true });
-  const scratchPath = resolve(scratchDir, 'fpl-compact.db');
-  rmSync(scratchPath, { force: true });
+  const rawPath = resolve(scratchDir, 'fpl-raw.db');
+  const finalPath = resolve(scratchDir, 'fpl-final.db');
 
-  let db: BetterSqlite3.Database | null = null;
   try {
-    db = new BetterSqlite3(path);
-    db.pragma('busy_timeout = 10000');
+    // Inside the try, because preparing scratch can fail too - an unusable path, a read-only
+    // filesystem - and this runs during start-up. A recovery that cannot proceed must report
+    // that and let the app carry on failing in its own way, not throw out of the boot sequence
+    // and replace one unexplained crash with another.
+    mkdirSync(scratchDir, { recursive: true });
+    rmSync(rawPath, { force: true, recursive: true });
+    rmSync(finalPath, { force: true, recursive: true });
 
-    // Delete first, so the copy about to be written is the small one. The prune has its own
-    // fallback for a volume too full to journal a delete.
-    const pruned = pruneHistory(db, { cacheDir: options.cacheDir });
-    report(
-      `Pruned ${pruned.snapshotsDeleted} snapshot(s), ${pruned.projectionsDeleted} ` +
-        `superseded projection(s), ${pruned.cacheFilesDeleted} cached file(s).`,
-    );
+    // The source is opened READ-ONLY and never written to, and that is the whole correction.
+    // Pruning the original first needs a write transaction, a write transaction needs somewhere
+    // to put its journal, and on a volume with zero bytes free there is nowhere - so the
+    // recovery died at precisely the moment it was needed. VACUUM INTO only reads its source,
+    // so it works on a volume that cannot accept a single byte.
+    const scratchFree = freeDiskBytes(scratchDir);
+    if (scratchFree !== null && scratchFree < bytesBefore * 1.2) {
+      throw new Error(
+        `scratch space at ${scratchDir} has ${(scratchFree / 1024 / 1024).toFixed(0)} MB free, ` +
+          `which cannot hold a ${(bytesBefore / 1024 / 1024).toFixed(0)} MB copy`,
+      );
+    }
 
-    // The copy goes outside the volume precisely because the volume has no room for it.
-    db.exec(`VACUUM INTO '${scratchPath.replace(/'/g, "''")}'`);
-    db.close();
-    db = null;
+    report('Copying the database out, read-only, to somewhere with room.');
+    const source = new BetterSqlite3(path, { readonly: true });
+    try {
+      // Sorting during the copy must not spill temporary files back onto the volume being
+      // rescued, which would fail for the same reason everything else does.
+      source.pragma('temp_store = MEMORY');
+      source.exec(`VACUUM INTO '${rawPath.replace(/'/g, "''")}'`);
+    } finally {
+      source.close();
+    }
 
-    const compactSize = statSync(scratchPath).size;
+    // Every delete happens to the copy, on a disk with space, where a write transaction has
+    // somewhere to journal.
+    report('Pruning the copy.');
+    const copy = new BetterSqlite3(rawPath);
+    try {
+      copy.pragma('temp_store = MEMORY');
+      const pruned = pruneHistory(copy, { cacheDir: options.cacheDir });
+      report(
+        `Pruned ${pruned.snapshotsDeleted} snapshot(s), ${pruned.projectionsDeleted} ` +
+          `superseded projection(s), ${pruned.cacheFilesDeleted} cached file(s).`,
+      );
+      copy.exec(`VACUUM INTO '${finalPath.replace(/'/g, "''")}'`);
+    } finally {
+      copy.close();
+    }
+    rmSync(rawPath, { force: true });
+
+    const compactSize = statSync(finalPath).size;
     report(`Compacted copy is ${(compactSize / 1024 / 1024).toFixed(1)} MB.`);
 
     // Checked before anything irreversible happens. From here until the copy is back in place
     // the scratch file is the only database there is, so it had better be a good one.
-    verifyUsable(scratchPath);
+    verifyUsable(finalPath);
 
     rmSync(path, { force: true });
     rmSync(`${path}-wal`, { force: true });
     rmSync(`${path}-shm`, { force: true });
 
-    // Same volume would be a rename; scratch is deliberately elsewhere, so this is a copy. The
-    // original is already gone by now, which is why it was verified first.
+    // Scratch is deliberately on another filesystem, so this is a copy rather than a rename.
+    // The original is already gone by now, which is exactly why it was verified first.
     try {
-      renameSync(scratchPath, path);
+      renameSync(finalPath, path);
     } catch {
-      copyFileSync(scratchPath, path);
-      rmSync(scratchPath, { force: true });
+      copyFileSync(finalPath, path);
+      rmSync(finalPath, { force: true });
     }
 
     const bytesAfter = statSync(path).size;
@@ -133,13 +166,19 @@ export function compactIfStarved(
         'No data you can see was lost: only superseded snapshots and replaced projection runs.',
     };
   } catch (cause) {
-    try {
-      db?.close();
-    } catch {
-      // Already closed, or never opened.
-    }
-    // The original is untouched unless the swap itself failed, and the swap only begins after
+    // The original is untouched unless the swap itself failed, and the swap only begins once
     // the replacement has been opened and integrity-checked.
+    //
+    // Cleanup that can throw is not cleanup. These paths may be unusable - that is often why we
+    // are in here - and an exception raised while reporting a failure replaces a clear message
+    // with a crash, in the boot sequence, which is exactly the fault being recovered from.
+    for (const leftover of [rawPath, finalPath]) {
+      try {
+        rmSync(leftover, { force: true, recursive: true });
+      } catch {
+        // Nothing to do about it, and nothing worth failing for.
+      }
+    }
     return {
       compacted: false,
       bytesBefore,
@@ -148,6 +187,7 @@ export function compactIfStarved(
     };
   }
 }
+
 
 /**
  * Open the candidate and make it prove it is a working database before anything is deleted.

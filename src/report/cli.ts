@@ -12,6 +12,7 @@ import { GlpkSolver } from '../optimise/glpkSolver.js';
 import { checkReadiness, recommend, loadSquadForChips, resolveTargetEvent } from './recommend.js';
 import { compactIfStarved } from '../db/compact.js';
 import { freeDiskBytes } from '../db/maintenance.js';
+import { createServer } from 'node:http';
 import { startServer } from './server.js';
 import { formatDuration, formatMoney, getStateOfPlay } from './state.js';
 
@@ -605,7 +606,27 @@ async function commandServe(flags: Map<string, string | true>): Promise<number> 
   const intervalFlag = flags.get('ingest-interval');
   const intervalMinutes = Number(typeof intervalFlag === 'string' ? intervalFlag : 180);
 
-  await startServer({ config, port, ingestIntervalMinutes: intervalMinutes });
+  // Bind the port before anything touches the database. The host kills a process that has not
+  // listened within a few minutes, and on a starved volume the database may need repairing
+  // first - which means copying a near-gigabyte file. That cannot finish inside the window, so
+  // the process was killed for not listening, restarted, and raced the same deadline for ever.
+  // Holding the port removes the deadline; a visitor gets an honest "starting up" page instead
+  // of a connection refused.
+  const server = createServer((_request, response) => {
+    response.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Retry-After': '20' });
+    response.end(
+      '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="20">' +
+        '<title>Starting up - FPL Optimiser</title>' +
+        '<body style="font:16px system-ui;margin:3rem auto;max-width:34rem;color:#14161a">' +
+        '<h1>Starting up</h1><p>Checking the database, and repairing it if the disk filled up. ' +
+        'A repair copies the whole file, so it can take a few minutes.</p>' +
+        '<p>This page reloads itself.</p>',
+    );
+  });
+  await new Promise<void>((done) => server.listen(port, done));
+  console.log(`fpl-optimiser holding port ${port} while it starts`);
+
+  await startServer({ config, port, ingestIntervalMinutes: intervalMinutes, server });
   return 0;
 }
 

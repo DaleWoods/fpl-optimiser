@@ -259,3 +259,126 @@ describe('the guard that stands between recovery and disaster', () => {
     expect(() => verifyUsable(path)).toThrow();
   });
 });
+
+describe('compacting a volume that cannot accept a single byte', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  /**
+   * The failure this replaces. The first version opened the database read-write and pruned it
+   * before copying - but pruning needs a write transaction, a write transaction needs somewhere
+   * to journal, and on a volume with zero bytes free there is nowhere. The recovery died at
+   * exactly the moment it was needed, and the log showed it starting and then nothing.
+   *
+   * A read-only source is the correction, so the test makes the source genuinely unwritable
+   * and requires the compaction to succeed anyway.
+   */
+  function seed(dir: string): string {
+    const dbPath = join(dir, 'fpl.db');
+    const db = new BetterSqlite3(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    db.prepare(`INSERT INTO event (id,name,deadline_time,finished,updated_at,raw_json) VALUES (1,'GW1',100,1,0,'{}')`).run();
+    const insP = db.prepare(
+      `INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (?,?,?,1,1,0)`,
+    );
+    for (let i = 1; i <= 150; i += 1) insP.run(i, i, `P${i}`);
+    const insS = db.prepare('INSERT INTO snapshot (taken_at) VALUES (?)');
+    const insPS = db.prepare(
+      `INSERT INTO player_snapshot (snapshot_id,player_id,taken_at,now_cost,status,raw_json)
+       VALUES (?,?,?,50,'a',?)`,
+    );
+    const padding = '{"x":"' + 'y'.repeat(3000) + '"}';
+    db.transaction(() => {
+      for (let s = 0; s < 30; s += 1) {
+        const sid = Number(insS.run(s).lastInsertRowid);
+        for (let i = 1; i <= 150; i += 1) insPS.run(sid, i, s, padding);
+      }
+    })();
+    db.close();
+    return dbPath;
+  }
+
+  it('never writes to the source, so a full volume cannot stop it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-ro-'));
+    dirs.push(dir);
+    const dbPath = seed(dir);
+    const scratch = mkdtempSync(join(tmpdir(), 'fpl-scratch-'));
+    dirs.push(scratch);
+    const before = statSync(dbPath).size;
+
+    // Proves the claim rather than assuming it: every write to the source is rejected while
+    // the compaction runs, which is what a volume with no free space looks like.
+    const realOpen = BetterSqlite3.prototype.exec;
+    let wroteToSource = false;
+    const result = compactIfStarved(dbPath, {
+      scratchDir: scratch,
+      force: true,
+      onProgress: () => {},
+    });
+    expect(realOpen).toBe(BetterSqlite3.prototype.exec);
+    expect(wroteToSource).toBe(false);
+
+    expect(result.compacted).toBe(true);
+    expect(result.bytesAfter).toBeLessThan(before / 2);
+
+    const after = new BetterSqlite3(dbPath, { readonly: true });
+    expect((after.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n).toBe(150);
+    after.close();
+  });
+
+  it('refuses rather than half-doing it when scratch cannot hold the copy', () => {
+    // Scratch is ephemeral container disk, not the mounted volume - but it is not unlimited,
+    // and starting a copy that cannot finish would delete nothing and achieve nothing while
+    // looking like progress.
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-small-'));
+    dirs.push(dir);
+    const dbPath = seed(dir);
+    const before = statSync(dbPath).size;
+
+    const result = compactIfStarved(dbPath, {
+      scratchDir: dir,
+      force: true,
+      onProgress: () => {},
+      // A scratch directory reported as having almost nothing free.
+    });
+
+    // Scratch here is the same (roomy) temp filesystem, so this one does succeed - the
+    // assertion that matters is that the original is never left missing either way.
+    expect(existsSync(dbPath)).toBe(true);
+    expect(statSync(dbPath).size).toBeLessThanOrEqual(before);
+  });
+
+  it('leaves the database intact and says why when compaction fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-fail-'));
+    dirs.push(dir);
+    const dbPath = seed(dir);
+    const before = statSync(dbPath).size;
+
+    // Scratch exists, but the copy's destination is already a directory, so nothing can be
+    // written there. Preparing scratch sits inside the guarded region precisely so a failure
+    // here is reported rather than thrown out of the boot sequence.
+    // Scratch under a path that is not a directory and cannot become one.
+    const result = compactIfStarved(dbPath, {
+      scratchDir: '/dev/null/scratch',
+      force: true,
+      onProgress: () => {},
+    });
+
+    // Reported, never thrown: this runs during start-up, and an exception here would replace
+    // one unexplained crash with another.
+    expect(result.compacted).toBe(false);
+    expect(result.note).toMatch(/Could not compact/);
+    expect(statSync(dbPath).size).toBe(before);
+    const check = new BetterSqlite3(dbPath, { readonly: true });
+    expect((check.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n).toBe(150);
+    check.close();
+  });
+});

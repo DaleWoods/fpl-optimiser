@@ -1348,3 +1348,59 @@ describe('managers worth watching, on the page', () => {
     expect(render(rec([]))).not.toMatch(/Managers worth watching/);
   });
 });
+
+describe('binding the port before touching the database', () => {
+  /**
+   * The deadlock this breaks. The host kills a process that has not listened within a few
+   * minutes; on a starved volume the database may need repairing first, and repairing one means
+   * copying a near-gigabyte file. That does not finish inside the window - so the process was
+   * killed for not listening, restarted, and raced the same deadline for ever. A repair that
+   * could not run because the thing it repairs had not finished running.
+   */
+  it('takes over a server that is already listening, rather than binding its own', async () => {
+    const { createServer } = await import('node:http');
+    const { startServer } = await import('../../src/report/server.js');
+    const { loadConfig } = await import('../../src/config/load.js');
+
+    const held = createServer((_req, res) => {
+      res.writeHead(503);
+      res.end('holding');
+    });
+    await new Promise<void>((done) => held.listen(0, done));
+    const address = held.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+    const config = loadConfig();
+    const running = await startServer({
+      config: { ...config, app: { ...config.app, database: { path: ':memory:' } } },
+      port,
+      ingestIntervalMinutes: 0,
+      server: held,
+    });
+
+    // Same port throughout: the process never stopped listening, so there was never a window
+    // in which the host could decide it had failed to start.
+    expect(running.port).toBe(port);
+
+    // And the holding page is gone - the real handler took over on the same socket.
+    const body = await (await fetch(`http://127.0.0.1:${port}/healthz`)).text();
+    expect(body).not.toMatch(/holding/);
+
+    await running.close();
+  });
+
+  it('still binds its own port when nothing was handed to it', async () => {
+    const { startServer } = await import('../../src/report/server.js');
+    const { loadConfig } = await import('../../src/config/load.js');
+    const config = loadConfig();
+
+    const running = await startServer({
+      config: { ...config, app: { ...config.app, database: { path: ':memory:' } } },
+      port: 0,
+      ingestIntervalMinutes: 0,
+    });
+
+    expect(running.port).toBeGreaterThan(0);
+    await running.close();
+  });
+});
