@@ -225,15 +225,45 @@ function classifyPriceTrends(
  * Reads the most recent snapshot for every player, the fixtures for the gameweek, and the club
  * strength ratings, then runs each player through the model.
  */
+export interface BuildOptions {
+  /**
+   * Treat everything from this gameweek onward as unknown.
+   *
+   * Pinning the snapshot is not enough on its own: the model also reads match history and
+   * finished results, neither of which is tied to a snapshot. Replaying gameweek 3 while those
+   * queries see gameweeks 4, 5 and 6 scores the model on knowledge it could not have had.
+   */
+  asOfEventId?: number;
+
+  /**
+   * Project from this snapshot instead of the most recent one.
+   *
+   * Everything else the model reads - match history, fixtures, results - is already filtered by
+   * gameweek, so pinning the snapshot is what makes a projection reproducible after the fact.
+   */
+  asOfSnapshotId?: number;
+}
+
 export function buildProjections(
   db: Database,
   eventId: number,
   rules: Rules,
   weights: ModelWeights,
+  options: BuildOptions = {},
 ): ProjectedPlayer[] {
-  const snapshot = db
-    .prepare('SELECT id FROM snapshot ORDER BY taken_at DESC, id DESC LIMIT 1')
-    .get() as { id: number } | undefined;
+  // Normally the newest snapshot, because normally the question is "what should I do now".
+  //
+  // `asOfSnapshotId` answers a different question - "what would this model have said before that
+  // deadline" - and it is the seam the whole backtest hangs on. Without it the only evidence
+  // available is the handful of projections that happen to have been stored at the time, under
+  // whatever model version was current, which cannot be re-run and cannot be ablated. With it,
+  // any version of the model can be replayed against exactly the data that existed then.
+  const snapshot =
+    options.asOfSnapshotId !== undefined
+      ? ({ id: options.asOfSnapshotId } as { id: number })
+      : (db
+          .prepare('SELECT id FROM snapshot ORDER BY taken_at DESC, id DESC LIMIT 1')
+          .get() as { id: number } | undefined);
 
   if (!snapshot) return [];
 
@@ -292,7 +322,9 @@ export function buildProjections(
   const attackAdjust = new Map<number, number>();
   const defenceAdjust = new Map<number, number>();
   if (weights.teamStrength.tableWeight > 0) {
-    const form = [...computeTeamForm(db).values()].filter((row) => row.matches > 0);
+    const form = [...computeTeamForm(db, options.asOfEventId).values()].filter(
+      (row) => row.matches > 0,
+    );
 
     // Averaged within each basis and never across them. Early in a season some clubs already
     // have underlying numbers and others do not, and expected goals do not sit on the same
@@ -395,7 +427,7 @@ export function buildProjections(
   // Recent gameweeks (this season only), for the recency-weighted blend below - one shared
   // fetch, sliced per purpose since minutes and attacking rates each have their own window size.
   const recentWindowSize = Math.max(weights.minutes.recentMatches, weights.attacking.recentMatches);
-  const recentFixtures = recentFixturesByPlayer(db, recentWindowSize);
+  const recentFixtures = recentFixturesByPlayer(db, recentWindowSize, options.asOfEventId);
 
   const priceTrends = classifyPriceTrends(players, weights);
 

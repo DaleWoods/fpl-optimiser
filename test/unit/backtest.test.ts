@@ -1,0 +1,215 @@
+import type { Database } from 'better-sqlite3';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { StubFplApi } from '../../src/api/replayClient.js';
+import { loadModelWeights, loadRules } from '../../src/config/load.js';
+import { nowSeconds, openTestDatabase } from '../../src/db/index.js';
+import { ingestBootstrap, ingestFixtures } from '../../src/ingest/index.js';
+import { runBacktest } from '../../src/model/backtest.js';
+import { fakeBootstrap, fakeEvent, fakeFixture } from '../support/fakeApi.js';
+
+const rules = loadRules();
+const weights = loadModelWeights();
+
+/**
+ * A backtest that can only flatter the thing it measures is worse than none, so most of these
+ * set the model up to lose and require that the loss is reported.
+ */
+describe('replaying the season in points', () => {
+  let db: Database;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await ingestBootstrap(
+      db,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [1, 2, 3].map((id) => fakeEvent(id, { finished: true })),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      db,
+      new StubFplApi({
+        fixtures: [1, 2, 3].map((gw) =>
+          fakeFixture(gw, gw, 1, 2, { team_h_score: 1, team_a_score: 1, finished: true }),
+        ),
+      }),
+    );
+    // Deadlines must sit AFTER the snapshot ingest wrote, or no snapshot qualifies as
+    // "before the deadline" and every gameweek is skipped as unreplayable.
+    for (const gw of [1, 2, 3]) {
+      db.prepare('UPDATE event SET deadline_time = ? WHERE id = ?').run(nowSeconds() + gw, gw);
+    }
+  });
+
+  /** A legal 15 drawn from the seeded league, with a recorded squad for each gameweek. */
+  function seedSquad(eventIds: number[]): number[] {
+    const squad = (
+      db
+        .prepare(
+          `SELECT p.id AS id, pos.short_name AS position FROM player p
+           JOIN position pos ON pos.id = p.position_id ORDER BY p.id`,
+        )
+        .all() as { id: number; position: string }[]
+    );
+    const take = (position: string, n: number) =>
+      squad.filter((p) => p.position === position).slice(0, n);
+    const chosen = [...take('GKP', 2), ...take('DEF', 5), ...take('MID', 5), ...take('FWD', 3)];
+
+    for (const eventId of eventIds) {
+      db.prepare(
+        `INSERT INTO recommendation (created_at, event_id, entry_id, kind, model_version, summary, detail_json)
+         VALUES (?, ?, NULL, 'xi', 'test', 'test', ?)`,
+      ).run(
+        nowSeconds(),
+        eventId,
+        JSON.stringify({ squad: chosen.map((p) => ({ playerId: p.id, position: p.position })) }),
+      );
+    }
+    return chosen.map((p) => p.id);
+  }
+
+  /** Give everyone a result, and optionally make one player a weekly hero. */
+  function seedResults(eventIds: number[], hero?: { playerId: number; points: number }): void {
+    const players = db.prepare('SELECT id FROM player').all() as { id: number }[];
+    const insert = db.prepare(
+      `INSERT INTO actual_points (player_id, event_id, points, minutes, source, recorded_at)
+       VALUES (?, ?, ?, 90, 'test', ?)
+       ON CONFLICT (player_id, event_id) DO UPDATE SET points = excluded.points`,
+    );
+    for (const eventId of eventIds) {
+      for (const p of players) {
+        insert.run(p.id, eventId, hero && p.id === hero.playerId ? hero.points : 2, nowSeconds());
+      }
+    }
+  }
+
+  function seedYourScore(eventId: number, points: number): void {
+    db.prepare(
+      `INSERT INTO gameweek_result (entry_id, event_id, actual_points, recorded_at)
+       VALUES (1, ?, ?, ?)`,
+    ).run(eventId, points, nowSeconds());
+  }
+
+  it('scores every policy over the gameweeks it can replay', () => {
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
+
+    const result = runBacktest(db, rules, weights);
+
+    expect(result.weeks).toHaveLength(3);
+    const model = result.policies.find((p) => p.key === 'model')!;
+    expect(model.weekly).toHaveLength(3);
+    expect(model.total).toBeGreaterThan(0);
+    // All four policies are scored, so none can win by not being measured.
+    expect(result.policies.map((p) => p.key).sort()).toEqual(['fpl', 'hold', 'model', 'you']);
+  });
+
+  it('reports the model LOSING when it does worse than what you played', () => {
+    // The finding this exists to be capable of producing, and the one the live data has been
+    // suggesting for weeks.
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    for (const gw of [1, 2, 3]) seedYourScore(gw, 500);
+
+    const result = runBacktest(db, rules, weights);
+    const versus = result.versusYou.find((v) => v.key === 'model')!;
+
+    expect(versus.meanDifference).toBeLessThan(0);
+    expect(versus.high).toBeLessThan(0);
+    expect(versus.significant).toBe(true);
+  });
+
+  it('refuses to call a difference real when the interval spans zero', () => {
+    // Four gameweeks of noise is not evidence, and saying so is the whole point of the
+    // interval. A point estimate with no uncertainty beside it invites acting on nothing.
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    seedYourScore(1, 10);
+    seedYourScore(2, 90);
+    seedYourScore(3, 50);
+
+    const versus = runBacktest(db, rules, weights).versusYou.find((v) => v.key === 'model')!;
+    expect(versus.low).toBeLessThan(versus.high);
+    if (versus.low < 0 && versus.high > 0) expect(versus.significant).toBe(false);
+  });
+
+  it('states the smallest edge this many gameweeks could detect', () => {
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    seedYourScore(1, 30);
+    seedYourScore(2, 55);
+    seedYourScore(3, 42);
+
+    const result = runBacktest(db, rules, weights);
+    // Usually larger than the effect being argued about, which is the useful part.
+    expect(result.detectableEdge).not.toBeNull();
+    expect(result.detectableEdge!).toBeGreaterThan(0);
+  });
+
+  it('says which gameweeks it could not replay instead of quietly dropping them', () => {
+    // A squad is only on record from gameweek 2 here.
+    seedSquad([2, 3]);
+    seedResults([1, 2, 3]);
+    for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
+
+    const result = runBacktest(db, rules, weights);
+
+    expect(result.weeks.map((w) => w.eventId)).toEqual([2, 3]);
+    expect(result.notes.join(' ')).toMatch(/Gameweek 1: no squad on record/);
+  });
+
+  it('gives the same interval twice for the same data', () => {
+    // An interval that moves between page loads is not evidence of anything.
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    seedYourScore(1, 20);
+    seedYourScore(2, 70);
+    seedYourScore(3, 45);
+
+    const first = runBacktest(db, rules, weights).versusYou.find((v) => v.key === 'model')!;
+    const second = runBacktest(db, rules, weights).versusYou.find((v) => v.key === 'model')!;
+    expect(second.low).toBe(first.low);
+    expect(second.high).toBe(first.high);
+  });
+
+  it('names the captain each policy would have chosen', () => {
+    // The armband is where the measured cost is, so a replay that hid its own captain pick
+    // would be useless for diagnosing it.
+    const squad = seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3], { playerId: squad[12]!, points: 20 });
+    for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
+
+    const week = runBacktest(db, rules, weights).weeks[0]!;
+    expect(week.captainByPolicy.model).not.toBeNull();
+    expect(week.captainByPolicy.fpl).not.toBeNull();
+  });
+});
+
+describe('the replay must not be able to see the future', () => {
+  /**
+   * The single property everything else depends on. buildProjections' own cutoff is tested
+   * behaviourally in asof.test.ts; what is unguarded is the wiring - the replay simply forgetting
+   * to pass it. Removing that one argument leaves every other backtest test passing while the
+   * numbers silently become fiction, so the call site is asserted directly.
+   */
+  it('passes both cutoffs when it re-derives a projection', async () => {
+    const text = (await import('node:fs')).readFileSync('src/model/backtest.ts', 'utf8');
+    const call = text.slice(text.indexOf('buildProjections('));
+
+    expect(call).toMatch(/asOfSnapshotId/);
+    // The snapshot alone is not enough: match history and results are not tied to one.
+    expect(call.slice(0, 300)).toMatch(/asOfEventId:\s*eventId/);
+  });
+
+  it('only ever reads a snapshot from before the deadline', async () => {
+    const text = (await import('node:fs')).readFileSync('src/model/backtest.ts', 'utf8');
+    const picker = text.slice(text.indexOf('function snapshotBefore'));
+
+    expect(picker.slice(0, 500)).toMatch(/taken_at <= e\.deadline_time/);
+    // Newest-first, so it is the LAST thing known before the deadline rather than the first.
+    expect(picker.slice(0, 500)).toMatch(/ORDER BY s\.taken_at DESC/);
+  });
+});

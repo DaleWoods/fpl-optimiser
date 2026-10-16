@@ -15,6 +15,7 @@ import type { PriorityFixPlan, Readiness, Recommendation } from './recommend.js'
 import type { LeagueTableRow } from '../model/table.js';
 import { formatDuration, formatMoney, type StateOfPlay } from './state.js';
 import type { Benchmark } from '../model/benchmark.js';
+import type { BacktestResult } from '../model/backtest.js';
 import type { SpaceReport } from '../db/maintenance.js';
 
 /** Every page in the app, sharing one shell so the tabs and styling stay consistent. */
@@ -1775,12 +1776,105 @@ function renderCaptaincyCost(season: SeasonAccuracy): string {
   than the projections being poor, and those need different fixes.</p>`;
 }
 
+
+/**
+ * The season replayed in points, which is the only currency the objective is denominated in.
+ *
+ * Everything else on this page measures *error*. This measures what the advice would have been
+ * worth, against what was actually played and against two things that cost nothing to do.
+ */
+function renderBacktest(backtest: BacktestResult | null): string {
+  if (!backtest || backtest.weeks.length === 0) return '';
+
+  const rows = backtest.policies
+    .map(
+      (policy) => `<tr${policy.key === 'model' ? ' class="special"' : ''}>
+        <td>${policy.key === 'model' ? `<strong>${escapeHtml(policy.label)}</strong>` : escapeHtml(policy.label)}</td>
+        <td>${policy.total}</td>
+        <td>${policy.mean.toFixed(1)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const comparisons = backtest.versusYou
+    .map((entry) => {
+      const sign = entry.meanDifference >= 0 ? '+' : '';
+      return `<tr>
+        <td>${escapeHtml(entry.label)}</td>
+        <td style="color:${entry.meanDifference >= 0 ? 'var(--ok)' : 'var(--danger)'}">${sign}${entry.meanDifference.toFixed(1)}</td>
+        <td>${Number.isNaN(entry.low) ? '<span class="muted">&mdash;</span>' : `${entry.low.toFixed(1)} to ${entry.high.toFixed(1)}`}</td>
+        <td>${
+          entry.significant
+            ? '<strong>yes</strong>'
+            : '<span class="muted">not established</span>'
+        }</td>
+      </tr>`;
+    })
+    .join('');
+
+  const model = backtest.versusYou.find((entry) => entry.key === 'model');
+  const verdict = !model
+    ? ''
+    : model.significant && model.meanDifference < 0
+      ? `<div class="banner warn"><strong>Over these ${backtest.weeks.length} gameweeks the app's
+         XI scored ${Math.abs(model.meanDifference).toFixed(1)} points a week less than the team
+         you actually played</strong>, and the interval excludes zero &mdash; that is a real
+         difference, not noise.</div>`
+      : model.significant && model.meanDifference > 0
+        ? `<div class="banner info"><strong>The app's XI scored
+           ${model.meanDifference.toFixed(1)} points a week more than the team you played</strong>,
+           and the interval excludes zero.</div>`
+        : `<div class="banner warn"><strong>Nothing is established either way yet.</strong> The
+           difference between the app's XI and your own is
+           ${model.meanDifference.toFixed(1)} a week, but the interval spans zero over
+           ${backtest.weeks.length} gameweek${backtest.weeks.length === 1 ? '' : 's'} &mdash; so
+           the sign of it is not known.</div>`;
+
+  return `<h2>Replaying the season in points</h2>
+  ${verdict}
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Way of picking</th><th>Total</th><th>Per week</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>
+
+  <h3 style="margin-top:1.2rem">Against the team you actually played</h3>
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Way of picking</th><th>Per week</th><th>95% interval</th><th>Real?</th></tr></thead>
+    <tbody>${comparisons}</tbody></table></div></div>
+
+  ${
+    backtest.detectableEdge === null
+      ? ''
+      : `<p class="muted" style="font-size:.88rem;margin:.5rem 0 0">With
+         ${backtest.weeks.length} gameweek${backtest.weeks.length === 1 ? '' : 's'} replayed, the
+         smallest weekly edge this could detect at all is about
+         <strong>${backtest.detectableEdge.toFixed(1)} points</strong>. Anything smaller than
+         that is invisible to this comparison however many times it is run, which is worth
+         knowing before arguing about a one or two point change.</p>`
+  }
+  <details class="explain">
+    <summary>How this is replayed</summary>
+    <div class="inner">
+      <p>Each gameweek is rebuilt from the squad you actually held and the last snapshot taken
+      <em>before</em> that deadline. The model's projections are re-derived rather than read
+      back, and every query that reads match history or results is cut off at that gameweek, so
+      nothing the model could not have known can reach it.</p>
+      <p>Scored with FPL's real auto-substitution and vice-captain rules. <strong>Last week
+      again</strong> is the cost of not deciding; <strong>FPL's own number</strong> is
+      <code>ep_next</code>, free from the API.</p>
+      <p>Transfers are deliberately out of scope: simulating one changes the squad, and from the
+      next gameweek onward nothing would be comparable to anything. This isolates the XI and the
+      armband &mdash; the decision made every week.</p>
+    </div>
+  </details>`;
+}
+
 export function renderAccuracy(
   season: SeasonAccuracy,
   latest: GameweekAccuracy | null,
   calibration: readonly CalibrationFactor[] = [],
   calibrationProgress: CalibrationProgress | null = null,
   benchmark: Benchmark | null = null,
+  backtest: BacktestResult | null = null,
 ): string {
   const errHead = `<thead><tr><th>Player</th><th>Pos</th><th>Club</th><th>Predicted</th><th>Actual</th><th>Error</th></tr></thead>`;
 
@@ -1834,6 +1928,8 @@ export function renderAccuracy(
   ${
     season.gameweeks.length > 0
       ? `${headline ? `<div class="banner info">${headline}</div>` : ''}
+         ${renderBacktest(backtest)}
+
          ${renderBenchmark(benchmark)}
 
          ${renderCaptaincyCost(season)}

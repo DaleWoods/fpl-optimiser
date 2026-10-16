@@ -27,6 +27,15 @@ export interface RecentFixtureRow {
 export function recentFixturesByPlayer(
   db: Database,
   maxWindow: number,
+  /**
+   * Ignore anything from this gameweek onward.
+   *
+   * Only a backtest passes it, and without it a backtest is worthless: replaying gameweek 3
+   * while this reads gameweeks 4, 5 and 6 scores the model on form it could not possibly have
+   * known, and flatters it enormously. Undefined in normal use, where "everything so far" is
+   * exactly right.
+   */
+  beforeEventId?: number,
 ): Map<number, RecentFixtureRow[]> {
   const rows = db
     .prepare(
@@ -35,9 +44,10 @@ export function recentFixturesByPlayer(
               expected_goals AS expectedGoals, expected_assists AS expectedAssists
        FROM player_fixture_history
        WHERE event_id IS NOT NULL
+         AND (@beforeEventId IS NULL OR event_id < @beforeEventId)
        ORDER BY player_id ASC, event_id DESC`,
     )
-    .all() as (RecentFixtureRow & { playerId: number })[];
+    .all({ beforeEventId: beforeEventId ?? null }) as (RecentFixtureRow & { playerId: number })[];
 
   const byPlayer = new Map<number, RecentFixtureRow[]>();
   for (const row of rows) {

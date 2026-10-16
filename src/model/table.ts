@@ -146,7 +146,11 @@ export interface TeamForm {
  * underlying numbers catch up. Each basis is compared against its own league average, since the
  * two are not on the same scale.
  */
-export function computeTeamForm(db: Database): Map<number, TeamForm> {
+export function computeTeamForm(
+  db: Database,
+  /** Ignore anything from this gameweek onward. Only a backtest passes it - see recentForm.ts. */
+  beforeEventId?: number,
+): Map<number, TeamForm> {
   // xG for sums across a club's players, because each player's xG is their own shots. xG against
   // takes the maximum: expected_goals_conceded is a whole-team figure recorded against every
   // player on the pitch, so summing it would multiply one match's xGA by eleven.
@@ -161,11 +165,12 @@ export function computeTeamForm(db: Database): Map<number, TeamForm> {
          FROM player_fixture_history h
          JOIN player p ON p.id = h.player_id
          WHERE h.event_id IS NOT NULL
+           AND (@beforeEventId IS NULL OR h.event_id < @beforeEventId)
          GROUP BY p.team_id, h.fixture_id
        )
        GROUP BY teamId`,
     )
-    .all() as { teamId: number; matches: number; forPerMatch: number; againstPerMatch: number }[];
+    .all({ beforeEventId: beforeEventId ?? null }) as { teamId: number; matches: number; forPerMatch: number; againstPerMatch: number }[];
 
   const scored = db
     .prepare(
@@ -174,13 +179,15 @@ export function computeTeamForm(db: Database): Map<number, TeamForm> {
        FROM (
          SELECT team_h AS teamId, team_h_score AS scoredFor, team_a_score AS scoredAgainst
          FROM fixture WHERE finished = 1 AND team_h_score IS NOT NULL AND team_a_score IS NOT NULL
+           AND (@beforeEventId IS NULL OR event_id < @beforeEventId)
          UNION ALL
          SELECT team_a AS teamId, team_a_score AS scoredFor, team_h_score AS scoredAgainst
          FROM fixture WHERE finished = 1 AND team_h_score IS NOT NULL AND team_a_score IS NOT NULL
+           AND (@beforeEventId IS NULL OR event_id < @beforeEventId)
        )
        GROUP BY teamId`,
     )
-    .all() as { teamId: number; matches: number; forPerMatch: number; againstPerMatch: number }[];
+    .all({ beforeEventId: beforeEventId ?? null }) as { teamId: number; matches: number; forPerMatch: number; againstPerMatch: number }[];
 
   const form = new Map<number, TeamForm>();
   for (const row of scored) {

@@ -1030,6 +1030,39 @@ group is copying his variance as much as his judgement. Squads are only public o
 has started, the same API blind spot that applies to your own team, and a rival who cannot be
 read never takes the rest of the refresh down with them.
 
+### Replaying the season in points
+
+Every figure on the Accuracy page measures **error** - how far a projection was from an outcome.
+None of them is the objective. The objective is points, and the assumption that a smaller error
+produces more of them had never been checked. It is not obviously true: mean absolute error
+rewards correctly predicting the several hundred players who score 0-2, which has no bearing at
+all on choosing eleven.
+
+So each gameweek is now replayed from the squad actually held, and four ways of picking an XI and
+a captain are scored in points: **this model**, **what you played**, **FPL's own `ep_next`**, and
+**last week again** - the cost of not deciding. Scored with real auto-substitution and
+vice-captain rules, so these are points that would have counted.
+
+Two deliberate limits. Transfers are out of scope: simulating one changes the squad, and from the
+next gameweek onward nothing is comparable to anything. And the result carries a **paired
+bootstrap 95% interval** rather than a bare number, because a handful of weekly differences is a
+small, lumpy sample and a point estimate invites acting on noise. When the interval spans zero
+the page says *"nothing is established either way"* in those words.
+
+It also reports the **smallest weekly edge the sample could detect at all** - usually larger than
+the effect being argued about, which is the useful part. There is no point debating a two-point
+change when the instrument cannot see below nine.
+
+**The leak that would have made all of it fiction.** Pinning the snapshot is not enough. The
+model also reads per-player match history and finished results, and neither is tied to a
+snapshot - so a replay of gameweek 3 was reading gameweeks 4, 5 and 6, scoring itself on
+knowledge it could not have had. `asOfEventId` now cuts off recent form and both routes of club
+strength, and three tests fail if that cutoff is removed.
+
+The wiring is guarded separately from the behaviour, because they fail differently: forgetting to
+*pass* the cutoff leaves every other backtest test green while the numbers quietly become
+fiction, so the call site is asserted directly.
+
 ### Measuring against something, at last
 
 Four graded gameweeks produced a typical miss of 1.31 points per player and no way to know

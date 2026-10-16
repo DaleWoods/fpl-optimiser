@@ -17,6 +17,7 @@ import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { loadIntel } from '../model/intel.js';
 import { benchmarkSeason } from '../model/benchmark.js';
+import { runBacktest } from '../model/backtest.js';
 import { freeDiskBytes, isDiskSpaceFailure, pruneHistory, spaceReport } from '../db/maintenance.js';
 import { compactIfStarved } from '../db/compact.js';
 import { ingestRivals } from '../ingest/rivals.js';
@@ -368,6 +369,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             db,
             season.gameweeks.map((gw) => gw.eventId),
           ),
+          runBacktest(db, config.rules, config.weights),
         ),
       );
       return;
