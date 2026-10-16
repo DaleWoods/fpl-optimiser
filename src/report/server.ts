@@ -12,6 +12,7 @@ import { escapeHtml } from './layout.js';
 import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from './recommend.js';
 import { loadIntel } from '../model/intel.js';
 import { benchmarkSeason } from '../model/benchmark.js';
+import { isDiskSpaceFailure, pruneHistory, spaceReport } from '../db/maintenance.js';
 import { ingestRivals } from '../ingest/rivals.js';
 import { compareRivals } from '../model/rivals.js';
 import {
@@ -141,9 +142,30 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           console.warn(`[ingest] rivals failed: ${(cause as Error).message}`);
         }
       }
+      // Prune after every successful refresh, not on a timer of its own. The growth is caused
+      // by refreshing, so that is exactly when it should be paid for - and a bounded delete
+      // each time is cheaper and far less alarming than one enormous clear-out after the disk
+      // has already filled.
+      try {
+        const pruned = pruneHistory(db);
+        if (pruned.snapshotsDeleted > 0 || pruned.projectionsDeleted > 0) {
+          console.log(
+            `[ingest] pruned ${pruned.snapshotsDeleted} snapshot(s) and ` +
+              `${pruned.projectionsDeleted} superseded projection(s)`,
+          );
+        }
+      } catch (cause) {
+        console.warn(`[ingest] prune failed: ${(cause as Error).message}`);
+      }
+
       lastIngestError = null;
     } catch (cause) {
-      lastIngestError = (cause as Error).message;
+      // SQLite reports a full disk as "disk I/O error", which reads like failing hardware and
+      // sends you looking in entirely the wrong place. Say what it is and what to do.
+      lastIngestError = isDiskSpaceFailure(cause)
+        ? 'The database has run out of disk space. Open Import Data and press "Free up space" - ' +
+          'it deletes stored history nothing reads any more.'
+        : (cause as Error).message;
       console.error(`[ingest] failed: ${lastIngestError}`);
     } finally {
       ingesting = false;
@@ -211,6 +233,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
                   sources: intel.newsSources ?? [],
                 }
               : null,
+            spaceReport(db),
           ),
         );
       }
@@ -409,6 +432,28 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     // "I made this transfer" from the My Team page. Recorded against the gameweek being
     // planned, and applied on top of the last real squad until FPL publishes that gameweek's
     // picks - which it does not do until the gameweek starts.
+    // POST only and never from a link, like /reset: a browser prefetching a GET must never be
+    // able to delete stored history.
+    if (url.pathname === '/free-space' && request.method === 'POST') {
+      try {
+        // Manual recovery clears the cache too: this is the path taken when the disk is
+        // already full, and plain file deletes are the only thing guaranteed to work there.
+        const result = pruneHistory(db, { cacheDir: config.app.api.cacheDir });
+        response.writeHead(200, JSON_HEADERS);
+        response.end(JSON.stringify(result, null, 2));
+      } catch (cause) {
+        response.writeHead(500, JSON_HEADERS);
+        response.end(JSON.stringify({ error: (cause as Error).message }, null, 2));
+      }
+      return;
+    }
+
+    if (url.pathname === '/space.json') {
+      response.writeHead(200, JSON_HEADERS);
+      response.end(JSON.stringify(spaceReport(db), null, 2));
+      return;
+    }
+
     if (url.pathname === '/confirm-transfer' && request.method === 'POST') {
       try {
         const teamId = config.app.teamId;

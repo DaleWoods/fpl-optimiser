@@ -15,6 +15,7 @@ import type { PriorityFixPlan, Readiness, Recommendation } from './recommend.js'
 import type { LeagueTableRow } from '../model/table.js';
 import { formatDuration, formatMoney, type StateOfPlay } from './state.js';
 import type { Benchmark } from '../model/benchmark.js';
+import type { SpaceReport } from '../db/maintenance.js';
 
 /** Every page in the app, sharing one shell so the tabs and styling stay consistent. */
 
@@ -1122,6 +1123,48 @@ function renderNewsSources(
     <tbody>${rows}</tbody></table></div></div>`;
 }
 
+
+/**
+ * What the database is made of, and a way to shrink it.
+ *
+ * The app writes history on purpose - snapshots are how a price change is detected, stored
+ * projections are how it grades itself - and nothing ever deleted any of it, so on a 1 GB disk
+ * it eventually filled up and SQLite started answering every import with "disk I/O error". That
+ * phrase reads like failing hardware; it is a full disk, and this is where you can see it and
+ * do something about it.
+ */
+function renderSpace(space: SpaceReport | null): string {
+  if (!space) return '';
+
+  const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
+  const rows = space.tables
+    .filter((table) => table.rows > 0)
+    .slice(0, 6)
+    .map(
+      (table) => `<tr>
+        <td><code>${escapeHtml(table.table)}</code></td>
+        <td>${table.rows.toLocaleString('en-GB')}</td>
+        <td>${table.approximateBytes > 0 ? `${mb(table.approximateBytes)} MB` : '<span class="muted">&mdash;</span>'}</td>
+      </tr>`,
+    )
+    .join('');
+
+  return `<h2>Database size</h2>
+  <div class="card" style="display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">
+    <div><div class="k">On disk</div><div style="font-size:1.4rem;font-weight:800">${mb(space.databaseBytes)} MB</div></div>
+    <button class="btn" id="free-space">Free up space</button>
+    <span class="muted" id="free-space-status" style="font-size:.9rem"></span>
+  </div>
+  <p class="muted" style="font-size:.88rem;margin:.4rem 0">Deletes stored history nothing reads
+  any more: superseded snapshots, and projection runs replaced by a later one for the same
+  gameweek. It deliberately keeps the newest snapshots, which price-change detection compares
+  against, and the last snapshot before each deadline, which the Accuracy page needs to score
+  this model against FPL's own number. This also runs by itself after every refresh.</p>
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Table</th><th>Rows</th><th>Stored text</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+
 export function renderImport(
   slots: ImportSlot[],
   notes: {
@@ -1130,6 +1173,7 @@ export function renderImport(
     currentEventId: number | null;
     sources: readonly { name: string; url: string; useFor: string }[];
   } | null = null,
+  space: SpaceReport | null = null,
 ): string {
   const cards = slots
     .map(
@@ -1176,6 +1220,29 @@ export function renderImport(
     .join('');
 
   const script = `
+const freeBtn = document.getElementById('free-space');
+if (freeBtn) {
+  freeBtn.addEventListener('click', async () => {
+    const status = document.getElementById('free-space-status');
+    freeBtn.disabled = true;
+    status.textContent = 'Working...';
+    try {
+      const res = await fetch('/free-space', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Failed');
+      const freed = ((body.bytesBefore - body.bytesAfter) / 1024 / 1024).toFixed(1);
+      status.textContent =
+        'Deleted ' + body.snapshotsDeleted + ' snapshot(s), ' + body.projectionsDeleted +
+        ' superseded projection(s) and ' + body.cacheFilesDeleted + ' cached file(s). ' +
+        (body.reclaimed ? 'Freed ' + freed + ' MB. Reload to see the new size.' : (body.note || ''));
+    } catch (err) {
+      status.textContent = 'Could not free space: ' + err.message;
+    } finally {
+      freeBtn.disabled = false;
+    }
+  });
+}
+
 const slots = ${JSON.stringify(slots.map((s) => s.id))};
 
 function esc(s) {
@@ -1343,6 +1410,8 @@ if (fetchBtn) {
   </style>
 
   ${cards}
+
+  ${renderSpace(space)}
 
   ${renderNewsSources(notes)}
 

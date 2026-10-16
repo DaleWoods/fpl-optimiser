@@ -639,6 +639,46 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### The database was eating its own disk
+
+Imports started failing with **"disk I/O error"**, which reads like failing hardware. It is
+SQLite's wording for a full disk, and the 1 GB Render volume had filled.
+
+This app writes history on purpose - snapshots are how a price change is detected, stored
+projections are how it grades itself afterwards - and nothing ever deleted any of it. Measured:
+one snapshot of 700 players costs **0.94 MB**, almost all of it `raw_json`, a verbatim copy of
+fields already parsed into columns beside it. At the configured three-hourly refresh that is
+~7.5 MB a day, ~0.44 GB over a season. Separately, `projection` has no primary key, so every
+team generation appended ~650 more rows with their own breakdown JSON, forever.
+
+History is now kept deliberately rather than indefinitely, and the retention rule is the
+interesting part because the obvious one is wrong. "Delete anything older than a week" frees
+plenty of disk and silently destroys the baseline the Accuracy benchmark depends on - it scores
+FPL's own `ep_next` against this model using the last snapshot *before* each deadline, and
+nothing would have failed loudly; the comparison would just have stopped having an answer. So
+what survives is what something actually reads:
+
+- the newest snapshots, for price-change detection and current prices;
+- **the last snapshot before each gameweek deadline**, for the benchmark;
+- the most recent projection run per player per gameweek per model version - grading already
+  selects `MAX(created_at)`, so earlier runs are read by nothing, while a run under a *different*
+  scoring version is kept, because those are not duplicates.
+
+Pruning runs automatically after every refresh, so the cost is paid where the growth happens.
+
+**Recovering a disk that is already full** needed one more thing. On a genuinely full disk SQLite
+cannot delete a row either - a `DELETE` still writes to its journal first - so a recovery that
+starts with the database can fail with the same error it was called to clear. The manual "Free up
+space" button therefore unlinks the HTTP response cache first, which needs no free space at all
+and is safe by nature since every file in it is a copy of something the API will serve again.
+`VACUUM` is attempted last and allowed to fail: deleting rows already frees pages *inside* the
+file for reuse, which is what unblocks writing, while shrinking the file needs room for a second
+copy. The automatic prune deliberately leaves the cache alone - it is not a recovery, and
+throwing away a warm cache every few hours would slow every refresh and hammer the FPL API.
+
+A full disk is now also reported as a full disk, with what to do about it, rather than as
+"disk I/O error".
+
 ### The armband tiebreak could not break ties
 
 The benchmark answered the question it was built for, and the answer split cleanly in two.
