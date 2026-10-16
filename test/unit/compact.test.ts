@@ -382,3 +382,151 @@ describe('compacting a volume that cannot accept a single byte', () => {
     check.close();
   });
 });
+
+describe('salvaging when there is no room for a whole copy', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  /**
+   * The deploy that forced this. VACUUM INTO is exact and well tested, but it copies the file
+   * whole, so it needs more scratch than the database itself - and scratch on a hosted container
+   * is ephemeral and modest. A 931 MB copy would not fit, so the repair failed instantly and the
+   * app stayed dead.
+   *
+   * Salvage needs about 35 MB instead, because it never copies the bulk: it attaches the old
+   * database and selects only what something reads.
+   */
+  function bloated(dir: string): string {
+    const dbPath = join(dir, 'fpl.db');
+    const db = new BetterSqlite3(dbPath);
+    migrate(db);
+    db.prepare(`INSERT INTO team (id,name,short_name,updated_at,raw_json) VALUES (1,'T','T',0,'{}')`).run();
+    db.prepare(
+      `INSERT INTO position (id,singular_name,short_name,squad_select,squad_min_play,squad_max_play,updated_at,raw_json)
+       VALUES (1,'M','MID',5,2,5,0,'{}')`,
+    ).run();
+    db.prepare(`INSERT INTO event (id,name,deadline_time,finished,updated_at,raw_json) VALUES (1,'GW1',500,1,0,'{}')`).run();
+    db.prepare(`INSERT INTO event (id,name,deadline_time,finished,updated_at,raw_json) VALUES (2,'GW2',1500,1,0,'{}')`).run();
+    const insP = db.prepare(
+      `INSERT INTO player (id,code,web_name,team_id,position_id,updated_at) VALUES (?,?,?,1,1,0)`,
+    );
+    for (let i = 1; i <= 120; i += 1) insP.run(i, i, `P${i}`);
+
+    // The irreplaceable records: what this app advised, and what it predicted.
+    db.prepare(
+      `INSERT INTO recommendation (created_at, event_id, entry_id, kind, model_version, summary, detail_json)
+       VALUES (10, 1, NULL, 'xi', 'v1', 'the advice', '{"starters":[]}')`,
+    ).run();
+    const insProj = db.prepare(
+      `INSERT INTO projection (player_id,event_id,model_version,created_at,xpts,xpts_raw,
+                               availability_probability,expected_minutes,fixture_count,confidence,breakdown_json)
+       VALUES (?,1,'v1',?,?,?,1,80,1,'high','{}')`,
+    );
+    insProj.run(1, 100, 4.0, 4.0);
+    insProj.run(1, 200, 5.0, 5.0);   // supersedes the one above
+
+    // The bulk: many snapshots, each carrying the payload nothing reads.
+    const insS = db.prepare('INSERT INTO snapshot (taken_at) VALUES (?)');
+    const insPS = db.prepare(
+      `INSERT INTO player_snapshot (snapshot_id,player_id,taken_at,now_cost,status,raw_json)
+       VALUES (?,?,?,50,'a',?)`,
+    );
+    const padding = '{"x":"' + 'y'.repeat(3000) + '"}';
+    db.transaction(() => {
+      for (let s = 0; s < 40; s += 1) {
+        const sid = Number(insS.run(s * 100).lastInsertRowid);
+        for (let i = 1; i <= 120; i += 1) insPS.run(sid, i, s * 100, padding);
+      }
+    })();
+    db.close();
+    return dbPath;
+  }
+
+  it('produces a far smaller database without a whole-file copy', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-salv-'));
+    dirs.push(dir);
+    const dbPath = bloated(dir);
+    const scratch = mkdtempSync(join(tmpdir(), 'fpl-salv-s-'));
+    dirs.push(scratch);
+    const before = statSync(dbPath).size;
+
+    const messages: string[] = [];
+    const result = compactIfStarved(dbPath, {
+      scratchDir: scratch,
+      force: true,
+      // Forced, because scratch in a test is roomy - without this the assertions below would
+      // all pass via the whole-file copy and the salvage route would never run at all.
+      preferSalvage: true,
+      onProgress: (m) => messages.push(m),
+    });
+
+    expect(messages.join(' ')).toMatch(/salvaging the rows that matter/);
+    expect(result.compacted).toBe(true);
+    expect(result.bytesAfter).toBeLessThan(before / 4);
+
+    const after = new BetterSqlite3(dbPath, { readonly: true });
+    // Everything irreplaceable survives: this is the record of what the app advised and
+    // predicted, and it cannot be fetched again from anywhere.
+    expect((after.prepare('SELECT COUNT(*) AS n FROM recommendation').get() as { n: number }).n).toBe(1);
+    expect((after.prepare(`SELECT summary AS s FROM recommendation`).get() as { s: string }).s).toBe('the advice');
+    expect((after.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n).toBe(120);
+    expect((after.prepare('SELECT COUNT(*) AS n FROM event').get() as { n: number }).n).toBe(2);
+
+    // Superseded projection runs are dropped; the newest per player per gameweek is kept.
+    const projections = after.prepare('SELECT created_at AS at FROM projection').all() as { at: number }[];
+    expect(projections).toHaveLength(1);
+    expect(projections[0]!.at).toBe(200);
+
+    // The payload nothing reads is gone entirely.
+    expect(
+      (after.prepare("SELECT COALESCE(SUM(LENGTH(raw_json)),0) AS n FROM player_snapshot").get() as { n: number }).n,
+    ).toBe(0);
+
+    // The snapshots the benchmark and price-change detection need are still there.
+    expect(
+      (after.prepare('SELECT COUNT(*) AS n FROM snapshot').get() as { n: number }).n,
+    ).toBeGreaterThanOrEqual(2);
+    after.close();
+  });
+
+  it('salvages rather than giving up when scratch cannot hold a whole copy', () => {
+    // Reported honestly in the log, because the previous deploy failed here in one line with no
+    // indication that a smaller route existed.
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-tight-'));
+    dirs.push(dir);
+    const dbPath = bloated(dir);
+    const messages: string[] = [];
+
+    compactIfStarved(dbPath, {
+      scratchDir: mkdtempSync(join(tmpdir(), 'fpl-tight-s-')),
+      force: true,
+      onProgress: (m) => messages.push(m),
+    });
+
+    expect(messages.join(' ')).toMatch(/Scratch at .* free/);
+  });
+
+  it('brings a stale schema up to date while salvaging', () => {
+    // The new file takes its schema from the migrations, not from the old database, so a
+    // database that missed a migration while it was broken comes back current.
+    const dir = mkdtempSync(join(tmpdir(), 'fpl-sch-'));
+    dirs.push(dir);
+    const dbPath = bloated(dir);
+    const scratch = mkdtempSync(join(tmpdir(), 'fpl-sch-s-'));
+    dirs.push(scratch);
+
+    compactIfStarved(dbPath, {
+      scratchDir: scratch, force: true, preferSalvage: true, onProgress: () => {},
+    });
+
+    const after = new BetterSqlite3(dbPath, { readonly: true });
+    const applied = (
+      after.prepare('SELECT COUNT(*) AS n FROM schema_migration').get() as { n: number }
+    ).n;
+    expect(applied).toBeGreaterThan(0);
+    after.close();
+  });
+});

@@ -639,6 +639,42 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Salvage: rebuilding a small database instead of copying a big one
+
+`VACUUM INTO` is exact and well tested, and it still could not run here, because it copies the
+file **whole** - so it needs more scratch than the database itself. Scratch on a hosted container
+is ephemeral and modest, and a 931 MB copy simply would not fit:
+
+```
+[db] Only 0 MB free and the database is 931 MB. Compacting it.
+[db] Copying the database out, read-only, to somewhere with room.
+[db] Could not compact: disk I/O error.
+```
+
+So there is now a second route that needs about **35 MB** instead, because it never copies the
+bulk. It creates a fresh database from the migrations, attaches the old one, and selects across -
+keeping everything irreplaceable (stored recommendations and projections are the record of what
+this app advised and cannot be fetched again from anywhere) while leaving behind the
+`player_snapshot.raw_json` payload nothing reads, superseded snapshots, and replaced projection
+runs. A side benefit: the new file takes its schema from the migrations, so a database that
+missed one while it was broken comes back current.
+
+The whole-file copy is still tried first when there is room for it. Salvage is the fallback.
+
+**Two lessons from building it, both about tests rather than code.**
+
+The salvage tests passed first time, and were worthless: scratch in a test is roomy, so every one
+of them took the `VACUUM INTO` path and the salvage route never executed. A `preferSalvage` flag
+now forces it, and with the route actually running the tests **failed immediately**.
+
+What they caught was a genuine bug. `pragma_table_xinfo('src.player')` puts the schema in the
+table-name argument, where it matches nothing - and an unknown table is not an error to a pragma,
+it is an empty result. So the column intersection came out empty, every table was skipped, and
+salvage produced a **perfectly valid, perfectly empty database**. The guard that checks the
+replacement contains players before deleting the original rejected it. Without that guard this
+would have swapped a blank database in over a working one and deleted the only copy - precisely
+the disaster it was written for, caught on its first real outing.
+
 ### The deadlock: a repair that could not run because the app had not started
 
 The recovery above was correct and still never completed, for two reasons that only show up on
