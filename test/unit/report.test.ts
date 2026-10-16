@@ -655,6 +655,7 @@ describe('report server', () => {
     const page = renderDashboard({
       generatedAt: 1_760_000_000,
       teamId: 2651633,
+      disk: { databaseBytes: 1_000_000, freeBytes: 900_000_000, daysRemaining: 900, warn: false },
       freshness: [],
       anyStale: false,
       playerCount: 1,
@@ -696,6 +697,7 @@ describe('report server', () => {
     const base = {
       generatedAt: 1_760_000_000,
       teamId: 2651633,
+      disk: { databaseBytes: 1_000_000, freeBytes: 900_000_000, daysRemaining: 900, warn: false },
       freshness: [],
       anyStale: false,
       playerCount: 1,
@@ -1402,5 +1404,61 @@ describe('binding the port before touching the database', () => {
 
     expect(running.port).toBeGreaterThan(0);
     await running.close();
+  });
+});
+
+describe('saying it is filling up before it is full', () => {
+  /**
+   * The question this answers: "I had not touched it for weeks and now it is broken - what
+   * changed?" Nothing changed. It writes history every few hours whether anyone is looking or
+   * not, so the volume fills during exactly the weeks nobody visits. With nothing on screen
+   * until it was fatal, the first sign of trouble was the app being dead, mid-season.
+   */
+  const base = (disk: Record<string, unknown>) => ({
+    generatedAt: 0,
+    teamId: 1,
+    disk: { databaseBytes: 1_000_000, freeBytes: 900_000_000, daysRemaining: 900, warn: false, ...disk },
+    freshness: [],
+    anyStale: false,
+    playerCount: 1,
+    snapshotCount: 1,
+    nextDeadline: null,
+    squadLoaded: false,
+    squadNote: null,
+    bank: 5,
+    teamValue: 1000,
+    freeTransfers: 1,
+    freeTransfersSource: 'derived',
+    chipsAvailable: [],
+    squad: [],
+    flaggedInSquad: [],
+    recentChanges: [],
+  });
+
+  it('warns while there is still time to act, and says how long', () => {
+    const page = renderDashboard(
+      base({ databaseBytes: 800 * 1024 * 1024, freeBytes: 200 * 1024 * 1024, daysRemaining: 12, warn: true }) as never,
+    ).replace(/\s+/g, ' ');
+
+    expect(page).toMatch(/running out of room/i);
+    expect(page).toMatch(/800 MB used/);
+    expect(page).toMatch(/about <strong>12 day\(s\)<\/strong> left/);
+    // And what happens if it is ignored, because "low disk" does not convey "the app dies".
+    expect(page).toMatch(/cannot start at all/);
+  });
+
+  it('stays quiet when there is plenty of room', () => {
+    const page = renderDashboard(base({}) as never).replace(/\s+/g, ' ');
+    expect(page).not.toMatch(/running out of room/i);
+  });
+
+  it('still warns when the runway cannot be estimated', () => {
+    // A brand new database has no growth history to measure, but 50 MB free is 50 MB free.
+    const page = renderDashboard(
+      base({ freeBytes: 50 * 1024 * 1024, daysRemaining: null, warn: true }) as never,
+    ).replace(/\s+/g, ' ');
+
+    expect(page).toMatch(/running out of room/i);
+    expect(page).not.toMatch(/day\(s\) left/);
   });
 });

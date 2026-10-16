@@ -1,6 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import { nowSeconds } from '../db/index.js';
 import { lastFailedRun, lastSuccessfulRun } from '../ingest/run.js';
+import { freeDiskBytes } from '../db/maintenance.js';
 
 export interface IngestFreshness {
   source: string;
@@ -43,7 +44,25 @@ export interface NextDeadline {
   secondsUntil: number | null;
 }
 
+/**
+ * How much room is left, and how long it will last at the rate it is being used.
+ *
+ * The app had no way to say it was filling up. It went from working to "disk I/O error" with
+ * nothing in between, after weeks of writing ~7.5 MB a day that nobody could see - so the first
+ * signal anything was wrong was total failure, during a gameweek. A tool that runs unattended
+ * has to be able to say "I am most of the way full" long before it says "I am full".
+ */
+export interface DiskState {
+  databaseBytes: number;
+  freeBytes: number | null;
+  /** Days until the volume is full at the observed growth rate. Null when it cannot be judged. */
+  daysRemaining: number | null;
+  /** True once this is worth putting on screen rather than only in the detail table. */
+  warn: boolean;
+}
+
 export interface StateOfPlay {
+  disk: DiskState;
   generatedAt: number;
   teamId: number | null;
   freshness: IngestFreshness[];
@@ -102,7 +121,7 @@ const SOURCES = [
  */
 export function getStateOfPlay(
   db: Database,
-  options: { teamId?: number | null; staleAfterSeconds: number },
+  options: { teamId?: number | null; staleAfterSeconds: number; databasePath?: string },
 ): StateOfPlay {
   const now = nowSeconds();
 
@@ -137,6 +156,42 @@ export function getStateOfPlay(
       stale: source.oneOff ? lastSuccessAt === null : ageSeconds === null || ageSeconds > options.staleAfterSeconds,
     };
   });
+
+  // Growth measured from the snapshots themselves rather than assumed: the oldest and newest
+  // kept snapshot bracket a known span of time, and the database has grown over it.
+  const disk = ((): DiskState => {
+    const databaseBytes = (
+      db
+        .prepare('SELECT page_count * page_size AS n FROM pragma_page_count(), pragma_page_size()')
+        .get() as { n: number }
+    ).n;
+    const freeBytes = freeDiskBytes(options.databasePath ?? '.');
+
+    const span = db
+      .prepare('SELECT MIN(taken_at) AS first, MAX(taken_at) AS last, COUNT(*) AS n FROM snapshot')
+      .get() as { first: number | null; last: number | null; n: number };
+
+    let daysRemaining: number | null = null;
+    if (freeBytes !== null && span.first !== null && span.last !== null && span.n > 1) {
+      const days = (span.last - span.first) / 86400;
+      // A rate from a few hours of history is not a rate, it is a coincidence.
+      if (days >= 1) {
+        const perDay = databaseBytes / days;
+        if (perDay > 0) daysRemaining = Math.round(freeBytes / perDay);
+      }
+    }
+
+    return {
+      databaseBytes,
+      freeBytes,
+      daysRemaining,
+      // Either genuinely tight, or on course to be within a month - which is the point at which
+      // saying something is still useful rather than merely accurate.
+      warn:
+        (freeBytes !== null && freeBytes < 300 * 1024 * 1024) ||
+        (daysRemaining !== null && daysRemaining < 30),
+    };
+  })();
 
   const playerCount = (db.prepare('SELECT COUNT(*) AS n FROM player').get() as { n: number }).n;
   const snapshotCount = (db.prepare('SELECT COUNT(*) AS n FROM snapshot').get() as { n: number }).n;
@@ -271,6 +326,7 @@ export function getStateOfPlay(
   return {
     generatedAt: now,
     teamId: options.teamId ?? null,
+    disk,
     freshness,
     anyStale: freshness.some((entry) => entry.stale),
     playerCount,

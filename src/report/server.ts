@@ -568,6 +568,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     const state = getStateOfPlay(db, {
       teamId: config.app.teamId,
       staleAfterSeconds: config.app.staleness.warnAfterSeconds,
+      databasePath: config.app.database.path,
     });
 
     if (url.pathname === '/state.json') {

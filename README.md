@@ -639,6 +639,35 @@ minutes we actually expect. Before a ball is kicked nothing changes — with no 
 start probability is just the prior — but once the season is underway, zero minutes is evidence,
 not an absence of it. Both fixed in `heuristic-0.14.0`.
 
+### Why it broke during the weeks nobody was using it
+
+The most reasonable question asked of this app: *"I had not touched it for ages, and now it is
+broken. What changed?"*
+
+**Nothing changed.** It writes history every few hours whether anyone is looking or not, so the
+volume fills during exactly the weeks nobody visits. Being left alone did not protect it; being
+left alone is what did it. Reconstructed from the Dashboard's own figures: 342 snapshots at the
+measured 0.94 MB each is 321 MB of the 931 MB, accumulated at ~5.7 a day over two months. The
+remainder is most likely `projection`, which had no primary key and appended ~650 rows on every
+page generation - the new **Database size** panel names it exactly rather than leaving it to
+inference.
+
+The real fault is not the growth. It is that **there was no warning**. The app went from working
+to `disk I/O error` with nothing in between: no banner, no number on a page, nothing until the
+first symptom was total failure, mid-season, with a gameweek ungraded. A tool that runs
+unattended has to be able to say "I am most of the way full" long before it says "I am full".
+
+The Dashboard now says so, with a runway measured from the app's own history rather than
+assumed - the oldest and newest kept snapshot bracket a known span, and the database has grown
+over it:
+
+> **The database is running out of room.** 800 MB used, 200 MB free — about **12 days** left at
+> the current rate. Free up space on the Import Data tab before it runs out: once it does, the
+> app cannot start at all.
+
+That last clause is deliberate. "Low disk space" does not convey "the application will not boot",
+and the gap between those two readings is what cost a fortnight of a season.
+
 ### Salvage: rebuilding a small database instead of copying a big one
 
 `VACUUM INTO` is exact and well tested, and it still could not run here, because it copies the

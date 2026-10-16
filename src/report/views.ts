@@ -44,6 +44,25 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
       </tr>`,
     )
     .join('');
+  // Said while it is still only a warning. This app writes history every few hours whether
+  // anyone is looking or not, so the volume fills during exactly the weeks nobody visits - and
+  // with nothing on screen until it was fatal, the first sign of trouble was the app being
+  // dead, mid-season, with a gameweek ungraded.
+  const diskBanner = state.disk.warn
+    ? `<div class="banner warn"><strong>The database is running out of room.</strong>
+       ${(state.disk.databaseBytes / 1024 / 1024).toFixed(0)} MB used${
+         state.disk.freeBytes === null
+           ? ''
+           : `, ${(state.disk.freeBytes / 1024 / 1024).toFixed(0)} MB free`
+       }${
+         state.disk.daysRemaining === null
+           ? ''
+           : ` &mdash; about <strong>${state.disk.daysRemaining} day(s)</strong> left at the
+              current rate`
+       }. Free up space on the <a href="/import">Import Data</a> tab before it runs out: once it
+       does, the app cannot start at all.</div>`
+    : '';
+
   const staleSources = state.freshness.filter((entry) => entry.stale).map((entry) => entry.source);
   // A source that is failing every refresh is not the same problem as one nobody has refreshed,
   // and telling someone to press a button that will fail again is worse than saying nothing.
@@ -110,6 +129,7 @@ export function renderDashboard(state: StateOfPlay & { leagueTable?: LeagueTable
     .join('');
 
   const body = `
+  ${diskBanner}
   ${staleBanner}
 
   <p style="font-size:1.05rem"><strong>Next deadline:</strong> ${deadline}</p>
