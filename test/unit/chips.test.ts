@@ -6,6 +6,7 @@ import { openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestFixtures } from '../../src/ingest/index.js';
 import { adviseChips, halfOf, readHorizon } from '../../src/optimise/chips.js';
 import { GlpkSolver } from '../../src/optimise/glpkSolver.js';
+import { selectBestSquad } from '../../src/optimise/squad.js';
 import { buildProjections } from '../../src/model/build.js';
 import { defaultTeams, fakeBootstrap, fakeEvent, fakeFixture } from '../support/fakeApi.js';
 
@@ -103,6 +104,38 @@ function squadFrom(db: Database) {
   // Top up from anywhere if the club limit left gaps.
   for (const player of projections) {
     if (squad.some((p) => p.playerId === player.playerId)) continue;
+    if ((need[player.position] ?? 0) <= 0) continue;
+    if ((perClub.get(player.clubId) ?? 0) >= 3) continue;
+    squad.push(player);
+    need[player.position]! -= 1;
+    perClub.set(player.clubId, (perClub.get(player.clubId) ?? 0) + 1);
+  }
+  return squad;
+}
+
+/**
+ * The test league's players are near-identical by design - same minutes, same returns, differing
+ * only in club strength and price - so even its weakest legal fifteen is beaten by under a point
+ * a man. That is a property of the fixture, not of the model, and raising the gaps artificially
+ * would test a league nobody plays in. These two tests lower the thresholds instead, so what is
+ * exercised is the gate, the hit arithmetic and the wording at the point they fire.
+ */
+const tuned = {
+  ...weights,
+  chips: { ...weights.chips, wildcardBeatenMargin: 0.01, wildcardMinTransfers: 2 },
+};
+
+/**
+ * A legal 15 built from the league's weakest players - a squad that genuinely needs rebuilding
+ * in every week of the run, not just in an awkward one.
+ */
+function weakSquadFrom(db: Database) {
+  const projections = [...buildProjections(db, 1, rules, weights)].sort((a, b) => a.xPts - b.xPts);
+  const need: Record<string, number> = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
+  const perClub = new Map<number, number>();
+  const squad = [];
+
+  for (const player of projections) {
     if ((need[player.position] ?? 0) <= 0) continue;
     if ((perClub.get(player.clubId) ?? 0) >= 3) continue;
     squad.push(player);
@@ -343,6 +376,78 @@ describe('chip recommendations', () => {
     const freeHit = advice.recommendations.find((r) => r.chip === 'freehit')!;
     expect(freeHit.recommendedEvent).toBe(4);
     expect(freeHit.expectedGain).toBeGreaterThan(0);
+  });
+
+  it('calls for a Wildcard when enough of the squad is being clearly beaten', async () => {
+    // The Wildcard used to be valued exactly like a Free Hit - the pool gap in a single
+    // gameweek - which asks the wrong question. Free Hit buys one week's XI and hands the
+    // squad back; a Wildcard keeps it, so what matters is whether the squad is far enough
+    // behind to be worth rebuilding at all.
+    //
+    // squadFrom draws from the four weakest clubs in the league, so it is well behind what the
+    // budget could buy. That has to produce a clear call, with the cost of doing it the slow
+    // way stated: four points a move beyond the free transfer is arithmetic, not a forecast,
+    // and it is the strongest thing that can be said for the chip.
+    const squad = weakSquadFrom(db);
+    const advice = await adviseChips(db, rules, tuned, 1, {
+      squad,
+      horizon: 5,
+      evaluateRebuilds: true,
+      solver,
+    });
+
+    const wildcard = advice.recommendations.find((r) => r.chip === 'wildcard')!;
+    expect(wildcard.confident).toBe(true);
+    expect(wildcard.recommendedEvent).not.toBeNull();
+    expect(wildcard.reason).toMatch(/of your 15 are being clearly beaten/);
+    expect(wildcard.reason).toMatch(/points in hits/);
+    // The hits a one-at-a-time rebuild would cost are part of the number, not just the prose,
+    // so a squad needing a rebuild outranks a week that merely has a convenient blank.
+    expect(wildcard.expectedGain).toBeGreaterThan(rules.transfers.hitCost);
+  });
+
+  it('holds the Wildcard when ordinary transfers would get there', async () => {
+    // The failure mode that matters more than missing a good week. The optimal squad differs
+    // from almost any real one in eight or nine places, so valuing the chip on how many
+    // players it would SWAP advises a Wildcard every week of the season. It is valued on how
+    // many it genuinely beats, and a squad already near the best available must be told to
+    // hold - a chip spent for a point or two is a chip thrown away.
+    const projections = buildProjections(db, 1, rules, weights);
+    const best = await selectBestSquad(projections, rules, weights, solver);
+
+    const advice = await adviseChips(db, rules, weights, 1, {
+      squad: best.squad,
+      horizon: 5,
+      evaluateRebuilds: true,
+      solver,
+    });
+
+    const wildcard = advice.recommendations.find((r) => r.chip === 'wildcard')!;
+    expect(wildcard.confident).toBe(false);
+    expect(wildcard.recommendedEvent).toBeNull();
+    expect(wildcard.reason).toMatch(/ordinary transfers get you there/);
+  });
+
+  it('does not let the Wildcard chase a blank gameweek the way Free Hit does', async () => {
+    // Free Hit is a one-week chip and belongs in the week your squad cannot field eleven. A
+    // Wildcard is kept, so a blank is no reason to spend it - the two must not land on the
+    // same answer for the same reason.
+    const squad = weakSquadFrom(db);
+    const advice = await adviseChips(db, rules, tuned, 1, {
+      squad,
+      horizon: 5,
+      evaluateRebuilds: true,
+      solver,
+    });
+
+    const freeHit = advice.recommendations.find((r) => r.chip === 'freehit')!;
+    const wildcard = advice.recommendations.find((r) => r.chip === 'wildcard')!;
+
+    // GW4 is the blank, and that is exactly where a Free Hit belongs.
+    expect(freeHit.recommendedEvent).toBe(4);
+    // The Wildcard goes now. Waiting does not buy a better rebuild - you keep the squad - it
+    // only forfeits the gap for every week you wait.
+    expect(wildcard.recommendedEvent).toBe(1);
   });
 
   it('says Free Hit needs the deeper run rather than guessing', async () => {

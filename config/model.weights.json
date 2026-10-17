@@ -251,10 +251,20 @@
       "the model claims it found the right week at all. A chip is worth one play a season, and",
       "playing it on a week that cannot be told apart from three others throws it away for",
       "nothing. Below this margin the advice says so plainly instead of presenting an arbitrary",
-      "pick as a finding."
+      "pick as a finding.",
+      "wildcardBeatenMargin 0.5: a Wildcard is valued on how many of your fifteen the best",
+      "affordable squad BEATS, not on how many it merely swaps. The optimal squad differs from",
+      "almost any real one in eight or nine places, so counting differences would advise a",
+      "Wildcard every week of the season. Half a point per player is a gap worth paying a",
+      "transfer for, and small enough not to miss a real rebuild.",
+      "wildcardMinTransfers 4: below this many beaten players, ordinary transfers get there.",
+      "One free transfer a week and -4 beyond it means three moves cost 8 points in one week",
+      "or three weeks of waiting - both cheaper than a chip worth one play a season."
     ],
     "futureDiscountPerGameweek": 0.97,
-    "indistinguishableMargin": 0.75
+    "indistinguishableMargin": 0.75,
+    "wildcardBeatenMargin": 0.5,
+    "wildcardMinTransfers": 4
   },
 
   "captain": {

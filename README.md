@@ -439,16 +439,55 @@ points rather than by rule of thumb:
 | **Bench Boost** | your four bench players' projected points | a double gameweek — everyone plays twice, so the bench is worth roughly double |
 | **Triple Captain** | one further multiple of your captain's projection | a double gameweek, on a premium player |
 | **Free Hit** | best XI from the whole pool minus best XI from your squad | a blank gameweek, when much of your squad has no fixture |
-| **Wildcard** | the same gap, but kept permanently | a fixture swing, or a squad that has drifted |
+| **Wildcard** | how many of your 15 are beaten in *every* week of the run, plus the hits a one-at-a-time rebuild would cost | a squad that has drifted far enough that transfers cannot catch up |
 
 The chip rules come from `config/rules.json`, not from assumptions: **two sets per season**, one
 of each per half, the first set lost at the **GW19 deadline**, and one chip per gameweek. The
 advisor warns as that deadline approaches, and tells you when two chips are competing for the
 same week.
 
-Free Hit and Wildcard need a full squad rebuild per gameweek to value, so they are only
-evaluated with `--deep` (or `?deep=1`). Without a squad loaded, chip advice falls back to
-fixture shape alone and says so rather than inventing a points figure.
+Free Hit needs a full squad rebuild per gameweek to value, so it is only evaluated with
+`--deep` (or `?deep=1`) — the blank week it wants may be months out. Without a squad loaded,
+chip advice falls back to fixture shape alone and says so rather than inventing a points figure.
+
+#### The Wildcard is not a one-week chip, and was being valued as one
+
+Free Hit buys a single gameweek's XI and hands the squad back. A Wildcard **keeps** it. Valuing
+both on the same number — the pool gap in one gameweek — asks a question only one of them cares
+about, and it sent the Wildcard to the blank gameweek every time, because that is where the pool
+gap is always widest. That is a Free Hit's argument.
+
+Three things changed.
+
+**It is valued on how many of your fifteen the best affordable squad BEATS**, not on how many it
+swaps. The optimal squad differs from almost any real one in eight or nine places, so a count of
+differences would advise a Wildcard every week of the season. Players are paired by position and
+by rank within it, and a pair counts only when the gap clears `chips.wildcardBeatenMargin` (0.5).
+Below `chips.wildcardMinTransfers` (4) the chip is worth nothing: ordinary transfers get there
+for less than a chip costs to spend, and the page says so in those words.
+
+**The count has to hold across every week of the run, not the best week.** Gating on the best
+week was tried and it recommended a Wildcard for a squad that was already the optimal fifteen —
+no squad is optimal for a blank gameweek, so the worst week of any horizon always shows a pile of
+beaten players. A squad behind in every single week is behind; a squad behind in one awkward week
+has an awkward week.
+
+**Half the value is arithmetic rather than forecast.** Everything else on the chips page is a
+projection. Reaching the same squad through ordinary transfers costs four points for every move
+beyond the free transfer, and that is certain whatever the projections turn out to be worth — so
+it is added to the gain and stated in the reason alongside the other cost of going slowly, which
+is the weeks you spend behind while you get there.
+
+Two consequences follow. The Wildcard recommends the **earliest** week rather than the
+best-scoring one: you keep the squad, so waiting does not buy a better rebuild, it forfeits the
+gap for every week you wait. And it is exempt from the "no standout week" downgrade every other
+chip gets — for a one-week bet, weeks that cannot be told apart mean nothing was found, but for a
+Wildcard every week agreeing is the *strongest* form of the finding, not the weakest.
+
+It also had to be reachable. The web chips page only ever ran rebuilds with `?deep=1`, so both
+cards showed *"use `fpl chips --deep`"* — a terminal instruction on a web page — and the Wildcard
+advice was never visible at all. The page now rebuilds the **first five gameweeks** by default,
+which is bounded work and is the window that answers a Wildcard anyway.
 
 Since a chip is only usable once per half-season, the advisor looks **16 gameweeks ahead by
 default** (`--horizon N` / `?horizon=N` to change it) rather than judging a decent-looking week

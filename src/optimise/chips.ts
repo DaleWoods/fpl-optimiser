@@ -67,6 +67,17 @@ export interface ChipAdviceOptions {
   chipsUsed?: { name: string; event: number | null }[];
   /** Evaluating Free Hit and Wildcard rebuilds the squad, which is slow. */
   evaluateRebuilds?: boolean;
+  /**
+   * Rebuild only the first N gameweeks of the horizon, rather than all of them or none.
+   *
+   * Free Hit genuinely needs the whole horizon, because the blank week it wants may be months
+   * out - so it stays behind `evaluateRebuilds`. A Wildcard does not: it is played now and
+   * kept, and whether this squad is behind is answered by the next few weeks, not by gameweek
+   * sixteen's fixtures. Without this the web page had no way to ask the cheap question, so
+   * both chips showed a CLI instruction the reader could not act on and the Wildcard advice
+   * was never reachable at all.
+   */
+  rebuildWindow?: number;
   solver: Solver;
 }
 
@@ -146,6 +157,17 @@ interface GameweekValue {
   tripleCaptainCeilingGain: number;
   captainHaulProbability: number | null;
   freeHitGain: number;
+  /**
+   * How many of your fifteen the best affordable squad genuinely BEATS, not how many it
+   * swaps. The optimal squad differs from almost any real one in eight or nine places, so a
+   * count of differences would advise a Wildcard every week of the season; a count of players
+   * being beaten by more than chips.wildcardBeatenMargin is a statement about your squad.
+   */
+  beatenPlayers: number;
+  /** What the same rebuild would cost in hits at one free transfer a week. */
+  rebuildHitCost: number;
+  /** False when no rebuild was run for this week, so zero means "not asked", not "not behind". */
+  rebuildEvaluated: boolean;
   captainName: string | null;
 }
 
@@ -161,6 +183,45 @@ function tripleCaptainUpsideBonus(value: GameweekValue, weights: ModelWeights): 
   if (!weights.captain.tripleCaptainUsesCeiling) return 0;
   const excess = Math.max(0, value.tripleCaptainCeilingGain - value.tripleCaptainGain);
   return Math.min(weights.captain.maxCeilingBonus, excess * weights.captain.ceilingWeight);
+}
+
+/**
+ * How many of a squad's fifteen the best affordable squad genuinely beats.
+ *
+ * Paired by position and by rank within it, which is the only pairing that means anything: the
+ * optimiser's squad is a set, not a list of replacements, so "your third-best midfielder
+ * against their third-best midfielder" is the comparison a manager would actually make. A pair
+ * counts only when the gap clears chips.wildcardBeatenMargin, because the optimal squad differs
+ * from almost any real one in eight or nine places and a count of mere differences would advise
+ * a Wildcard every week of the season.
+ *
+ * Players already in your squad are matched to themselves first, so holding the best forward in
+ * the game is never counted as being beaten by him.
+ */
+function countBeaten(
+  squad: readonly ProjectedPlayer[],
+  optimal: readonly ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+): number {
+  const owned = new Set(squad.map((player) => player.playerId));
+  const byPosition = (list: readonly ProjectedPlayer[], position: string) =>
+    list.filter((player) => player.position === position).sort((a, b) => b.xPts - a.xPts);
+
+  let beaten = 0;
+  for (const position of Object.keys(rules.squad.positionCounts)) {
+    const mine = byPosition(squad, position);
+    const theirs = byPosition(optimal, position).filter((player) => !owned.has(player.playerId));
+    // Worst of mine against best of theirs: the moves a rebuild would actually make.
+    for (let index = 0; index < theirs.length; index += 1) {
+      const incumbent = mine[mine.length - 1 - index];
+      const challenger = theirs[index];
+      if (!incumbent || !challenger) break;
+      if (challenger.xPts - incumbent.xPts <= weights.chips.wildcardBeatenMargin) break;
+      beaten += 1;
+    }
+  }
+  return beaten;
 }
 
 /**
@@ -202,13 +263,18 @@ export async function adviseChips(
   const currentHalf = halfOf(fromEvent, rules);
   const values: GameweekValue[] = [];
 
-  for (const shape of horizon) {
+  for (const [index, shape] of horizon.entries()) {
+    const rebuildThisWeek =
+      options.evaluateRebuilds === true || index < (options.rebuildWindow ?? 0);
     const projections = buildProjections(db, shape.eventId, rules, weights);
     let benchBoostGain = 0;
     let tripleCaptainGain = 0;
     let tripleCaptainCeilingGain = 0;
     let captainHaulProbability: number | null = null;
     let freeHitGain = 0;
+    let beatenPlayers = 0;
+    let rebuildHitCost = 0;
+    let rebuildEvaluated = false;
     let captainName: string | null = null;
 
     if (options.squad && options.squad.length === rules.squad.size && projections.length > 0) {
@@ -234,9 +300,18 @@ export async function adviseChips(
           captainHaulProbability = eleven.captain.haulProbability ?? null;
           captainName = eleven.captain.name;
 
-          if (options.evaluateRebuilds) {
+          if (rebuildThisWeek) {
             const best = await selectBestSquad(projections, rules, weights, options.solver);
             freeHitGain = best.eleven.expectedPoints - eleven.expectedPoints;
+            beatenPlayers = countBeaten(squadThisWeek, best.squad, rules, weights);
+            // A Wildcard's certain value, as opposed to its projected one. Everything else on
+            // this page is a forecast; this is arithmetic. Reaching the same squad through
+            // ordinary transfers costs four points for every move beyond the one free
+            // transfer, and that is money whatever the projections turn out to be worth.
+            rebuildHitCost =
+              Math.max(0, beatenPlayers - rules.transfers.freePerGameweek) *
+              rules.transfers.hitCost;
+            rebuildEvaluated = true;
           }
         } catch {
           // No legal XI this week - usually a heavy blank. Leave the gains at zero and let the
@@ -252,6 +327,9 @@ export async function adviseChips(
       tripleCaptainCeilingGain,
       captainHaulProbability,
       freeHitGain,
+      beatenPlayers,
+      rebuildHitCost,
+      rebuildEvaluated,
       captainName,
     });
   }
@@ -328,6 +406,36 @@ export async function adviseChips(
       gainOf = (value) => value.tripleCaptainGain;
       rankScore = (value) => value.tripleCaptainGain + tripleCaptainUpsideBonus(value, weights);
       ranked = bestBy(rankScore);
+    } else if (effect?.unlimitedTransfers && effect.revertsAfterGameweek === false) {
+      // A Wildcard is not a one-week chip, and valuing it as one was the whole problem. Free
+      // Hit buys you a single gameweek's XI and hands the squad back; a Wildcard keeps it, so
+      // the question is not "which week is the pool gap biggest" but "is my squad far enough
+      // behind to be worth rebuilding at all".
+      //
+      // So it is valued on two things. The pool gap, as before, which is a projection. And the
+      // hits a one-at-a-time rebuild would cost, which is not a projection at all - four
+      // points per move beyond the free transfer, certain, whatever the forecasts turn out to
+      // be worth.
+      //
+      // The gate is the count sustained across EVERY week of the horizon, not the best week's.
+      // Gating on the best week was tried and it recommended a Wildcard for a squad that was
+      // already the optimal fifteen: no squad is optimal for a blank gameweek, so the worst
+      // week of any horizon always shows a pile of beaten players. That is a Free Hit's
+      // argument, not a Wildcard's. A squad behind in every single week is behind; a squad
+      // behind in one awkward week has an awkward week.
+      const rebuilt = values.filter((value) => value.rebuildEvaluated);
+      const sustainedBeaten =
+        rebuilt.length === 0 ? 0 : Math.min(...rebuilt.map((value) => value.beatenPlayers));
+      gainOf = (value) =>
+        rebuilt.length > 0 && sustainedBeaten >= weights.chips.wildcardMinTransfers
+          ? value.freeHitGain + value.rebuildHitCost
+          : 0;
+      rankScore = gainOf;
+      // Earliest first, not biggest first. Ranking a Wildcard by gain sends it to the blank
+      // gameweek every time, because that is where the pool gap is widest - but the pool gap
+      // in a blank week is a Free Hit's argument. You keep a Wildcard squad, so waiting does
+      // not buy a better rebuild, it forfeits the gap for every week you wait.
+      ranked = [...rebuilt].sort((a, b) => a.shape.eventId - b.shape.eventId);
     } else if (effect?.unlimitedTransfers) {
       gainOf = (value) => value.freeHitGain;
       rankScore = gainOf;
@@ -367,11 +475,19 @@ export async function adviseChips(
         : `Nothing in the next ${horizon.length} gameweeks stands out for ${chipName}. ` +
           'Hold it, and re-check when fixtures are rearranged.';
     } else if (!best || gain <= 0) {
+      const rebuiltWeeks = values.filter((value) => value.rebuildEvaluated);
+      const mostBeaten =
+        rebuiltWeeks.length === 0 ? 0 : Math.min(...rebuiltWeeks.map((v) => v.beatenPlayers));
       reason =
-        effect?.unlimitedTransfers && !options.evaluateRebuilds
+        effect?.unlimitedTransfers && rebuiltWeeks.length === 0
           ? `${chipName} needs a full squad rebuild to value, which was not run. Use ` +
             '`fpl chips --deep` to evaluate it.'
-          : `No gameweek in the next ${horizon.length} makes ${chipName} worth playing yet. Hold it.`;
+          : effect?.unlimitedTransfers && effect.revertsAfterGameweek === false
+            ? `Only ${mostBeaten} of your 15 are beaten in ` +
+              'every week of the run, so ordinary transfers get you there for less than a ' +
+              `chip costs to spend. Hold it until ${weights.chips.wildcardMinTransfers} or ` +
+              'more need replacing week in, week out.'
+            : `No gameweek in the next ${horizon.length} makes ${chipName} worth playing yet. Hold it.`;
     } else {
       recommendedEvent = best.shape.eventId;
       confident = true;
@@ -385,7 +501,12 @@ export async function adviseChips(
               ? ` (${Math.round(best.captainHaulProbability * 100)}% chance of a double-figure haul)`
               : '') +
             '.'
-          : '';
+          : effect?.unlimitedTransfers && effect.revertsAfterGameweek === false
+            ? ` ${best.beatenPlayers} of your 15 are being clearly beaten. Fixing that one ` +
+              `transfer at a time costs ${best.rebuildHitCost} points in hits, or ` +
+              `${best.beatenPlayers} weeks of waiting while the gap keeps costing you - the ` +
+              'Wildcard is the cheaper way to get there.'
+            : '';
       // When a later gameweek projects higher but loses on the discount, say so outright. That
       // is the whole decision - "wait for a better week" against "a distant projection is a
       // weaker claim, and the player may not still be there" - and burying it in the ranking
@@ -403,8 +524,10 @@ export async function adviseChips(
         : '';
 
       reason =
-        `GW${best.shape.eventId} is worth about ${gain.toFixed(1)} extra points: ` +
-        `${describeShape(best.shape)}.${extras}${waitingNote}`;
+        effect?.unlimitedTransfers && effect.revertsAfterGameweek === false
+          ? `Play it now, in GW${best.shape.eventId}.${extras}`
+          : `GW${best.shape.eventId} is worth about ${gain.toFixed(1)} extra points: ` +
+            `${describeShape(best.shape)}.${extras}${waitingNote}`;
 
       // Has it actually found a week, or just sorted four equal ones?
       //
@@ -420,7 +543,15 @@ export async function adviseChips(
         (value) => bestScore - rankScore(value) <= weights.chips.indistinguishableMargin,
       );
 
-      if (tied.length > 1) {
+      // A Wildcard is the exception, and it is not a special case so much as a different
+      // question. Every other chip is a bet on one gameweek, so weeks that cannot be told
+      // apart mean the model has found nothing. A Wildcard is kept, so the finding is "your
+      // squad needs rebuilding" - and when every week in the run says the same thing, that is
+      // the strongest version of that finding, not the weakest. Downgrading it for agreeing
+      // with itself would bury the one clear call this page can make.
+      const perWeekBet = !(effect?.unlimitedTransfers && effect.revertsAfterGameweek === false);
+
+      if (tied.length > 1 && perWeekBet) {
         const earliest = tied.reduce((a, b) => (a.shape.eventId <= b.shape.eventId ? a : b));
         recommendedEvent = earliest.shape.eventId;
         confident = false;

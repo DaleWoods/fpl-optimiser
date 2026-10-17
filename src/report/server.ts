@@ -389,6 +389,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           squad,
           chipsUsed,
           evaluateRebuilds: url.searchParams.get('deep') === '1',
+          // Without this the Wildcard card said "use `fpl chips --deep`" - a terminal
+          // instruction on a web page, so the advice was never reachable at all. Free Hit
+          // still needs the full horizon, because the blank week it wants may be months out;
+          // a Wildcard is played now and kept, so the next few weeks answer it.
+          rebuildWindow: 5,
           solver: new GlpkSolver(),
         });
 

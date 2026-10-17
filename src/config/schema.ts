@@ -314,6 +314,8 @@ export const modelWeightsSchema = z.strictObject({
      * gap a genuine standout week would open up.
      */
     indistinguishableMargin: z.number().min(0),
+    wildcardBeatenMargin: z.number().min(0),
+    wildcardMinTransfers: z.number().int().min(1),
   }),
   captain: z.strictObject({
     /**
