@@ -349,6 +349,23 @@ export function buildProjections(
 
       // Shrunk toward no adjustment by matches played, the same caution every rate here gets:
       // two matches of underlying numbers is barely more evidence than two matches of results.
+      //
+      // That shrinkage is the whole of the caution this term needs, and for a long time it was
+      // not the whole of the caution it got. `** tableWeight` with tableWeight at 0.3 applied a
+      // second, independent damp on top of an estimate that had already been damped - and two
+      // mechanisms for the same doubt, multiplied, do not produce careful, they produce inert.
+      //
+      // Measured: a club creating HALF the league average, six matches in, had its attackers
+      // downgraded by 9.1%. That is 0.61 points on a 6.7 projection, which cannot dislodge
+      // anybody from anything. Meanwhile the fixture alone moves the same player by 61%
+      // between his easiest and hardest week - so the model knew a trip to the league leaders
+      // was hard, and had no idea the club it was judging had stopped scoring. Team strength
+      // came almost entirely from the API's pre-season ratings, which is reputation, not form.
+      //
+      // The exponent is now 1.0: the shrunk ratio is used as it stands. Three guards remain,
+      // and they are the ones that matter - it is built from expected goals rather than
+      // results, it is shrunk by how many matches are behind it, and it is bounded either way
+      // so form can move the API's rating and never replace it.
       const trust = row.matches / (row.matches + weights.teamStrength.formPriorMatches);
       const bounded = (raw: number): number => {
         const shrunk = 1 + (raw - 1) * trust;

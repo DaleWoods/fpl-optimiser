@@ -372,6 +372,116 @@ describe('club form blend', () => {
     const b = projections.find((p) => p.playerId === 102)!;
     expect(a.xPts).toBeCloseTo(b.xPts, 6);
   });
+
+  describe('a club that has stopped scoring', () => {
+    /**
+     * The complaint that produced this: "he is part of a team that is not winning any games,
+     * so why is he still in my squad?" He was, because club form barely registered.
+     *
+     * Two independent dampeners were multiplied together - a sample-size shrinkage, which is
+     * the right caution, and an exponent of 0.3 on top of it, which is the same caution
+     * applied twice. Measured, a club creating half the league average six matches in was
+     * downgraded 9.1%: 0.61 points on a 6.7 projection, nowhere near enough to move anybody.
+     * Meanwhile the fixture alone moved the same player 61% between his easiest and hardest
+     * week, so the model knew which games were hard and had no idea which clubs had gone cold.
+     */
+    const adjustment = (ratio: number, matches: number): number => {
+      const trust = matches / (matches + weights.teamStrength.formPriorMatches);
+      return Math.min(
+        1.3,
+        Math.max(0.7, (1 + (ratio - 1) * trust) ** weights.teamStrength.tableWeight),
+      );
+    };
+
+    it('downgrades a club creating half the league average by a figure that can move a pick', () => {
+      const half = adjustment(0.5, 6);
+      // Was 9.1%, which could not dislodge anybody from anything.
+      expect(1 - half).toBeGreaterThan(0.2);
+    });
+
+    it('still treats three matches as thin evidence', () => {
+      // The guard that must survive: a cold start is not a verdict, and the shrinkage is what
+      // stops this becoming a form-chaser.
+      const early = 1 - adjustment(0.5, 3);
+      const settled = 1 - adjustment(0.5, 12);
+      expect(early).toBeLessThan(settled);
+      expect(early).toBeLessThan(0.22);
+    });
+
+    it('never lets form replace the rating outright', () => {
+      // Bounded either way, however extreme the run and however long it lasts.
+      for (const matches of [6, 20, 38]) {
+        expect(adjustment(0.01, matches)).toBeGreaterThanOrEqual(0.7);
+        expect(adjustment(5, matches)).toBeLessThanOrEqual(1.3);
+      }
+    });
+
+    it('is symmetric, so a hot club gains what a cold one loses', () => {
+      // Otherwise the model would quietly become an optimist or a pessimist about every club.
+      expect(adjustment(1.5, 6) - 1).toBeCloseTo(1 - adjustment(0.5, 6), 6);
+    });
+
+    it('moves a real projection by more than the old damping did', async () => {
+      // End to end rather than arithmetic. Club A has created half what the other three have
+      // over five matches; everything else about the two players compared is identical, down
+      // to the opponent they face. The old exponent left a gap of 2.6% here, which is noise.
+      const teams = equalStrengthTeams();
+      const players = [101, 102].map((id) => identicalPlayer(id, id - 100));
+      const carriers = [201, 202, 203, 204].map((id) => identicalPlayer(id, id - 200));
+      const events = [1, 2, 3, 4, 5, 6].map((id) =>
+        fakeEvent(id, {
+          finished: id < 6,
+          is_next: id === 6,
+          deadline_time: id < 6 ? `2020-08-0${id}T17:30:00Z` : '2099-08-28T17:30:00Z',
+        }),
+      );
+
+      const db = openTestDatabase();
+      await ingestBootstrap(
+        db,
+        new StubFplApi({ bootstrap: fakeBootstrap({ teams, players: [...players, ...carriers], events }) }),
+        rules,
+      );
+      await ingestFixtures(
+        db,
+        new StubFplApi({
+          fixtures: [
+            // A v C and B v D, five times each, every one of them drawn 1-1 so the scoreline
+            // says nothing and only the expected goals do.
+            ...[1, 2, 3, 4, 5].flatMap((gw) => [
+              fakeFixture(gw, gw, 1, 3, { team_h_score: 1, team_a_score: 1, finished: true }),
+              fakeFixture(gw + 10, gw, 2, 4, { team_h_score: 1, team_a_score: 1, finished: true }),
+            ]),
+            // The gameweek being projected: both at home, both against a club that has been
+            // rated identically by the five matches above.
+            fakeFixture(100, 6, 1, 3),
+            fakeFixture(101, 6, 2, 4),
+          ],
+        }),
+      );
+
+      // Expected goals conceded is held flat at 1.2 for every club in every match, including
+      // the clubs that faced A. Defensive form is not what is under test here, and letting it
+      // move would mean A's attacker was being judged twice over - once for his own club and
+      // again for the opponent that kept him quiet.
+      seedClubXg(
+        db,
+        [1, 2, 3, 4, 5].flatMap((gw) => [
+          { playerId: 201, fixtureId: gw, eventId: gw, xgFor: 0.6, xgAgainst: 1.2 },
+          { playerId: 203, fixtureId: gw, eventId: gw, xgFor: 1.2, xgAgainst: 1.2 },
+          { playerId: 202, fixtureId: gw + 10, eventId: gw, xgFor: 1.2, xgAgainst: 1.2 },
+          { playerId: 204, fixtureId: gw + 10, eventId: gw, xgFor: 1.2, xgAgainst: 1.2 },
+        ]),
+      );
+
+      const projections = buildProjections(db, 6, rules, weights);
+      const cold = projections.find((p) => p.playerId === 101)!;
+      const ordinary = projections.find((p) => p.playerId === 102)!;
+
+      expect(cold.xPts).toBeLessThan(ordinary.xPts);
+      expect((ordinary.xPts - cold.xPts) / ordinary.xPts).toBeGreaterThan(0.08);
+    });
+  });
 });
 
 describe('elite ownership blend', () => {

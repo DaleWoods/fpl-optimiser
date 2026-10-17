@@ -12,7 +12,7 @@
     "left xPts identical, and each one reset the learning to zero for no reason. That is why the",
     "Accuracy page kept saying it had nothing to learn from yet after three graded gameweeks."
   ],
-  "modelVersion": "heuristic-0.21.0",
+  "modelVersion": "heuristic-0.22.0",
 
   "availability": {
     "$comment": [
@@ -81,6 +81,13 @@
       "points alone, and one number cannot describe a side scoring freely while leaking badly.",
       "Expected goals stabilise far faster, which is exactly why attacking.xgWeight already",
       "prefers them for players; this applies the same belief to clubs.",
+      "tableWeight 1.0: the shrunk ratio is used as it stands. At 0.3 it was a SECOND damp on",
+      "an estimate the sample-size shrinkage had already damped, and two mechanisms for the",
+      "same doubt multiplied together produce inert rather than careful. Measured: a club",
+      "creating half the league average, six matches in, was downgraded 9.1% - 0.61 points on",
+      "a 6.7 projection - while the fixture alone moved the same player 61% between his best",
+      "and worst week. The model knew which games were hard and had no idea which clubs had",
+      "stopped scoring, because strength came from pre-season ratings: reputation, not form.",
       "formPriorMatches 5: two matches of underlying numbers is barely more evidence than two",
       "matches of results, so form is shrunk toward no adjustment until a real sample exists.",
       "Bounded to 0.7-1.3 either way, so form nudges the API's ratings and never replaces them."
@@ -89,7 +96,7 @@
     "homeAdvantage": 1.1,
     "awayFactor": 0.92,
     "strengthExponent": 1.0,
-    "tableWeight": 0.3,
+    "tableWeight": 1.0,
     "formPriorMatches": 5,
     "minExpectedGoals": 0.2,
     "maxExpectedGoals": 4.0,

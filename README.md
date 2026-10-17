@@ -1276,9 +1276,23 @@ produce, so it is now spelled out rather than left to be discovered.
 ### Club form is expected goals, split into attack and defence
 
 The API's own team ratings are a pre-season view. Current form nudges them
-(`teamStrength.tableWeight`, 0.3), bounded to a 0.7-1.3 multiplier either way so form can move a
+(`teamStrength.tableWeight`, 1.0), bounded to a 0.7-1.3 multiplier either way so form can move a
 rating but never replace it, and shrunk toward no adjustment by matches played
 (`teamStrength.formPriorMatches`, 5) for the same reason every other rate here is shrunk.
+
+**`tableWeight` went from 0.3 to 1.0 in `heuristic-0.22.0`, and that is a real change to the
+numbers.** The question that found it was "he plays for a team that is not winning anything, so
+why is he still in my squad?" - and the answer was that club form barely registered. The shrinkage
+above is the caution this term needs; the exponent was a *second*, independent damp sitting on top
+of an estimate that had already been damped, and two mechanisms for the same doubt, multiplied,
+do not produce careful - they produce inert. Measured: a club creating **half the league average**,
+six matches in, had its attackers downgraded by **9.1%** - 0.61 points on a 6.7 projection, which
+cannot dislodge anybody from anything. The fixture alone moves the same player **61%** between his
+easiest and hardest week, so the model knew a trip to the leaders was hard and had no idea the club
+it was judging had stopped scoring. Team strength was coming almost entirely from the API's
+pre-season ratings, which is reputation, not form. At 1.0 the same club comes down **27.3%**. The
+three guards that matter are untouched: it is built from expected goals rather than results, it is
+shrunk by how many matches are behind it, and it is still bounded either way.
 
 Two things about *how* that nudge is measured changed in `heuristic-0.21.0`.
 
