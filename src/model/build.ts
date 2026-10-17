@@ -416,12 +416,19 @@ export function buildProjections(
   }
 
   // How many matches each club has already played, as the denominator for start rate.
+  //
+  // Filtered by asOfEventId, and that filter is not cosmetic. A replay of gameweek 3 reads a
+  // snapshot in which a nailed-on starter has 2 starts; if this count sees the whole finished
+  // season it returns 8, and his start rate collapses from 2/2 to 2/8. Every replayed week was
+  // scored on a model that believed its own starters were rotation risks, which drags the
+  // backtest's verdict down by an amount that has nothing to do with the model.
   const playedByTeam = new Map<number, number>();
   for (const row of db
     .prepare(
-      `SELECT team_h AS h, team_a AS a FROM fixture WHERE finished = 1`,
+      `SELECT team_h AS h, team_a AS a FROM fixture
+       WHERE finished = 1 AND (@asOf IS NULL OR event_id < @asOf)`,
     )
-    .all() as { h: number; a: number }[]) {
+    .all({ asOf: options.asOfEventId ?? null }) as { h: number; a: number }[]) {
     playedByTeam.set(row.h, (playedByTeam.get(row.h) ?? 0) + 1);
     playedByTeam.set(row.a, (playedByTeam.get(row.a) ?? 0) + 1);
   }

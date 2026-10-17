@@ -89,6 +89,60 @@ describe('no lookahead when replaying a past gameweek', () => {
     expect(find(alsoEverything).xPts).toBeCloseTo(find(withEverything).xPts, 10);
   });
 
+  it('gives the same answer as a world where the later gameweeks never happened', async () => {
+    // The property the whole backtest rests on, stated the only way worth stating it: hiding
+    // gameweeks 3 and 4 must produce exactly what a database that has never seen gameweeks 3
+    // and 4 produces. Anything the cutoff forgets to filter shows up here as a difference.
+    //
+    // It caught one. The start-rate denominator - how many matches a club has played - was
+    // counting every finished fixture in the database. Replaying gameweek 3 read a snapshot in
+    // which a nailed-on starter had 2 starts and divided it by the club's 4 finished matches,
+    // so his start rate collapsed from 2/2 to 2/4. Every replayed week was scored on a model
+    // that believed its own starters were rotation risks, dragging the backtest's verdict down
+    // by an amount that had nothing to do with the model under test.
+    db.prepare('UPDATE player_snapshot SET minutes = 180, starts = 2 WHERE player_id = 1').run();
+
+    const unaware = openTestDatabase();
+    await ingestBootstrap(
+      unaware,
+      new StubFplApi({
+        bootstrap: fakeBootstrap({
+          events: [1, 2, 3, 4, 5].map((id) => fakeEvent(id, { finished: id < 3 })),
+        }),
+      }),
+      rules,
+    );
+    await ingestFixtures(
+      unaware,
+      new StubFplApi({
+        fixtures: [
+          fakeFixture(1, 1, 1, 2, { team_h_score: 1, team_a_score: 1, finished: true }),
+          fakeFixture(2, 2, 1, 3, { team_h_score: 2, team_a_score: 0, finished: true }),
+          // Gameweeks 3 and 4 are still to come in this world, so they carry no result.
+          fakeFixture(3, 3, 1, 4),
+          fakeFixture(4, 4, 1, 2),
+          fakeFixture(5, 5, 1, 3),
+        ],
+      }),
+    );
+    const insert = unaware.prepare(
+      `INSERT INTO player_fixture_history (player_id, fixture_id, event_id, minutes, total_points,
+                                           goals_scored, expected_goals, expected_goals_conceded,
+                                           updated_at, raw_json)
+       VALUES (1, ?, ?, 90, ?, ?, ?, 0.5, 0, '{}')`,
+    );
+    for (const gw of [1, 2]) insert.run(gw, gw, gw * 2, gw, gw * 0.5);
+    unaware.prepare('UPDATE player_snapshot SET minutes = 180, starts = 2 WHERE player_id = 1').run();
+
+    const replayed = buildProjections(db, 5, rules, weights, { asOfEventId: 3 });
+    const genuine = buildProjections(unaware, 5, rules, weights);
+
+    const a = replayed.find((p) => p.playerId === 1)!;
+    const b = genuine.find((p) => p.playerId === 1)!;
+    expect(a.expectedMinutes).toBeCloseTo(b.expectedMinutes, 6);
+    expect(a.xPts).toBeCloseTo(b.xPts, 6);
+  });
+
   it('replays from a chosen snapshot rather than the newest one', () => {
     // Prices move; a replay has to use the price that was showing before that deadline.
     const first = (db.prepare('SELECT id FROM snapshot ORDER BY id ASC LIMIT 1').get() as { id: number }).id;
