@@ -906,8 +906,20 @@ async function findTransfers(
     }
   }
 
-  const rest = sorted.filter((option) => !priorityOptions.has(option.out.playerId));
-  const shown = [...priorityOptions.values(), ...rest]
+  // One entry per squad player, exactly as the dead slots above get. Ranking the raw list and
+  // taking the top five answers the wrong question: the best five swaps by net gain are often
+  // five replacements for the *same* holding, so the page reads as one decision with variants
+  // while the second- and third-weakest players in the squad are never named at all. Only one
+  // transfer gets made in a normal week, so what the list has to show is which of your players
+  // is the one to go - and that means each of them appears at most once, with their own best
+  // available fix.
+  const bestByOut = new Map<number, TransferOption>();
+  for (const option of sorted) {
+    if (priorityOptions.has(option.out.playerId)) continue;
+    if (!bestByOut.has(option.out.playerId)) bestByOut.set(option.out.playerId, option);
+  }
+
+  const shown = [...priorityOptions.values(), ...bestByOut.values()]
     .slice(0, Math.max(5, priorityOptions.size))
     .sort((a, b) => Number(b.priority) - Number(a.priority) || b.netGain - a.netGain);
 

@@ -1586,6 +1586,14 @@ alternative for one transfer slot, not a shopping list to act on all at once. Se
 target the same replacement, which is exactly why they can't all be done together. Make at most
 as many as your free transfer count; anything beyond that costs a hit.
 
+**One card per player you own.** The list used to be the top five swaps by net gain, which
+sounds right and isn't: measured, five cards covered three players, because one weak holding
+filled three slots with variants of the same move while the next-weakest players in the squad
+were never named. Only one transfer gets made in a normal week, so the question the list has to
+answer is *which of your players should be the one to go* — and it cannot answer that while a
+single slot can crowd out the rest. Each squad member now appears at most once, with their own
+best affordable replacement.
+
 A squad member projected below `weights.transfers.priorityFixXPtsThreshold` (`config/model.weights.json`)
 is a **dead slot** — hurt, or dropped down the pecking order by a summer signing the model has
 already worked out from the evidence, but who still needs a human to notice the squad has an

@@ -855,6 +855,22 @@ describe('recommendation with a squad loaded', () => {
     }
   });
 
+  it('names a different player to sell in each suggestion', async () => {
+    // Ranking every legal swap by net gain and taking the top five produced five entries over
+    // three players: one holding filled three of the slots with variants of the same move,
+    // while the next-weakest players in the squad were never named. Only one transfer gets
+    // made in a normal week, so the question the list has to answer is which player should be
+    // the one to go - and it cannot answer that while a single slot can crowd out the rest.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 50);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    expect(result.transfers.length).toBeGreaterThan(1);
+    const outs = result.transfers.map((transfer) => transfer.out.playerId);
+    expect(new Set(outs).size).toBe(outs.length);
+  });
+
   it('never suggests bringing in an unavailable player', async () => {
     const fifteen = pickLegalFifteen(db);
     await loadSquad(fifteen, 100);
