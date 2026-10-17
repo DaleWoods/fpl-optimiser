@@ -46,6 +46,12 @@ export interface PolicyScore {
   weekly: number[];
   total: number;
   mean: number;
+  /**
+   * How many weeks this policy was actually scored over. Every policy but one covers all of
+   * them; "FPL's own number" covers only the weeks with a stored snapshot, because ep_next is
+   * the API's own forecast and cannot be reconstructed after the fact.
+   */
+  weeksScored: number;
 }
 
 export interface BacktestWeek {
@@ -53,6 +59,14 @@ export interface BacktestWeek {
   squadSize: number;
   /** Share of the squad with a recorded result. Below MINIMUM_COVERAGE the week is skipped. */
   coverage: number;
+  /**
+   * Where the model's view of the world came from. 'snapshot' is a photograph of the API taken
+   * before that deadline; 'history' is the same season-to-date summed back out of match rows
+   * because no photograph was taken - see BuildOptions.reconstructFromHistory.
+   */
+  basis: 'snapshot' | 'history';
+  /** False on a reconstructed week: ep_next cannot be recovered, so that column is blank. */
+  fplAvailable: boolean;
   scores: Record<PolicyScore['key'], number>;
   captainByPolicy: Record<PolicyScore['key'], string | null>;
 }
@@ -233,11 +247,13 @@ export function runBacktest(
       continue;
     }
 
+    // A snapshot is a photograph of the API, and photographs only exist for weeks somebody was
+    // running this app. Skipping the rest is what kept the sample at a handful of gameweeks.
+    // Where there is no photograph the season-to-date is summed back out of match rows
+    // instead, which is exact for every counting stat and blank for the three that cannot be
+    // recovered - see BuildOptions.reconstructFromHistory.
     const asOfSnapshotId = snapshotBefore(db, eventId);
-    if (asOfSnapshotId === null) {
-      notes.push(`Gameweek ${eventId}: no snapshot from before the deadline, so it is skipped.`);
-      continue;
-    }
+    const basis: BacktestWeek['basis'] = asOfSnapshotId === null ? 'history' : 'snapshot';
 
     const actual = new Map(
       (
@@ -252,19 +268,30 @@ export function runBacktest(
     // Re-derived, not read back: a stored projection exists only for weeks a team happened to
     // be generated, under whatever model version was current, and cannot be ablated later.
     const projections: ProjectedPlayer[] = buildProjections(db, eventId, rules, weights, {
-      asOfSnapshotId,
+      ...(asOfSnapshotId === null
+        ? { reconstructFromHistory: true }
+        : { asOfSnapshotId }),
       asOfEventId: eventId,
     });
+    if (projections.length === 0) {
+      notes.push(
+        `Gameweek ${eventId}: no snapshot from before the deadline and no match history to ` +
+          'rebuild one from, so it cannot be replayed.',
+      );
+      continue;
+    }
     const projected = new Map(projections.map((p) => [p.playerId, p.xPts]));
 
     const epNext = new Map(
-      (
-        db
-          .prepare(
-            'SELECT player_id AS playerId, ep_next AS ep FROM player_snapshot WHERE snapshot_id = ?',
-          )
-          .all(asOfSnapshotId) as { playerId: number; ep: number | null }[]
-      ).map((row) => [row.playerId, row.ep ?? 0]),
+      asOfSnapshotId === null
+        ? []
+        : (
+            db
+              .prepare(
+                'SELECT player_id AS playerId, ep_next AS ep FROM player_snapshot WHERE snapshot_id = ?',
+              )
+              .all(asOfSnapshotId) as { playerId: number; ep: number | null }[]
+          ).map((row) => [row.playerId, row.ep ?? 0] as const),
     );
 
     // Missing results are scored as zero by every replay, so a week with large gaps measures
@@ -322,6 +349,8 @@ export function runBacktest(
       eventId,
       squadSize: squad.length,
       coverage: round(coverage),
+      basis,
+      fplAvailable: asOfSnapshotId !== null,
       scores: {
         model: score(modelXi),
         fpl: score(fplXi),
@@ -346,6 +375,18 @@ export function runBacktest(
     previousXi = modelXi;
   }
 
+  const rebuilt = weeks.filter((week) => week.basis === 'history').length;
+  if (rebuilt > 0) {
+    notes.push(
+      `${rebuilt} of these ${weeks.length} gameweeks happened before this app was recording, so ` +
+        'the squad and the season-to-date behind them were rebuilt from match history. Every ' +
+        'counting stat is exact. Three things cannot be recovered: FPL\'s own forecast, which ' +
+        'is why that column covers fewer weeks; the injury flags, so the model was blind to ' +
+        'them and will have started players who were doubtful; and ownership, which rises ' +
+        'after a player returns and would be lookahead if taken from today.',
+    );
+  }
+
   const labels: Record<PolicyScore['key'], string> = {
     model: 'This model',
     you: 'The XI you played',
@@ -353,8 +394,15 @@ export function runBacktest(
     hold: 'Last week again',
   };
 
+  // ep_next is the API's own forecast and is not derivable, so the FPL column exists only for
+  // weeks with a stored snapshot. It is scored over those weeks alone rather than being given
+  // a zero, a substitute or the model's own number for the rest: a benchmark averaged over a
+  // different set of weeks than its rival is not a benchmark, and a fabricated one is worse.
+  const weeksFor = (key: PolicyScore['key']): BacktestWeek[] =>
+    key === 'fpl' ? weeks.filter((week) => week.fplAvailable) : weeks;
+
   const policies: PolicyScore[] = (['model', 'you', 'fpl', 'hold'] as const).map((key) => {
-    const weekly = weeks.map((week) => week.scores[key]);
+    const weekly = weeksFor(key).map((week) => week.scores[key]);
     const total = weekly.reduce((sum, value) => sum + value, 0);
     return {
       key,
@@ -362,11 +410,13 @@ export function runBacktest(
       weekly,
       total,
       mean: weekly.length > 0 ? round(total / weekly.length) : 0,
+      weeksScored: weekly.length,
     };
   });
 
   const versusYou = (['model', 'fpl', 'hold'] as const).map((key) => {
-    const differences = weeks.map((week) => week.scores[key] - week.scores.you);
+    // Paired on the same weeks, which is the whole point of a paired comparison.
+    const differences = weeksFor(key).map((week) => week.scores[key] - week.scores.you);
     const interval = bootstrapInterval(differences);
     return {
       key,

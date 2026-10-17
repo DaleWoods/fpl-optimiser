@@ -143,6 +143,69 @@ describe('no lookahead when replaying a past gameweek', () => {
     expect(a.xPts).toBeCloseTo(b.xPts, 6);
   });
 
+  it('rebuilds a season-to-date from match history that matches the stored snapshot exactly', () => {
+    // What caps the backtest is not missing results, it is missing snapshots: a snapshot only
+    // exists for a week somebody was running this app, so the season before installation
+    // cannot be replayed however complete the results are. But every counting stat a snapshot
+    // carries is a running total of match rows the API backfills in full, so it can be summed
+    // back. This pins that the sum is exact rather than close.
+    //
+    // The snapshot is stripped of the three things a reconstruction cannot recover - ep_next,
+    // the injury flags and ownership - so the two runs differ in nothing else. If they then
+    // disagree, the reconstruction is wrong.
+    db.prepare(
+      `UPDATE player_snapshot
+       SET minutes = 180, starts = 2, goals_scored = 3, assists = 0, saves = 0, bonus = 0,
+           expected_goals = 1.5, expected_assists = NULL, defensive_contribution = NULL,
+           ep_next = NULL, selected_by_percent = NULL, status = 'a',
+           chance_of_playing_next_round = NULL, news = NULL
+       WHERE player_id = 1`,
+    ).run();
+    db.prepare(
+      `UPDATE player_snapshot
+       SET ep_next = NULL, selected_by_percent = NULL, status = 'a',
+           chance_of_playing_next_round = NULL, news = NULL
+       WHERE player_id != 1`,
+    ).run();
+
+    // The API records starts per match too; the seed above only sets the columns each test
+    // needs, so this one supplies the pair that add up to the snapshot's 2.
+    db.prepare('UPDATE player_fixture_history SET starts = 1 WHERE player_id = 1').run();
+
+    const snapshotId = (
+      db.prepare('SELECT id FROM snapshot ORDER BY id ASC LIMIT 1').get() as { id: number }
+    ).id;
+
+    // Gameweeks 1 and 2: 90 minutes each, 1 then 2 goals, 0.5 then 1.0 expected goals - the
+    // totals written into the snapshot above.
+    const pinned = buildProjections(db, 5, rules, weights, {
+      asOfSnapshotId: snapshotId,
+      asOfEventId: 3,
+    });
+    const rebuilt = buildProjections(db, 5, rules, weights, {
+      reconstructFromHistory: true,
+      asOfEventId: 3,
+    });
+
+    const a = pinned.find((p) => p.playerId === 1)!;
+    const b = rebuilt.find((p) => p.playerId === 1)!;
+    expect(b.xPts).toBeCloseTo(a.xPts, 6);
+    expect(b.expectedMinutes).toBeCloseTo(a.expectedMinutes, 6);
+    expect(rebuilt.length).toBe(pinned.length);
+  });
+
+  it('refuses to reconstruct without a cutoff, rather than summing the whole season', () => {
+    // Reconstructing "as of nothing in particular" would sum every match ever played and call
+    // it a past week. There is no sensible answer, so the option is simply inert without the
+    // cutoff that gives it meaning, and the normal snapshot path runs instead.
+    const rebuilt = buildProjections(db, 5, rules, weights, { reconstructFromHistory: true });
+    const normal = buildProjections(db, 5, rules, weights);
+    expect(rebuilt.find((p) => p.playerId === 1)!.xPts).toBeCloseTo(
+      normal.find((p) => p.playerId === 1)!.xPts,
+      10,
+    );
+  });
+
   it('replays from a chosen snapshot rather than the newest one', () => {
     // Prices move; a replay has to use the price that was showing before that deadline.
     const first = (db.prepare('SELECT id FROM snapshot ORDER BY id ASC LIMIT 1').get() as { id: number }).id;

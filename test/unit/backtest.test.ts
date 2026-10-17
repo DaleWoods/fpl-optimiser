@@ -92,6 +92,47 @@ describe('replaying the season in points', () => {
     ).run(eventId, points, nowSeconds());
   }
 
+  it('replays a gameweek that has no snapshot behind it', () => {
+    // What used to cap the sample. A snapshot only exists for a week somebody was running this
+    // app, so the season before installation was unreplayable however complete the results
+    // were - and with five weeks the smallest detectable edge is bigger than any edge worth
+    // arguing about. The season-to-date is now summed back out of match rows instead.
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
+
+    // No snapshot predates gameweek 1's deadline any more.
+    db.prepare('UPDATE event SET deadline_time = 1 WHERE id = 1').run();
+
+    const result = runBacktest(db, rules, weights);
+
+    expect(result.weeks.map((week) => week.eventId)).toEqual([1, 2, 3]);
+    const first = result.weeks.find((week) => week.eventId === 1)!;
+    expect(first.basis).toBe('history');
+    expect(result.weeks.find((week) => week.eventId === 2)!.basis).toBe('snapshot');
+
+    // And the page is told what that week could not see, rather than it passing silently.
+    expect(result.notes.join(' ')).toMatch(/rebuilt from match history/i);
+  });
+
+  it("scores FPL's own number only over the weeks it actually exists for", () => {
+    // ep_next is the API's own forecast and cannot be reconstructed. Giving a rebuilt week a
+    // zero, a substitute, or the model's own figure would all make the benchmark easier to
+    // beat on weeks where it was never asked the question. It covers fewer weeks and says so.
+    seedSquad([1, 2, 3]);
+    seedResults([1, 2, 3]);
+    for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
+    db.prepare('UPDATE event SET deadline_time = 1 WHERE id = 1').run();
+
+    const result = runBacktest(db, rules, weights);
+    const fpl = result.policies.find((p) => p.key === 'fpl')!;
+    const model = result.policies.find((p) => p.key === 'model')!;
+
+    expect(model.weeksScored).toBe(3);
+    expect(fpl.weeksScored).toBe(2);
+    expect(fpl.weekly).toHaveLength(2);
+  });
+
   it('scores every policy over the gameweeks it can replay', () => {
     seedSquad([1, 2, 3]);
     seedResults([1, 2, 3]);

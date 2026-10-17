@@ -5,6 +5,7 @@ import { loadRules } from '../../src/config/load.js';
 import { openTestDatabase } from '../../src/db/index.js';
 import { deriveFreeTransfers } from '../../src/domain/freeTransfers.js';
 import {
+  backfillHistoricPicks,
   ingestAll,
   ingestBootstrap,
   ingestEntry,
@@ -349,6 +350,84 @@ describe('entry ingestion', () => {
   beforeEach(async () => {
     db = openTestDatabase();
     await ingestBootstrap(db, new StubFplApi({ bootstrap: fakeBootstrap() }), rules);
+  });
+
+  it('recovers the squad held in every past gameweek, not just the current one', async () => {
+    // The hard cap on how much can ever be proved about this model. The backtest cannot replay
+    // a week without knowing the squad, and the only squad ever stored was whichever one was
+    // showing at the time of an ingest - so the usable sample was the weeks somebody happened
+    // to be running the app. A manager's picks go public the moment a gameweek starts and stay
+    // public, so the data was there the whole time and was simply never asked for.
+    const api = new StubFplApi({
+      entry: { [teamId]: fakeEntry(teamId, { current_event: 3 }) },
+      picks: {
+        [`${teamId}:1`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        [`${teamId}:2`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]),
+        [`${teamId}:3`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17]),
+      },
+    });
+
+    const result = await backfillHistoricPicks(db, api, teamId, { throughEvent: 3 });
+
+    expect(result.backfilled).toEqual([1, 2, 3]);
+    for (const eventId of [1, 2, 3]) {
+      const stored = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM squad_pick sp
+           JOIN manager_state ms ON ms.id = sp.manager_state_id
+           WHERE ms.event_id = ? AND ms.entry_id = ?`,
+        )
+        .get(eventId, teamId) as { n: number };
+      expect(stored.n).toBe(15);
+    }
+    // The weeks differ, so these really are that week's squad rather than today's copied back.
+    const lastPick = (eventId: number) =>
+      (
+        db
+          .prepare(
+            `SELECT sp.player_id AS id FROM squad_pick sp
+             JOIN manager_state ms ON ms.id = sp.manager_state_id
+             WHERE ms.event_id = ? ORDER BY sp.slot DESC LIMIT 1`,
+          )
+          .get(eventId) as { id: number }
+      ).id;
+    expect(lastPick(1)).not.toBe(lastPick(3));
+  });
+
+  it('does not refetch or duplicate a gameweek whose squad is already held', async () => {
+    const api = new StubFplApi({
+      entry: { [teamId]: fakeEntry(teamId, { current_event: 2 }) },
+      picks: {
+        [`${teamId}:1`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        [`${teamId}:2`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]),
+      },
+    });
+
+    await backfillHistoricPicks(db, api, teamId, { throughEvent: 2 });
+    const again = await backfillHistoricPicks(db, api, teamId, { throughEvent: 2 });
+
+    expect(again.backfilled).toEqual([]);
+    expect(again.alreadyHeld).toEqual([1, 2]);
+    const states = db
+      .prepare('SELECT COUNT(*) AS n FROM manager_state WHERE entry_id = ?')
+      .get(teamId) as { n: number };
+    expect(states.n).toBe(2);
+  });
+
+  it('treats a gameweek that never started as an ordinary gap, not a failure', async () => {
+    // The picks endpoint 404s for a gameweek that has not kicked off, and for a season before
+    // this entry existed. Neither is a fault, and neither should stop the weeks either side.
+    const api = new StubFplApi({
+      entry: { [teamId]: fakeEntry(teamId, { current_event: 3 }) },
+      picks: {
+        [`${teamId}:1`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        [`${teamId}:3`]: fakePicks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17]),
+      },
+    });
+
+    const result = await backfillHistoricPicks(db, api, teamId, { throughEvent: 3 });
+
+    expect(result.backfilled).toEqual([1, 3]);
   });
 
   it('loads a squad and stores all 15 picks', async () => {

@@ -227,3 +227,130 @@ export async function ingestEntry(
     };
   });
 }
+
+export interface HistoricPicksResult {
+  /** Gameweeks whose picks were fetched and stored by this run. */
+  backfilled: number[];
+  /** Gameweeks already on record, so nothing was fetched for them. */
+  alreadyHeld: number[];
+  notes: string[];
+}
+
+/**
+ * Fetch and store the squad held in every past gameweek, not just the current one.
+ *
+ * The backtest can only replay a week it knows the squad for, and the only squad ever recorded
+ * was the one showing at the time of an ingest. That capped the usable sample at the weeks
+ * somebody happened to be running this app, which is a hard floor on how much can ever be
+ * proved about the model - with five gameweeks the smallest edge detectable at all is larger
+ * than any edge worth arguing about.
+ *
+ * The data was there the whole time. A manager's picks become public the moment a gameweek
+ * starts, and stay public, so every completed week of the season can be fetched on demand.
+ * This walks them and stores the ones not already held.
+ *
+ * Each backfilled week is written as its own manager_state row carrying only what the picks
+ * endpoint actually knows: the squad, the armband, the bank and team value at that deadline.
+ * Chips, free transfers and overall rank are left as they are rather than back-dated from
+ * today's figures, which would be lookahead dressed up as history.
+ */
+export async function backfillHistoricPicks(
+  db: Database,
+  api: FplApi,
+  teamId: number,
+  options: { throughEvent: number },
+): Promise<HistoricPicksResult> {
+  const backfilled: number[] = [];
+  const alreadyHeld: number[] = [];
+  const notes: string[] = [];
+
+  const held = new Set(
+    (
+      db
+        .prepare(
+          `SELECT DISTINCT ms.event_id AS eventId
+           FROM manager_state ms
+           JOIN squad_pick sp ON sp.manager_state_id = ms.id
+           WHERE ms.entry_id = ? AND ms.event_id IS NOT NULL`,
+        )
+        .all(teamId) as { eventId: number }[]
+    ).map((row) => row.eventId),
+  );
+
+  const knownPlayers = new Set(
+    (db.prepare('SELECT id FROM player').all() as { id: number }[]).map((row) => row.id),
+  );
+  if (knownPlayers.size === 0) {
+    notes.push('No players loaded yet, so past squads cannot be resolved. Refresh the data first.');
+    return { backfilled, alreadyHeld, notes };
+  }
+
+  const insertState = db.prepare(`
+    INSERT INTO manager_state (
+      entry_id, captured_at, event_id, bank, team_value, total_points, overall_rank,
+      free_transfers, free_transfers_source, chips_available_json, chips_used_json, raw_json
+    ) VALUES (
+      @entry_id, @captured_at, @event_id, @bank, @team_value, NULL, NULL,
+      NULL, 'unknown', '[]', '[]', @raw_json
+    )
+  `);
+  const insertPick = db.prepare(`
+    INSERT INTO squad_pick (manager_state_id, player_id, slot, multiplier, is_captain,
+                            is_vice_captain, purchase_price, selling_price, price_source)
+    VALUES (@manager_state_id, @player_id, @slot, @multiplier, @is_captain,
+            @is_vice_captain, NULL, NULL, 'unknown')
+  `);
+
+  for (let eventId = 1; eventId <= options.throughEvent; eventId += 1) {
+    if (held.has(eventId)) {
+      alreadyHeld.push(eventId);
+      continue;
+    }
+
+    let picks;
+    try {
+      picks = (await api.entryPicks(teamId, eventId)).data;
+    } catch (cause) {
+      // A 404 means that gameweek has not started, or this entry did not exist for it. Both
+      // are ordinary facts about the season rather than faults, so the walk simply carries on.
+      if (cause instanceof ApiError && cause.notFound) continue;
+      throw cause;
+    }
+
+    const storable = picks.picks.filter((pick) => knownPlayers.has(pick.element));
+    if (storable.length === 0) continue;
+
+    const write = db.transaction(() => {
+      const info = insertState.run({
+        entry_id: teamId,
+        captured_at: nowSeconds(),
+        event_id: eventId,
+        bank: picks.entry_history?.bank ?? null,
+        team_value: picks.entry_history?.value ?? null,
+        raw_json: JSON.stringify({ backfilled: true, activeChip: picks.active_chip ?? null }),
+      });
+      const managerStateId = Number(info.lastInsertRowid);
+      for (const pick of storable) {
+        insertPick.run({
+          manager_state_id: managerStateId,
+          player_id: pick.element,
+          slot: pick.position,
+          multiplier: pick.multiplier,
+          is_captain: toSqliteBool(pick.is_captain),
+          is_vice_captain: toSqliteBool(pick.is_vice_captain),
+        });
+      }
+    });
+    write();
+    backfilled.push(eventId);
+  }
+
+  if (backfilled.length > 0) {
+    notes.push(
+      `Recovered the squad you held in gameweek${backfilled.length === 1 ? '' : 's'} ` +
+        `${backfilled.join(', ')} from the public picks endpoint, so those weeks can be replayed.`,
+    );
+  }
+
+  return { backfilled, alreadyHeld, notes };
+}

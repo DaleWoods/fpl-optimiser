@@ -1792,6 +1792,7 @@ function renderBacktest(backtest: BacktestResult | null): string {
         <td>${policy.key === 'model' ? `<strong>${escapeHtml(policy.label)}</strong>` : escapeHtml(policy.label)}</td>
         <td>${policy.total}</td>
         <td>${policy.mean.toFixed(1)}</td>
+        <td${policy.weeksScored < backtest.weeks.length ? ' class="muted"' : ''}>${policy.weeksScored}</td>
       </tr>`,
     )
     .join('');
@@ -1833,7 +1834,7 @@ function renderBacktest(backtest: BacktestResult | null): string {
   return `<h2>Replaying the season in points</h2>
   ${verdict}
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
-    <thead><tr><th>Way of picking</th><th>Total</th><th>Per week</th></tr></thead>
+    <thead><tr><th>Way of picking</th><th>Total</th><th>Per week</th><th>Weeks</th></tr></thead>
     <tbody>${rows}</tbody></table></div></div>
 
   <h3 style="margin-top:1.2rem">Against the team you actually played</h3>

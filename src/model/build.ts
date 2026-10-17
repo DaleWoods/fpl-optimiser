@@ -242,6 +242,82 @@ export interface BuildOptions {
    * gameweek, so pinning the snapshot is what makes a projection reproducible after the fact.
    */
   asOfSnapshotId?: number;
+
+  /**
+   * Rebuild the player's season-to-date from match history instead of reading a stored
+   * snapshot. Requires `asOfEventId`.
+   *
+   * A snapshot is a photograph of the API, and photographs only exist for weeks somebody was
+   * running this app. That is what capped the backtest at a handful of gameweeks: the season
+   * before installation cannot be replayed at all, however complete the results are, because
+   * there is no record of what the table looked like at the time.
+   *
+   * It does not have to be that way. Every counting stat a snapshot carries - minutes, starts,
+   * goals, assists, saves, bonus, expected goals, expected assists, defensive contribution -
+   * is a running total of per-match rows the API backfills in full, so summing the matches
+   * before a deadline reconstructs the figure exactly, not approximately. Price likewise: each
+   * match row records what the player cost that week.
+   *
+   * Three fields cannot be recovered, and a reconstruction that quietly invented them would be
+   * worse than no reconstruction at all:
+   *
+   *  - **ep_next**, FPL's own forecast. Not derivable from anything. Weeks built this way
+   *    cannot score the "FPL's own number" benchmark, and the backtest leaves it out for them
+   *    rather than substituting something else.
+   *  - **status and news**, the injury flags. Reading today's would be lookahead of the worst
+   *    kind, so everyone reads as fit. This handicaps the replayed model - it will start
+   *    someone who was flagged - which is the right direction for a bias that cannot be
+   *    removed.
+   *  - **ownership**. Today's figure is the loudest lookahead in the dataset, because it rises
+   *    *after* a player returns. It reads as null, so the start-probability prior falls back to
+   *    its neutral value and the differential bonus does not apply.
+   */
+  reconstructFromHistory?: boolean;
+}
+
+/**
+ * A player's season-to-date as it stood before a gameweek, summed from his own match rows.
+ *
+ * Every player is returned, including those with no matches behind them - the model's own
+ * "no history yet" handling is what should decide those, not a missing row here.
+ *
+ * See BuildOptions.reconstructFromHistory for what this can and cannot recover.
+ */
+function reconstructPlayerRows(db: Database, asOfEventId: number): PlayerRow[] {
+  return db
+    .prepare(
+      `SELECT p.id AS playerId, p.web_name AS name, p.team_id AS teamId,
+              t.short_name AS clubShort, pos.short_name AS position,
+              COALESCE(
+                (SELECT v.value FROM player_fixture_history v
+                 WHERE v.player_id = p.id AND v.value IS NOT NULL
+                   AND v.event_id IS NOT NULL AND v.event_id < @asOf
+                 ORDER BY v.event_id DESC LIMIT 1),
+                0
+              ) AS price,
+              'a' AS status, NULL AS chanceNext, NULL AS news, NULL AS ownership,
+              COALESCE(h.minutes, 0) AS minutes, COALESCE(h.starts, 0) AS starts,
+              COALESCE(h.goals, 0) AS goals, COALESCE(h.assists, 0) AS assists,
+              COALESCE(h.saves, 0) AS saves, COALESCE(h.bonus, 0) AS bonus,
+              h.expectedGoals, h.expectedAssists, h.defensiveContribution,
+              NULL AS epNext, NULL AS transfersInEvent, NULL AS transfersOutEvent
+       FROM player p
+       JOIN team t ON t.id = p.team_id
+       JOIN position pos ON pos.id = p.position_id
+       LEFT JOIN (
+         SELECT player_id,
+                SUM(minutes) AS minutes, SUM(starts) AS starts,
+                SUM(goals_scored) AS goals, SUM(assists) AS assists,
+                SUM(saves) AS saves, SUM(bonus) AS bonus,
+                SUM(expected_goals) AS expectedGoals,
+                SUM(expected_assists) AS expectedAssists,
+                SUM(defensive_contribution) AS defensiveContribution
+         FROM player_fixture_history
+         WHERE event_id IS NOT NULL AND event_id < @asOf
+         GROUP BY player_id
+       ) h ON h.player_id = p.id`,
+    )
+    .all({ asOf: asOfEventId }) as PlayerRow[];
 }
 
 export function buildProjections(
@@ -265,9 +341,12 @@ export function buildProjections(
           .prepare('SELECT id FROM snapshot ORDER BY taken_at DESC, id DESC LIMIT 1')
           .get() as { id: number } | undefined);
 
-  if (!snapshot) return [];
+  const reconstructing = options.reconstructFromHistory === true && options.asOfEventId !== undefined;
+  if (!snapshot && !reconstructing) return [];
 
-  const players = db
+  const players = reconstructing
+    ? reconstructPlayerRows(db, options.asOfEventId!)
+    : db
     .prepare(
       `SELECT p.id AS playerId, p.web_name AS name, p.team_id AS teamId,
               t.short_name AS clubShort, pos.short_name AS position,
@@ -283,7 +362,7 @@ export function buildProjections(
        JOIN position pos ON pos.id = p.position_id
        WHERE ps.snapshot_id = ?`,
     )
-    .all(snapshot.id) as PlayerRow[];
+    .all(snapshot!.id) as PlayerRow[];
 
   const teams = new Map(
     (

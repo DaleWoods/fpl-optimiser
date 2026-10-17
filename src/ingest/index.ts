@@ -3,7 +3,7 @@ import type { FplApi } from '../api/client.js';
 import type { Rules } from '../config/schema.js';
 import { ingestBootstrap, type BootstrapIngestResult } from './bootstrap.js';
 import { ingestEliteOwnership, type EliteIngestResult } from './elite.js';
-import { ingestEntry, type EntryIngestResult } from './entry.js';
+import { backfillHistoricPicks, ingestEntry, type EntryIngestResult } from './entry.js';
 import { ingestFixtures, type FixturesIngestResult } from './fixtures.js';
 import {
   gameweeksMissingResults,
@@ -179,6 +179,26 @@ export async function ingestAll(
       failures,
     );
     for (const note of entry?.notes ?? []) report(`  note: ${note}`);
+
+    // The squads held in past gameweeks, which the backtest cannot replay a week without. Only
+    // the current week's picks were ever stored, so the usable sample was capped at the weeks
+    // somebody happened to be running this app - while the data sat public and unfetched the
+    // whole time. Cheap and idempotent: one request per gameweek not already held, and none
+    // at all once the season is caught up.
+    const lastStartedEvent = db
+      .prepare('SELECT id FROM event WHERE finished = 1 ORDER BY id DESC LIMIT 1')
+      .get() as { id: number } | undefined;
+
+    if (lastStartedEvent) {
+      const backfill = await step(
+        'Past squads',
+        report,
+        () =>
+          backfillHistoricPicks(db, api, options.teamId!, { throughEvent: lastStartedEvent.id }),
+        failures,
+      );
+      for (const note of backfill?.notes ?? []) report(`  note: ${note}`);
+    }
   }
 
   let elite: EliteIngestResult | null = null;

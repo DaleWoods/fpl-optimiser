@@ -1085,6 +1085,53 @@ The wiring is guarded separately from the behaviour, because they fail different
 *pass* the cutoff leaves every other backtest test green while the numbers quietly become
 fiction, so the call site is asserted directly.
 
+**A second leak, found by stating the property properly.** The guards above each checked one
+query. The invariant is stronger than that and worth writing down as one thing: *hiding
+gameweeks 3 onward must produce exactly what a database that has never seen gameweek 3 onward
+produces.* Testing it that way immediately caught the start-rate denominator - how many matches
+a club has played - which was counting every finished fixture regardless of cutoff. A replay of
+gameweek 3 read a snapshot in which a nailed-on starter had 2 starts and divided it by the
+club's 8 finished matches, collapsing his start rate from 2/2 to 2/8. Measured on the test case,
+expected minutes came out at 37.3 instead of 49.3: a 24% understatement, applied to every player
+in every replayed week. The backtest had been scoring a model that believed its own starters
+were rotation risks.
+
+#### Widening the sample
+
+With five gameweeks the smallest detectable edge was 15.8 points a week - larger than any effect
+worth arguing about, which makes the instrument close to useless however correct it is. Two
+things were capping it, and neither was missing results.
+
+**Squads were only ever stored for the week they were showing.** The replay cannot score a week
+without knowing the fifteen held, so the sample was the weeks somebody happened to be running
+this app. But a manager's picks go public the moment a gameweek starts and stay public, so every
+completed week of the season could have been fetched at any time. The refresh now walks them and
+stores the ones not already held - one request per missing gameweek, none once caught up.
+
+**Snapshots only exist for weeks somebody was running this app**, so the season before
+installation was unreplayable however complete the results were. It does not have to be:
+every counting stat a snapshot carries - minutes, starts, goals, assists, saves, bonus, expected
+goals, expected assists, defensive contribution - is a running total of per-match rows the API
+backfills in full, so summing the matches before a deadline reconstructs the figure *exactly*,
+and a test pins that exactness against a real snapshot rather than settling for close. Price
+likewise: each match row records what the player cost that week.
+
+Three fields cannot be recovered, and inventing them would be worse than not replaying the week:
+
+- **`ep_next`**, FPL's own forecast. Not derivable from anything. Rebuilt weeks cannot score
+  that benchmark, so it is scored over the weeks it exists for and the table shows a **Weeks**
+  column saying how many. A benchmark averaged over a different set of weeks than its rival is
+  not a benchmark.
+- **Status and news**, the injury flags. Today's would be lookahead of the worst kind, so
+  everyone reads as fit. This *handicaps* the replayed model - it will start someone who was
+  doubtful - which is the right direction for a bias that cannot be removed.
+- **Ownership**, the loudest lookahead in the dataset, because it rises *after* a player
+  returns. Null, so the start-probability prior falls back to neutral and the differential
+  bonus does not apply.
+
+Each week records which basis it used, and the page says in plain words what the rebuilt weeks
+could not see.
+
 ### Measuring against something, at last
 
 Four graded gameweeks produced a typical miss of 1.31 points per player and no way to know
