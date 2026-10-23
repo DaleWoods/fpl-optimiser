@@ -28,6 +28,7 @@ import {
   saveCachedRecommendation,
 } from '../model/cache.js';
 import { confirmTransfer, unconfirmTransfer } from '../model/confirmedTransfers.js';
+import { notePlayedChip, unnotePlayedChip } from '../model/playedChips.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
 import { calibrationProgress, computeCalibration } from '../model/calibration.js';
@@ -552,6 +553,65 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
         response.writeHead(200, JSON_HEADERS);
         response.end(JSON.stringify({ ok: true, eventId: event.id }));
+      } catch (cause) {
+        response.writeHead(400, JSON_HEADERS);
+        response.end(JSON.stringify({ error: (cause as Error).message }));
+      }
+      return;
+    }
+
+    // "I played my Wildcard." One action, because a Wildcard is thirteen or fourteen changes
+    // and ticking them one at a time is not a thing anybody would do - and because the chip
+    // itself has to be recorded too, or the chips page spends the next week recommending a
+    // chip that has been spent.
+    if (url.pathname === '/confirm-wildcard' && request.method === 'POST') {
+      try {
+        const teamId = config.app.teamId;
+        if (!teamId) throw new Error('No team ID is configured, so there is no squad to update.');
+
+        const body = JSON.parse(await readBody(request, 256 * 1024)) as {
+          moves?: { outPlayerId?: number; inPlayerId?: number }[];
+          done?: boolean;
+        };
+        const moves = (body.moves ?? []).map((move) => ({
+          outPlayerId: Number(move.outPlayerId),
+          inPlayerId: Number(move.inPlayerId),
+        }));
+        if (moves.some((m) => !Number.isInteger(m.outPlayerId) || !Number.isInteger(m.inPlayerId))) {
+          throw new Error('Every change needs a player out and a player in.');
+        }
+        if (moves.length === 0 && body.done !== false) {
+          throw new Error('There is nothing to apply.');
+        }
+
+        const event = resolveTargetEvent(db, undefined);
+        if (!event) throw new Error('No gameweek is known yet - run an ingest first.');
+
+        // All of it or none of it. A half-applied Wildcard is a squad that never existed, and
+        // every number on the page would then be built on it.
+        db.transaction(() => {
+          if (body.done === false) {
+            // Undoing clears the gameweek's confirmed transfers outright rather than the moves
+            // the client happens to be holding. Once a Wildcard is applied the plan's own
+            // out/in lists are empty - the squad already is the new one - so there is nothing
+            // for the page to send back. Any single transfer ticked for the same gameweek goes
+            // with it, which is right: after undoing a whole-squad rebuild, what you own is a
+            // question to answer afresh rather than to half-remember.
+            db.prepare('DELETE FROM confirmed_transfer WHERE entry_id = ? AND event_id = ?').run(
+              teamId,
+              event.id,
+            );
+            unnotePlayedChip(db, teamId, event.id, 'wildcard');
+          } else {
+            for (const move of moves) {
+              confirmTransfer(db, teamId, event.id, move.outPlayerId, move.inPlayerId);
+            }
+            notePlayedChip(db, teamId, event.id, 'wildcard');
+          }
+        })();
+
+        response.writeHead(200, JSON_HEADERS);
+        response.end(JSON.stringify({ ok: true, eventId: event.id, moves: moves.length }));
       } catch (cause) {
         response.writeHead(400, JSON_HEADERS);
         response.end(JSON.stringify({ error: (cause as Error).message }));

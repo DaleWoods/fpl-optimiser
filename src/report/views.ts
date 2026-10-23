@@ -617,6 +617,22 @@ export function renderRecommendation(
          <p style="margin:.3rem 0"><strong>In:</strong> ${
            rec.wildcard.playersIn.map((p) => escapeHtml(p.name)).join(', ') || '<span class="muted">nobody</span>'
          }</p>
+         <label class="done-box${rec.wildcard.played ? ' done' : ''}">
+           <input type="checkbox" data-done-wildcard
+                  data-moves="${escapeHtml(
+                    JSON.stringify(
+                      rec.wildcard.playersOut.map((out, index) => ({
+                        outPlayerId: out.playerId,
+                        inPlayerId: rec.wildcard!.playersIn[index]?.playerId,
+                      })),
+                    ),
+                  )}"${rec.wildcard.played ? ' checked' : ''}>
+           <span>${
+             rec.wildcard.played
+               ? 'Played &mdash; your squad above is the new one'
+               : 'I played my Wildcard'
+           }</span>
+         </label>
          <p class="muted" style="margin:.3rem 0 0;font-size:.88rem"><a href="/chips">Is it the week to play it?</a></p>
        </div>
 
@@ -997,6 +1013,26 @@ document.querySelectorAll('.done-box input[data-done-out]').forEach((box) => {
       // Reload so every number on the page reflects the squad you actually have. Showing a
       // ticked box next to advice still built on the old squad would be worse than not
       // offering the tick at all.
+      location.reload();
+    } catch (err) {
+      box.checked = !box.checked;
+      label.classList.remove('saving');
+      alert('Could not save that: ' + err.message);
+    }
+  };
+});
+
+document.querySelectorAll('input[data-done-wildcard]').forEach((box) => {
+  box.onchange = async () => {
+    const label = box.closest('.done-box');
+    label.classList.add('saving');
+    try {
+      const res = await fetch('/confirm-wildcard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ moves: JSON.parse(box.dataset.moves || '[]'), done: box.checked }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       location.reload();
     } catch (err) {
       box.checked = !box.checked;

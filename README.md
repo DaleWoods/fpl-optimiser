@@ -524,6 +524,40 @@ rather than this week's, and the table carries each player's **upcoming opponent
 is worth across the run** — the column the squad was actually built on, next to the one it was
 not. Both halves are pinned: that it follows the run, and that it says so.
 
+#### Telling it you played the chip
+
+Acting on the advice leaves the app wrong about your team, and for longer than you would think.
+The public API returns picks only for a gameweek that has **already started**, and chip usage
+arrives the same way — so from the moment you play a Wildcard until the deadline passes, the app
+is still looking at the fifteen you no longer own and the chips page is still recommending the
+chip you have already spent. Telling you to do a thing you have done is worse than saying
+nothing: it reads as a second opinion rather than a stale one.
+
+The per-transfer tick box already existed for the squad half, but a Wildcard is thirteen or
+fourteen changes and nobody is ticking those one at a time. **"I played my Wildcard"** is one
+action that applies every move and records the chip, in a single transaction — a half-applied
+Wildcard is a squad that never existed, and every number on the page would then be built on it.
+Both are overlays on what the API reports, never replacements, exactly as confirmed transfers
+are: once the API can see the gameweek, that is the truth, and the chip is merged on **name** so
+one play is never counted as two (which would retire a whole set of chips half a season early).
+
+Two details that are easy to get wrong:
+
+- **`playersOut` and `playersIn` are two halves of a set difference, not matched pairs** — out[0]
+  may be a defender and in[0] a midfielder. The overlay substitutes one id for another and never
+  reads position, so the resulting fifteen is the right *set* whatever order they are paired in.
+  That is pinned by a test that deliberately pairs them reversed, because an overlay that later
+  started caring about position would break it silently.
+- **Undoing clears the gameweek outright** rather than the moves the page is holding. Once a
+  Wildcard is applied its own out/in lists are empty — the squad already *is* the new one — so
+  there is nothing left for the page to send back. Any single transfer ticked for the same
+  gameweek goes with it, which is right: after undoing a whole-squad rebuild, what you own is a
+  question to answer afresh.
+
+The wiring is guarded separately from the behaviour, for the same reason the backtest cutoff is:
+the merge can be perfectly correct while nothing calls it, and the page would go on recommending
+a spent chip with every unit test still green.
+
 **Budget was the part most likely to be silently wrong.** The only thing resembling this before
 was `?scratch=1`, which is linked from nowhere and builds within `rules.squad.budget` — somebody
 else's 100.0m. A Wildcard spends what *your* fifteen would sell for plus the bank, which is

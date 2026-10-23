@@ -28,6 +28,7 @@ import {
   loadConfirmedTransfers,
   type ConfirmedTransfer,
 } from '../model/confirmedTransfers.js';
+import { loadPlayedChips, mergeChipsUsed } from '../model/playedChips.js';
 import { captainCeilingBonusFor } from '../optimise/squad.js';
 import { compareRivals, type RivalComparison } from '../model/rivals.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
@@ -305,6 +306,15 @@ export interface WildcardPlan {
   }[];
   /** How many gameweeks the squad was chosen over. */
   runGameweeks: number;
+  /**
+   * Whether you have told us you played it this gameweek.
+   *
+   * When you have, the squad above already has the new fifteen in it, so this plan's own
+   * out/in lists are empty - which is the correct answer to "what would change", and exactly
+   * why the button has to be driven by this rather than by whether there is anything left to
+   * change.
+   */
+  played: boolean;
 }
 
 export interface Recommendation {
@@ -816,7 +826,14 @@ export function loadSquadForChips(
     }
   }
 
-  return { squad: owned?.squad, chipsUsed };
+  // Plus anything you have told us you played that the API cannot see yet. Chip usage arrives
+  // through entry-history, which says nothing about a gameweek that has not started - so
+  // without this the page carries on recommending a Wildcard for the whole week after you
+  // played it, which reads as a second opinion rather than a stale one.
+  return {
+    squad: owned?.squad,
+    chipsUsed: mergeChipsUsed(chipsUsed, loadPlayedChips(db, teamId)),
+  };
 }
 
 /**
@@ -1646,6 +1663,9 @@ export async function recommend(
         opponents: opponentsByClub.get(player.clubId) ?? [],
       })),
       runGameweeks: horizon.gameweeks.length,
+      played: loadPlayedChips(db, options.teamId ?? null).some(
+        (chip) => chip.chip === 'wildcard' && chip.eventId === event.id,
+      ),
     };
   } catch (cause) {
     notes.push(
