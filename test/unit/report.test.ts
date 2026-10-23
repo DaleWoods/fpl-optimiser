@@ -974,6 +974,41 @@ describe('priority-fix team on My Team', () => {
     };
   }
 
+  it('lays the Wildcard squad out on a pitch, like the team page does', () => {
+    // It is the team you would be playing, so it has to be readable as one. A list of fifteen
+    // names tells you nothing about the shape you would be fielding, which bench order the
+    // auto-subs would follow, or who takes the armband.
+    const rec = recommendation({}) as Record<string, unknown>;
+    const base = rec.eleven as { starters: unknown[]; bench: unknown[] };
+    rec.wildcard = {
+      squad: [...base.starters, ...base.bench],
+      eleven: { ...(rec.eleven as object), formation: '4-4-2', expectedPoints: 81.9 },
+      playersOut: [pitchPlayer('Gone One', 'DEF', 1.1, 71, 45)],
+      playersIn: [pitchPlayer('New One', 'DEF', 5.2, 72, 50)],
+      gainThisWeek: 6.6,
+      gainOverHorizon: 12.4,
+      budget: 1005,
+      totalCost: 1000,
+      bankRemaining: 5,
+      hitCostIfTransferred: 8,
+    };
+
+    const withWildcard = renderRecommendation(rec as never);
+    const without = renderRecommendation({ ...rec, wildcard: null } as never);
+
+    expect(withWildcard).toMatch(/If you played your Wildcard/);
+    // Counted as a difference rather than a total, because this page already draws a pitch for
+    // the team itself and another for the priority-fix plan - a fixed number here would be
+    // measuring the fixture, not the change.
+    const pitches = (page: string) => (page.match(/class="pitch"/g) ?? []).length;
+    const benches = (page: string) => (page.match(/Substitutes/g) ?? []).length;
+    expect(pitches(withWildcard)).toBe(pitches(without) + 1);
+    expect(benches(withWildcard)).toBe(benches(without) + 1);
+    expect(withWildcard).toMatch(/4-4-2/);
+    expect(withWildcard).toMatch(/Gone One/);
+    expect(withWildcard).toMatch(/New One/);
+  });
+
   it('offers a tick box against each suggested transfer', () => {
     // FPL publishes your picks only for a gameweek that has already started, so for the whole
     // week spent planning the app is looking at last week's team. Without a way to say what you

@@ -593,7 +593,13 @@ export function renderRecommendation(
        <div class="card">
          <h3 style="margin:0 0 .4rem">${rec.wildcard.playersOut.length} changes
            <span class="pill good">${rec.wildcard.gainThisWeek >= 0 ? '+' : ''}${rec.wildcard.gainThisWeek.toFixed(1)} this week</span>
-           <span class="pill">${rec.wildcard.gainOverHorizon >= 0 ? '+' : ''}${rec.wildcard.gainOverHorizon.toFixed(1)} over the run</span>
+           ${
+             // Hidden rather than shown as "+0.0": a pill that says nothing still has to be
+             // read before you know it says nothing.
+             Math.abs(rec.wildcard.gainOverHorizon) >= 0.1
+               ? `<span class="pill">${rec.wildcard.gainOverHorizon >= 0 ? '+' : ''}${rec.wildcard.gainOverHorizon.toFixed(1)} over the run</span>`
+               : ''
+           }
            ${
              rec.wildcard.hitCostIfTransferred > 0
                ? `<span class="pill" style="background:var(--warn-fg);color:#000">-${rec.wildcard.hitCostIfTransferred} if done by transfer</span>`
@@ -606,25 +612,36 @@ export function renderRecommendation(
          <p style="margin:.3rem 0"><strong>In:</strong> ${
            rec.wildcard.playersIn.map((p) => escapeHtml(p.name)).join(', ') || '<span class="muted">nobody</span>'
          }</p>
-         <div class="scroll"><table>${head}<tbody>${rec.wildcard.eleven.starters
-           .map((player) =>
-             playerRow(
-               player,
-               player.playerId === rec.wildcard!.eleven.captain.playerId
-                 ? '<span class="badge">C</span>'
-                 : player.playerId === rec.wildcard!.eleven.viceCaptain.playerId
-                   ? '<span class="badge v">V</span>'
-                   : '',
-             ),
-           )
-           .join('')}
-           ${rec.wildcard.eleven.bench
-             .map((player, index) => playerRow(player, `<span class="muted">#${index + 1}</span>`))
-             .join('')}</tbody></table></div>
-         <p class="muted" style="margin:.3rem 0;font-size:.88rem">${formatMoney(rec.wildcard.totalCost)} spent,
-         ${formatMoney(rec.wildcard.bankRemaining)} left.
-         <a href="/chips">Is it the week to play it?</a></p>
-       </div>`;
+         <p class="muted" style="margin:.3rem 0 0;font-size:.88rem"><a href="/chips">Is it the week to play it?</a></p>
+       </div>
+
+       <div class="grid">
+         <div class="stat"><div class="label">Formation</div><div class="value">${escapeHtml(rec.wildcard.eleven.formation)}</div></div>
+         <div class="stat"><div class="label">Expected score</div><div class="value">${rec.wildcard.eleven.expectedPoints.toFixed(1)}</div></div>
+         <div class="stat"><div class="label">Squad cost</div><div class="value">${formatMoney(rec.wildcard.totalCost)}</div></div>
+         <div class="stat"><div class="label">In the bank</div><div class="value">${formatMoney(rec.wildcard.bankRemaining)}</div></div>
+       </div>
+
+       <p style="margin-top:1rem">Captain <strong>${escapeHtml(rec.wildcard.eleven.captain.name)}</strong>,
+          vice <strong>${escapeHtml(rec.wildcard.eleven.viceCaptain.name)}</strong>.</p>
+
+       ${renderPitch(rec.wildcard.eleven)}
+
+       <div class="scroll"><table>${head}<tbody>${rec.wildcard.eleven.starters
+         .map((player) =>
+           playerRow(
+             player,
+             player.playerId === rec.wildcard!.eleven.captain.playerId
+               ? '<span class="badge">C</span>'
+               : player.playerId === rec.wildcard!.eleven.viceCaptain.playerId
+                 ? '<span class="badge v">V</span>'
+                 : '',
+           ),
+         )
+         .join('')}
+         ${rec.wildcard.eleven.bench
+           .map((player, index) => playerRow(player, `<span class="muted">#${index + 1}</span>`))
+           .join('')}</tbody></table></div>`;
 
   const doneOutIds = new Set(rec.confirmedTransfers.map((t) => t.outPlayerId));
 

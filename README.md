@@ -497,9 +497,13 @@ single move was best, and between them neither ever showed the squad a Wildcard 
 two are not the same thing and never were. Each transfer card is costed **as if it were the only
 move of the week**; a Wildcard is all fifteen at once, free.
 
-The team page now carries **"If you played your Wildcard"**: the eleven and bench it would give
-you, who goes, who comes in, what it gains this week and over the run, and what the same moves
-would cost in hits done one at a time. The Wildcard card on the chips page links to it.
+The team page now carries **"If you played your Wildcard"**, shown exactly the way your own team
+is: the **pitch view** with the XI in its formation, the substitutes strip in auto-sub order, the
+armband on it, and the same formation / expected score / cost / bank strip above. It is the team
+you would be fielding, so it has to be readable as one — a list of fifteen names says nothing
+about the shape, the bench order or who captains it. Alongside that: who goes, who comes in, what
+it gains this week and over the run, and what the same moves would cost in hits done one at a
+time. The Wildcard card on the chips page links to it.
 
 It is the same solve the multi-transfer plan already ran, with the two constraints a Wildcard
 lifts — every transfer free, no cap on how many — so it reuses tested machinery rather than
