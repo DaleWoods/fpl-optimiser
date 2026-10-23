@@ -15,6 +15,7 @@ import type { PriorityFixPlan, Readiness, Recommendation } from './recommend.js'
 import type { LeagueTableRow } from '../model/table.js';
 import { formatDuration, formatMoney, type StateOfPlay } from './state.js';
 import type { Benchmark } from '../model/benchmark.js';
+import type { AblationResult } from '../model/ablation.js';
 import type { BacktestResult } from '../model/backtest.js';
 import type { SpaceReport } from '../db/maintenance.js';
 
@@ -1932,6 +1933,92 @@ function renderCaptaincyCost(season: SeasonAccuracy): string {
  * Everything else on this page measures *error*. This measures what the advice would have been
  * worth, against what was actually played and against two things that cost nothing to do.
  */
+function renderAblation(ablation: AblationResult | null): string {
+  // Reachable, or it may as well not exist. The chips page spent weeks telling the reader to
+  // run a terminal command, and the advice behind it was never seen once.
+  if (!ablation) {
+    return `<h2>Is each part of the model earning its place?</h2>
+      <p class="muted" style="font-size:.88rem">Every part of this model was added because it
+      sounded right, and none has been asked to justify itself. This switches each one off and
+      replays the season without it &mdash; a dozen replays, so it is not run unless asked.
+      <a href="/accuracy?ablate=1">Run it now</a>.</p>`;
+  }
+  if (ablation.rows.length === 0) {
+    return `<h2>Is each part of the model earning its place?</h2>
+      <p class="muted">${ablation.notes.map((note) => escapeHtml(note)).join(' ')}</p>`;
+  }
+
+  const rows = ablation.rows
+    .map((row) => {
+      const verdict = row.notMeasurable
+        ? '<span class="muted">cannot be judged here</span>'
+        : row.inert
+          ? '<span class="muted">changed nothing</span>'
+          : row.significant
+            ? row.delta < 0
+              ? '<strong style="color:var(--ok)">earning its place</strong>'
+              : '<strong style="color:var(--danger)">costing you points</strong>'
+            : '<span class="muted">not established</span>';
+
+      return `<tr${row.significant && row.delta > 0 ? ' class="special"' : ''}>
+        <td>${escapeHtml(row.label)}</td>
+        <td style="color:${row.delta > 0 ? 'var(--danger)' : 'var(--ok)'}">${
+          row.notMeasurable || row.inert ? '<span class="muted">&mdash;</span>' : `${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(1)}`
+        }</td>
+        <td>${
+          row.notMeasurable || Number.isNaN(row.low)
+            ? '<span class="muted">&mdash;</span>'
+            : `${row.low.toFixed(1)} to ${row.high.toFixed(1)}`
+        }</td>
+        <td>${verdict}</td>
+      </tr>
+      <tr><td></td><td colspan="3" style="padding-top:0">
+        <span class="muted" style="font-size:.88rem">Off: ${escapeHtml(row.what)}.${
+          row.notMeasurable ? ` ${escapeHtml(row.notMeasurable)}` : ''
+        }</span>
+      </td></tr>`;
+    })
+    .join('');
+
+  const harmful = ablation.rows.filter((row) => row.significant && row.delta > 0);
+
+  return `<h2>Is each part of the model earning its place?</h2>
+  ${
+    harmful.length > 0
+      ? `<div class="banner warn"><strong>${harmful
+          .map((row) => escapeHtml(row.label))
+          .join(', ')} ${harmful.length === 1 ? 'is' : 'are'} costing you points.</strong> Turning
+         ${harmful.length === 1 ? 'it' : 'them'} off scored higher over the replayed gameweeks,
+         and the interval excludes zero.</div>`
+      : ''
+  }
+  <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">Each part is switched off and the
+  season replayed without it, against the full model's ${ablation.baselineMean.toFixed(1)} a week
+  over ${ablation.weeks} gameweeks. A <strong>negative</strong> number means removing it lost
+  points, so it is doing its job. A <strong>positive</strong> one means the model scored more
+  without it.</p>
+
+  <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
+    <thead><tr><th>Part</th><th>Without it</th><th>95% interval</th><th>Verdict</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>
+
+  ${
+    ablation.detectableEdge === null
+      ? ''
+      : `<p class="muted" style="font-size:.88rem;margin:.5rem 0 0">Nothing smaller than about
+         ${ablation.detectableEdge.toFixed(1)} points a week can be told apart from noise here, so
+         most of these will read "not established" for a while yet. That is the honest answer,
+         not a missing feature.</p>`
+  }
+  ${
+    ablation.notes.length > 0
+      ? `<p class="muted" style="font-size:.88rem;margin:.5rem 0 0">${ablation.notes
+          .map((note) => escapeHtml(note))
+          .join('<br>')}</p>`
+      : ''
+  }`;
+}
+
 function renderBacktest(backtest: BacktestResult | null): string {
   if (!backtest || backtest.weeks.length === 0) return '';
 
@@ -2037,6 +2124,7 @@ export function renderAccuracy(
   calibrationProgress: CalibrationProgress | null = null,
   benchmark: Benchmark | null = null,
   backtest: BacktestResult | null = null,
+  ablation: AblationResult | null = null,
 ): string {
   const errHead = `<thead><tr><th>Player</th><th>Pos</th><th>Club</th><th>Predicted</th><th>Actual</th><th>Error</th></tr></thead>`;
 
@@ -2091,6 +2179,8 @@ export function renderAccuracy(
     season.gameweeks.length > 0
       ? `${headline ? `<div class="banner info">${headline}</div>` : ''}
          ${renderBacktest(backtest)}
+
+         ${renderAblation(ablation)}
 
          ${renderBenchmark(benchmark)}
 

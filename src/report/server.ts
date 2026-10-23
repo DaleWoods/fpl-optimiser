@@ -18,6 +18,7 @@ import { checkReadiness, loadSquadForChips, recommend, resolveTargetEvent } from
 import { loadIntel } from '../model/intel.js';
 import { benchmarkSeason } from '../model/benchmark.js';
 import { runBacktest } from '../model/backtest.js';
+import { runAblation } from '../model/ablation.js';
 import { freeDiskBytes, isDiskSpaceFailure, pruneHistory, spaceReport } from '../db/maintenance.js';
 import { compactIfStarved } from '../db/compact.js';
 import { ingestRivals } from '../ingest/rivals.js';
@@ -371,6 +372,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             season.gameweeks.map((gw) => gw.eventId),
           ),
           runBacktest(db, config.rules, config.weights),
+          // One replay per component, so it is only built when the page asks. The full set is
+          // a dozen replays and each one re-derives every projection in every gameweek.
+          url.searchParams.get('ablate') === '1'
+            ? runAblation(db, config.rules, config.weights)
+            : null,
         ),
       );
       return;
