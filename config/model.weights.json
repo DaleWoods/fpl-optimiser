@@ -226,9 +226,15 @@
       "nudge toward a captain who is strong across the whole horizon rather than spiking in just",
       "this one week. benchBoostRelief relaxes how harshly a squad discounts its bench when a",
       "double gameweek sits within the horizon, so bench depth is not neglected right up until",
-      "the week it would be worth boosting - bounded well short of treating bench like starters."
+      "the week it would be worth boosting - bounded well short of treating bench like starters.",
+      "wildcardLength 8: a Wildcard squad is kept far longer than a single transfer is, so it is",
+      "judged over a longer run. At decay 0.75 the extra weeks carry 0.24, 0.18 and 0.13, so this",
+      "does not swamp the near term - it lets a fixture swing two months out register at all,",
+      "which at length 5 it could not. Free Hit and ordinary transfers keep length 5, because",
+      "what they commit you to really does end sooner."
     ],
     "length": 5,
+    "wildcardLength": 8,
     "decay": 0.75,
     "captainConsistencyWeight": 0.15,
     "benchBoostRelief": 0.4

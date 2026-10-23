@@ -1,3 +1,4 @@
+import type { Database } from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { StubFplApi } from '../../src/api/replayClient.js';
 import { loadModelWeights, loadRules } from '../../src/config/load.js';
@@ -29,7 +30,7 @@ describe('the Wildcard squad follows the run of fixtures', () => {
    * the second five are ordinary and have the reverse. A squad picked on this gameweek alone
    * keeps the first five. A squad picked on the run does not.
    */
-  async function seedSwingingFixtures() {
+  async function buildLeague() {
     const db = openTestDatabase();
     const teams = Array.from({ length: 10 }, (_, i) => ({
       id: i + 1,
@@ -72,32 +73,24 @@ describe('the Wildcard squad follows the run of fixtures', () => {
         bootstrap: fakeBootstrap({
           teams,
           players,
-          events: [1, 2, 3, 4, 5].map((n) =>
-            fakeEvent(n, { is_next: n === 1, deadline_time: `209${n}-08-14T17:30:00Z` }),
+          // Nine gameweeks, so the Wildcard's longer horizon is actually available to it. A
+          // fixture that stops at five cannot tell a horizon of eight from a horizon of five.
+          events: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) =>
+            fakeEvent(n, {
+              is_next: n === 1,
+              deadline_time: `2091-${String(n).padStart(2, '0')}-14T17:30:00Z`,
+            }),
           ),
         }),
       }),
       rules,
     );
 
-    // Gameweek 1: club 1 hosts the weakest side in the league. Gameweeks 2-5: club 1 plays the
-    // other four strong clubs, while club 6 plays the four weak ones.
-    const fixtures = [
-      fakeFixture(1, 1, 1, 10),
-      fakeFixture(2, 1, 2, 3),
-      fakeFixture(3, 1, 4, 5),
-      fakeFixture(4, 1, 6, 7),
-      fakeFixture(5, 1, 8, 9),
-    ];
-    let fixtureId = 10;
-    for (const gw of [2, 3, 4, 5]) {
-      fixtures.push(fakeFixture(fixtureId++, gw, 1, gw));
-      fixtures.push(fakeFixture(fixtureId++, gw, 6, gw + 5));
-      fixtures.push(fakeFixture(fixtureId++, gw, 10 - gw, 11 - gw));
-    }
-    await ingestFixtures(db, new StubFplApi({ fixtures }));
+    return { db, players };
+  }
 
-    // A squad built entirely from the clubs with the kind week and the hard run.
+  /** Fifteen drawn entirely from clubs 1-5, so a rebuild moving off them is visible. */
+  async function loadSquadFromStrongClubs(db: Database) {
     const rows = db
       .prepare(
         `SELECT p.id AS id, pos.short_name AS position, p.team_id AS club FROM player p
@@ -131,9 +124,57 @@ describe('the Wildcard squad follows the run of fixtures', () => {
       rules,
     );
 
-    const clubOf = new Map(players.map((player) => [player.id, player.team]));
-    return { db, fifteen, clubOf };
+    return fifteen;
   }
+
+  /**
+   * Clubs 1-5 have the kind week now and a brutal run after it; clubs 6-10 the reverse, from
+   * gameweek 2 onward. Visible to any horizon longer than one.
+   */
+  async function seedSwingingFixtures() {
+    const { db, players } = await buildLeague();
+    const fixtures = [
+      fakeFixture(1, 1, 1, 10),
+      fakeFixture(2, 1, 2, 3),
+      fakeFixture(3, 1, 4, 5),
+      fakeFixture(4, 1, 6, 7),
+      fakeFixture(5, 1, 8, 9),
+    ];
+    let fixtureId = 10;
+    for (const gw of [2, 3, 4, 5, 6, 7, 8, 9]) {
+      fixtures.push(fakeFixture(fixtureId++, gw, 1, 2 + ((gw - 2) % 4)));
+      fixtures.push(fakeFixture(fixtureId++, gw, 6, 7 + ((gw - 2) % 4)));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures }));
+    const fifteen = await loadSquadFromStrongClubs(db);
+    return { db, fifteen, clubOf: new Map(players.map((p) => [p.id, p.team])) };
+  }
+
+  /**
+   * The same two groups given IDENTICAL opposition for five gameweeks, diverging only from the
+   * sixth. Invisible to a five-week horizon by construction - which is the whole point.
+   */
+  async function seedLateSwingDb() {
+    return (await seedLateSwing()).db;
+  }
+
+  async function seedLateSwing() {
+    const { db, players } = await buildLeague();
+    const fixtures = [];
+    let fixtureId = 1;
+    for (const gw of [1, 2, 3, 4, 5]) {
+      fixtures.push(fakeFixture(fixtureId++, gw, 1, 9));
+      fixtures.push(fakeFixture(fixtureId++, gw, 6, 10));
+    }
+    for (const gw of [6, 7, 8, 9]) {
+      fixtures.push(fakeFixture(fixtureId++, gw, 1, 2 + ((gw - 6) % 4)));
+      fixtures.push(fakeFixture(fixtureId++, gw, 6, 7 + ((gw - 6) % 3)));
+    }
+    await ingestFixtures(db, new StubFplApi({ fixtures }));
+    await loadSquadFromStrongClubs(db);
+    return { db, clubOf: new Map(players.map((p) => [p.id, p.team])) };
+  }
+
 
   it('sells a kind week to buy a kind run', async () => {
     const { db, fifteen, clubOf } = await seedSwingingFixtures();
@@ -144,11 +185,34 @@ describe('the Wildcard squad follows the run of fixtures', () => {
 
     expect(fromSwinging(fifteen)).toBe(15);
     // Most of them go, despite every one of them having the better fixture this week.
-    expect(fromSwinging(wildcard.squad.map((player) => player.playerId))).toBeLessThan(6);
+    // A clear majority go, despite every one of them having the better fixture this week.
+    // Not all fifteen: three-per-club and the position quotas mean the clubs with the kind run
+    // cannot fill a legal squad on their own, which is a fact about FPL rather than about the
+    // model following the run.
+    expect(fromSwinging(wildcard.squad.map((player) => player.playerId))).toBeLessThan(8);
 
     // And the trade it made is the right shape: a little given up now for a lot over the run.
     // A squad picked on this gameweek alone could not produce this - it would keep what it had.
     expect(wildcard.gainOverHorizon).toBeGreaterThan(wildcard.gainThisWeek * 5);
+  });
+
+  it('builds a different squad when the Wildcard horizon is longer', async () => {
+    // The point of the longer Wildcard horizon, bound to the objective rather than to the
+    // display. Clubs 1-5 and 6-10 are given IDENTICAL opposition for five gameweeks and
+    // opposite runs from the sixth, so the extra weeks are the ONLY thing that can tell them
+    // apart - and the squad really does come out different because of them.
+    const short = { ...weights, horizon: { ...weights.horizon, wildcardLength: 5 } };
+    const long = { ...weights, horizon: { ...weights.horizon, wildcardLength: 9 } };
+
+    const withShort = await recommend(await seedLateSwingDb(), rules, short, { eventId: 1, teamId });
+    const withLong = await recommend(await seedLateSwingDb(), rules, long, { eventId: 1, teamId });
+
+    expect(withShort.wildcard!.runGameweeks).toBe(5);
+    expect(withLong.wildcard!.runGameweeks).toBe(9);
+
+    const ids = (result: typeof withShort) =>
+      [...result.wildcard!.squad.map((player) => player.playerId)].sort((a, b) => a - b).join(',');
+    expect(ids(withLong)).not.toBe(ids(withShort));
   });
 
   it('shows the run it was picked on, not only this gameweek', async () => {
@@ -159,7 +223,11 @@ describe('the Wildcard squad follows the run of fixtures', () => {
     const result = await recommend(db, rules, weights, { eventId: 1, teamId });
     const wildcard = result.wildcard!;
 
-    expect(wildcard.runGameweeks).toBe(weights.horizon.length);
+    // The longer run, not the ordinary one: a Wildcard squad is kept far longer than a single
+    // transfer is, so judging it on the same five weeks understates exactly the fixture swing
+    // the chip exists to catch.
+    expect(weights.horizon.wildcardLength).toBeGreaterThan(weights.horizon.length);
+    expect(wildcard.runGameweeks).toBe(weights.horizon.wildcardLength);
     expect(wildcard.run).toHaveLength(rules.squad.size);
 
     for (const player of wildcard.squad) {
@@ -167,7 +235,7 @@ describe('the Wildcard squad follows the run of fixtures', () => {
       expect(entry).toBeDefined();
       // One opponent per gameweek after this one, so a reader can see the run themselves
       // rather than take the total on trust.
-      expect(entry!.opponents).toHaveLength(weights.horizon.length - 1);
+      expect(entry!.opponents).toHaveLength(weights.horizon.wildcardLength - 1);
       // The run includes this gameweek, so it cannot be smaller than it.
       expect(entry!.runXPts).toBeGreaterThanOrEqual(player.xPts - 1e-6);
     }

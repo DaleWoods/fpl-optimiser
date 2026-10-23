@@ -271,6 +271,13 @@ export const modelWeightsSchema = z.strictObject({
   horizon: z.strictObject({
     /** Gameweeks considered, including the target one. */
     length: positiveInt,
+    /**
+     * Gameweeks considered when a Wildcard squad is built, which is kept far longer than a
+     * single transfer. Judging a squad you hold for two months on the same five weeks a
+     * one-week swap is judged on understates exactly the fixture swing a Wildcard exists to
+     * catch.
+     */
+    wildcardLength: positiveInt,
     /** Weight multiplier per gameweek further out: 1.0 for the target week, decay^1 the next, etc. */
     decay: probability,
     /** Bounded bonus (points) nudging captaincy toward a consistently strong performer over a

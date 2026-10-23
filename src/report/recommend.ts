@@ -1583,28 +1583,45 @@ export async function recommend(
   // every transfer free, and no cap on how many.
   let wildcard: WildcardPlan | null = null;
   try {
+    // A Wildcard squad is kept far longer than a single transfer is, so it is judged over a
+    // longer run. Judging a fifteen you hold for two months on the same five weeks an ordinary
+    // swap is judged on understates exactly the fixture swing the chip exists to catch. The
+    // extra weeks carry 0.24, 0.18 and 0.13 at the usual decay, so they register without
+    // swamping the near term - which is the balance that matters, since a projection two
+    // months out is a far weaker claim than next week's.
+    const wildcardHorizon =
+      weights.horizon.wildcardLength > weights.horizon.length
+        ? computeHorizon(db, rules, weights, event.id, weights.horizon.wildcardLength)
+        : horizon;
+    const wildcardFutureValue = new Map(
+      projections.map((player) => [
+        player.playerId,
+        horizonFor(wildcardHorizon, player.playerId).futureXPts,
+      ]),
+    );
+
     const rebuild = await selectBestTransferPlan(projections, owned.squad, rules, weights, solver, {
       totalBudget: totalCost + bank,
       freeTransfers: rules.squad.size,
       hitCost: 0,
       captainConsistencyBonus,
-      futureValueBonus,
+      futureValueBonus: wildcardFutureValue,
       benchBoostPull: benchBoostRelief,
     });
 
     const horizonGain =
       rebuild.transfersIn.reduce(
-        (sum, player) => sum + horizonFor(horizon, player.playerId).futureXPts,
+        (sum, player) => sum + horizonFor(wildcardHorizon, player.playerId).futureXPts,
         0,
       ) -
       rebuild.transfersOut.reduce(
-        (sum, player) => sum + horizonFor(horizon, player.playerId).futureXPts,
+        (sum, player) => sum + horizonFor(wildcardHorizon, player.playerId).futureXPts,
         0,
       );
 
     // Who each chosen club faces across the rest of the horizon, so the page can show the run
     // the squad was actually picked on rather than only the week in front of it.
-    const laterEvents = horizon.gameweeks
+    const laterEvents = wildcardHorizon.gameweeks
       .filter((gw) => gw.eventId !== event.id)
       .sort((a, b) => a.eventId - b.eventId)
       .map((gw) => gw.eventId);
@@ -1659,10 +1676,10 @@ export async function recommend(
         Math.max(0, rebuild.transfersOut.length - freeTransfers) * rules.transfers.hitCost,
       run: rebuild.squad.map((player) => ({
         playerId: player.playerId,
-        runXPts: horizonFor(horizon, player.playerId).horizonXPts,
+        runXPts: horizonFor(wildcardHorizon, player.playerId).horizonXPts,
         opponents: opponentsByClub.get(player.clubId) ?? [],
       })),
-      runGameweeks: horizon.gameweeks.length,
+      runGameweeks: wildcardHorizon.gameweeks.length,
       played: loadPlayedChips(db, options.teamId ?? null).some(
         (chip) => chip.chip === 'wildcard' && chip.eventId === event.id,
       ),
