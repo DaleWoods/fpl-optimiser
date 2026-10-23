@@ -258,6 +258,36 @@ export interface PriorityFixPlan {
   bankRemaining: number;
 }
 
+/**
+ * The squad a Wildcard would actually give you.
+ *
+ * The chips page can tell you to play one, and the transfer cards can tell you which single
+ * move is best, and between them neither ever showed the thing a Wildcard produces: fifteen
+ * players, chosen together, with no hits. A chip advisor that says "rebuild" and then leaves
+ * you to work out the rebuild yourself is giving half an answer.
+ *
+ * It is the same solve the multi-transfer plan already does, with the two constraints a
+ * Wildcard removes: every transfer is free, and there is no limit on how many. Budget is what
+ * your fifteen would sell for plus the bank - not the default 100.0m a from-scratch build
+ * uses, which is somebody else's money.
+ */
+export interface WildcardPlan {
+  squad: ProjectedPlayer[];
+  eleven: StartingEleven;
+  playersOut: ProjectedPlayer[];
+  playersIn: ProjectedPlayer[];
+  /** This gameweek's improvement over the XI you would otherwise field. */
+  gainThisWeek: number;
+  /** The same comparison across the run of fixtures, in's minus out's, discounted. */
+  gainOverHorizon: number;
+  /** What your fifteen plus the bank is worth, which is what it was built within. */
+  budget: number;
+  totalCost: number;
+  bankRemaining: number;
+  /** What these same moves would cost in hits, made one at a time instead. */
+  hitCostIfTransferred: number;
+}
+
 export interface Recommendation {
   mode: 'build-squad' | 'existing-squad';
   eventId: number;
@@ -279,6 +309,11 @@ export interface Recommendation {
    * option above, so this only ever appears when it adds something.
    */
   transferPlan: TransferPlanSummary | null;
+  /**
+   * The fifteen a Wildcard would give you, and what it would change. Null when no squad is
+   * loaded, or when the solve could not run.
+   */
+  wildcard: WildcardPlan | null;
   /**
    * The team you get by acting on every priority fix, with the hit cost stated. Null when the
    * squad has no dead slots, or when none of them has an affordable fix.
@@ -1331,6 +1366,7 @@ export async function recommend(
       // No existing squad to rebuild from, or diff against, or an earlier recommendation to
       // compare with.
       transferPlan: null,
+      wildcard: null,
       priorityFixPlan: null,
       confirmedTransfers: [],
       previousComparison: null,
@@ -1499,6 +1535,59 @@ export async function recommend(
     );
   }
 
+  // The fifteen a Wildcard would actually give you.
+  //
+  // The chips page could tell you to play one and the transfer cards could tell you which
+  // single move was best, and between them neither ever showed the squad a Wildcard produces.
+  // The only thing resembling it was `?scratch=1`, which is unreachable from any link and is
+  // built within the default 100.0m rather than within your money - so it could hand you a
+  // team you cannot afford, or quietly leave your bank unspent.
+  //
+  // It is the same solve the plan above just ran, with the two constraints a Wildcard lifts:
+  // every transfer free, and no cap on how many.
+  let wildcard: WildcardPlan | null = null;
+  try {
+    const rebuild = await selectBestTransferPlan(projections, owned.squad, rules, weights, solver, {
+      totalBudget: totalCost + bank,
+      freeTransfers: rules.squad.size,
+      hitCost: 0,
+      captainConsistencyBonus,
+      futureValueBonus,
+      benchBoostPull: benchBoostRelief,
+    });
+
+    const horizonGain =
+      rebuild.transfersIn.reduce(
+        (sum, player) => sum + horizonFor(horizon, player.playerId).futureXPts,
+        0,
+      ) -
+      rebuild.transfersOut.reduce(
+        (sum, player) => sum + horizonFor(horizon, player.playerId).futureXPts,
+        0,
+      );
+
+    wildcard = {
+      squad: rebuild.squad,
+      eleven: rebuild.eleven,
+      playersOut: rebuild.transfersOut,
+      playersIn: rebuild.transfersIn,
+      gainThisWeek: Math.round((rebuild.eleven.expectedPoints - eleven.expectedPoints) * 100) / 100,
+      gainOverHorizon: Math.round(horizonGain * 100) / 100,
+      budget: totalCost + bank,
+      totalCost: rebuild.totalCost,
+      bankRemaining: rebuild.bankRemaining,
+      // The arithmetic half of the case for the chip, and the only part of it that is not a
+      // forecast: the same moves made one at a time cost four points each beyond the free one.
+      hitCostIfTransferred:
+        Math.max(0, rebuild.transfersOut.length - freeTransfers) * rules.transfers.hitCost,
+    };
+  } catch (cause) {
+    notes.push(
+      `Could not build the Wildcard squad (${(cause as Error).message}). The transfer options ` +
+        'above are unaffected.',
+    );
+  }
+
   const previousComparison = diffAgainstPrevious(
     {
       starters: eleven.starters.map((p) => ({ playerId: p.playerId, name: p.name })),
@@ -1552,6 +1641,7 @@ export async function recommend(
     bankRemaining: bank,
     transfers,
     transferPlan,
+    wildcard,
     priorityFixPlan,
     confirmedTransfers: owned?.confirmedApplied ?? [],
     previousComparison,

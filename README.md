@@ -489,6 +489,31 @@ cards showed *"use `fpl chips --deep`"* — a terminal instruction on a web page
 advice was never visible at all. The page now rebuilds the **first five gameweeks** by default,
 which is bounded work and is the window that answers a Wildcard anyway.
 
+#### "Play your Wildcard" now comes with the fifteen
+
+A chip advisor that says *rebuild* and leaves you to work out the rebuild has answered half the
+question. The chips page could recommend a Wildcard and the transfer cards could tell you which
+single move was best, and between them neither ever showed the squad a Wildcard produces — the
+two are not the same thing and never were. Each transfer card is costed **as if it were the only
+move of the week**; a Wildcard is all fifteen at once, free.
+
+The team page now carries **"If you played your Wildcard"**: the eleven and bench it would give
+you, who goes, who comes in, what it gains this week and over the run, and what the same moves
+would cost in hits done one at a time. The Wildcard card on the chips page links to it.
+
+It is the same solve the multi-transfer plan already ran, with the two constraints a Wildcard
+lifts — every transfer free, no cap on how many — so it reuses tested machinery rather than
+adding a second opinion beside it.
+
+**Budget was the part most likely to be silently wrong.** The only thing resembling this before
+was `?scratch=1`, which is linked from nowhere and builds within `rules.squad.budget` — somebody
+else's 100.0m. A Wildcard spends what *your* fifteen would sell for plus the bank, which is
+usually neither 100.0m nor the same two weeks running. Reverting that one line in a test run
+produced a 99.9m squad on a 96.1m budget: a team you cannot buy, recommended in full detail. The
+same selling-price caveat as everywhere else applies — the public API does not publish them, so
+current price stands in until a my-team file is uploaded, and that overstates what selling a
+risen player frees up.
+
 Since a chip is only usable once per half-season, the advisor looks **16 gameweeks ahead by
 default** (`--horizon N` / `?horizon=N` to change it) rather than judging a decent-looking week
 against nothing further out — a chip played on the best of the next handful of gameweeks can

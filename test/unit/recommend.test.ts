@@ -855,6 +855,81 @@ describe('recommendation with a squad loaded', () => {
     }
   });
 
+  it('shows the fifteen a Wildcard would give you, not just that one is worth playing', async () => {
+    // The gap this closes. The chips page could say "play your Wildcard" and the transfer
+    // cards could say which single move was best, and between them neither ever showed the
+    // squad a Wildcard actually produces. A chip advisor that says "rebuild" and leaves you to
+    // work out the rebuild has answered half the question.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 50);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+
+    expect(result.wildcard).not.toBeNull();
+    const wildcard = result.wildcard!;
+    expect(wildcard.squad).toHaveLength(rules.squad.size);
+    expect(wildcard.eleven.starters).toHaveLength(rules.startingXi.size);
+    expect(
+      validateStartingEleven(wildcard.eleven.starters, wildcard.eleven.bench, rules, {
+        squad: wildcard.squad,
+      }),
+    ).toEqual([]);
+    // It is a rebuild, not a swap: the whole point is that it changes more than one.
+    expect(wildcard.playersOut.length).toBe(wildcard.playersIn.length);
+    expect(wildcard.playersOut.length).toBeGreaterThan(1);
+    // And it has strictly more freedom than the hit-constrained plan - no hits, no limit on
+    // how many - so it can never come out behind it.
+    if (result.transferPlan) {
+      expect(wildcard.eleven.expectedPoints).toBeGreaterThanOrEqual(
+        result.transferPlan.eleven.expectedPoints - 1e-6,
+      );
+    }
+    expect(wildcard.gainThisWeek).toBeGreaterThan(0);
+  });
+
+  it('builds the Wildcard squad within your money, not the default budget', async () => {
+    // The only thing resembling this before was `?scratch=1`, which builds within
+    // rules.squad.budget - somebody else's 100.0m. A Wildcard spends what your fifteen would
+    // sell for plus the bank, which is usually neither 100.0m nor the same two weeks running,
+    // so a squad costed the other way is one you cannot actually buy, or one that silently
+    // leaves your bank unspent.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 50);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    const wildcard = result.wildcard!;
+
+    expect(wildcard.budget).toBe(result.totalCost + result.bankRemaining);
+    expect(wildcard.totalCost).toBeLessThanOrEqual(wildcard.budget);
+    expect(wildcard.bankRemaining).toBe(wildcard.budget - wildcard.totalCost);
+  });
+
+  it('prices the Wildcard against doing the same moves one at a time', async () => {
+    // The arithmetic half of the case for the chip, and the only part of it that is not a
+    // forecast: beyond the free transfer every move costs four points whatever the
+    // projections prove worth.
+    const fifteen = pickLegalFifteen(db);
+    await loadSquad(fifteen, 50);
+
+    const result = await recommend(db, rules, weights, { eventId: 1, teamId });
+    const wildcard = result.wildcard!;
+
+    const freeTransfers =
+      (
+        db
+          .prepare(
+            'SELECT free_transfers AS ft FROM manager_state WHERE entry_id = ? ORDER BY captured_at DESC LIMIT 1',
+          )
+          .get(teamId) as { ft: number | null } | undefined
+      )?.ft ?? 1;
+
+    expect(wildcard.hitCostIfTransferred).toBe(
+      Math.max(0, wildcard.playersOut.length - freeTransfers) * rules.transfers.hitCost,
+    );
+    // Not vacuous: the rebuild really is bigger than a week's free transfers.
+    expect(wildcard.hitCostIfTransferred).toBeGreaterThan(0);
+  });
+
   it('names a different player to sell in each suggestion', async () => {
     // Ranking every legal swap by net gain and taking the top five produced five entries over
     // three players: one holding filled three of the slots with variants of the same move,

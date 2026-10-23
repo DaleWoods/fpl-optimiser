@@ -581,6 +581,51 @@ export function renderRecommendation(
     .map((player, index) => playerRow(player, `<span class="muted">#${index + 1}</span>`))
     .join('');
 
+  // The fifteen a Wildcard gives you. Shown as a team rather than a figure, because a chip
+  // advisor that says "rebuild" and leaves you to work out the rebuild has answered half the
+  // question - and because this is the only place in the app that ever shows it.
+  const wildcardSection = !rec.wildcard
+    ? ''
+    : `<h2>If you played your Wildcard</h2>
+       <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">All fifteen at once, free, within
+       your ${formatMoney(rec.wildcard.budget)}. Not the single transfers above &mdash; those each
+       assume they are the only move of the week.</p>
+       <div class="card">
+         <h3 style="margin:0 0 .4rem">${rec.wildcard.playersOut.length} changes
+           <span class="pill good">${rec.wildcard.gainThisWeek >= 0 ? '+' : ''}${rec.wildcard.gainThisWeek.toFixed(1)} this week</span>
+           <span class="pill">${rec.wildcard.gainOverHorizon >= 0 ? '+' : ''}${rec.wildcard.gainOverHorizon.toFixed(1)} over the run</span>
+           ${
+             rec.wildcard.hitCostIfTransferred > 0
+               ? `<span class="pill" style="background:var(--warn-fg);color:#000">-${rec.wildcard.hitCostIfTransferred} if done by transfer</span>`
+               : ''
+           }
+         </h3>
+         <p style="margin:.3rem 0"><strong>Out:</strong> ${
+           rec.wildcard.playersOut.map((p) => escapeHtml(p.name)).join(', ') || '<span class="muted">nobody</span>'
+         }</p>
+         <p style="margin:.3rem 0"><strong>In:</strong> ${
+           rec.wildcard.playersIn.map((p) => escapeHtml(p.name)).join(', ') || '<span class="muted">nobody</span>'
+         }</p>
+         <div class="scroll"><table>${head}<tbody>${rec.wildcard.eleven.starters
+           .map((player) =>
+             playerRow(
+               player,
+               player.playerId === rec.wildcard!.eleven.captain.playerId
+                 ? '<span class="badge">C</span>'
+                 : player.playerId === rec.wildcard!.eleven.viceCaptain.playerId
+                   ? '<span class="badge v">V</span>'
+                   : '',
+             ),
+           )
+           .join('')}
+           ${rec.wildcard.eleven.bench
+             .map((player, index) => playerRow(player, `<span class="muted">#${index + 1}</span>`))
+             .join('')}</tbody></table></div>
+         <p class="muted" style="margin:.3rem 0;font-size:.88rem">${formatMoney(rec.wildcard.totalCost)} spent,
+         ${formatMoney(rec.wildcard.bankRemaining)} left.
+         <a href="/chips">Is it the week to play it?</a></p>
+       </div>`;
+
   const doneOutIds = new Set(rec.confirmedTransfers.map((t) => t.outPlayerId));
 
   /**
@@ -799,6 +844,8 @@ export function renderRecommendation(
          </div>`
       : ''
   }
+
+  ${wildcardSection}
 
   <h2>Evidence behind these projections</h2>
   <div class="card"><ul class="tight">
@@ -1043,6 +1090,14 @@ export function renderChips(advice: ChipAdvice, fromEvent: number): string {
             ? `<p class="muted" style="margin:.2rem 0">Next best: ${rec.alternatives
                 .map((a) => `GW${a.eventId} (+${a.gain})`)
                 .join(', ')}</p>`
+            : ''
+        }
+        ${
+          // A Wildcard recommendation that does not show you the squad is half an answer, and
+          // the squad lives on the team page because that is where it can be diffed against
+          // the one you hold.
+          rec.chip === 'wildcard'
+            ? '<p style="margin:.3rem 0 0"><a href="/optimise">See the 15 it would give you</a></p>'
             : ''
         }
         ${rec.warning ? `<p style="color:var(--warn-fg);margin:.3rem 0 0">! ${escapeHtml(rec.warning)}</p>` : ''}
