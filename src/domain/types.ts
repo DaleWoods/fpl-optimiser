@@ -49,6 +49,16 @@ export interface ProjectedPlayer extends PlayerCandidate {
    */
   ceiling?: number;
   haulProbability?: number;
+  /**
+   * Set-piece duty as the club publishes it: 1 is first choice, absent means not on the list.
+   *
+   * Carried for explanation and comparison, not as a scoring term. A player's expected goals
+   * already contain the penalties he has taken, so adding an uplift on top of them would be
+   * counting the same thing twice for every settled taker - the large majority. What history
+   * cannot describe is the taker who was appointed last week, and separating that case from
+   * the rest needs a measurement this app does not have yet.
+   */
+  setPieces?: { penalties: number | null; freekicks: number | null; corners: number | null };
 }
 
 export interface Squad {

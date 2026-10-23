@@ -326,6 +326,7 @@ function playerRow(
     breakdown: Record<string, number>;
     reasons: string[];
     fixtures: { opponentShort: string; isHome: boolean; difficulty: number | null }[];
+    setPieces?: { penalties: number | null; freekicks: number | null; corners: number | null };
   },
   marker = '',
 ): string {
@@ -340,9 +341,20 @@ function playerRow(
 
   const reasons = player.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('');
 
+  // Set-piece duty, shown rather than scored. Penalties are the single most concentrated
+  // source of goals in the game and the API has published who takes them all along. It is not
+  // folded into xPts because a player's expected goals already contain the penalties he has
+  // taken - see ProjectedPlayer.setPieces - so this is here to be read, and to separate two
+  // players the numbers rate alike.
+  const duty = [
+    player.setPieces?.penalties === 1 ? '<span class="pill good" title="First-choice penalty taker">PEN</span>' : '',
+    player.setPieces?.freekicks === 1 ? '<span class="pill" title="First-choice free kicks">FK</span>' : '',
+    player.setPieces?.corners === 1 ? '<span class="pill" title="First-choice corners">COR</span>' : '',
+  ].join('');
+
   return `<tr>
     <td>${escapeHtml(player.position)}</td>
-    <td>${escapeHtml(player.name)} ${marker}</td>
+    <td>${escapeHtml(player.name)} ${marker}${duty}</td>
     <td>${escapeHtml(player.clubShort)}</td>
     <td>${formatFixtures(player.fixtures)}</td>
     <td>${formatMoney(player.price)}</td>

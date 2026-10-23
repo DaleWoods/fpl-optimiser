@@ -43,6 +43,10 @@ export interface FakePlayerSpec {
   defensive_contribution?: number;
   transfers_in_event?: number;
   transfers_out_event?: number;
+  /** Set-piece duty as the API publishes it: 1 is first choice, null means not on the list. */
+  penalties_order?: number | null;
+  direct_freekicks_order?: number | null;
+  corners_and_indirect_freekicks_order?: number | null;
 }
 
 export const DEFAULT_ELEMENT_TYPES = [
@@ -120,6 +124,12 @@ export function fakePlayer(spec: FakePlayerSpec) {
     defensive_contribution: s(spec.defensive_contribution ?? 0),
     transfers_in_event: spec.transfers_in_event ?? 0,
     transfers_out_event: spec.transfers_out_event ?? 0,
+
+    // Null rather than 0 by default: "not on the list" and "first choice" must never collapse
+    // together, and 0 is not a value the real API ever sends for these.
+    penalties_order: spec.penalties_order ?? null,
+    direct_freekicks_order: spec.direct_freekicks_order ?? null,
+    corners_and_indirect_freekicks_order: spec.corners_and_indirect_freekicks_order ?? null,
   };
 }
 

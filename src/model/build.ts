@@ -31,6 +31,9 @@ interface PlayerRow {
   epNext: number | null;
   transfersInEvent: number | null;
   transfersOutEvent: number | null;
+  penaltiesOrder: number | null;
+  freekicksOrder: number | null;
+  cornersOrder: number | null;
 }
 
 interface TeamRow {
@@ -300,7 +303,8 @@ function reconstructPlayerRows(db: Database, asOfEventId: number): PlayerRow[] {
               COALESCE(h.goals, 0) AS goals, COALESCE(h.assists, 0) AS assists,
               COALESCE(h.saves, 0) AS saves, COALESCE(h.bonus, 0) AS bonus,
               h.expectedGoals, h.expectedAssists, h.defensiveContribution,
-              NULL AS epNext, NULL AS transfersInEvent, NULL AS transfersOutEvent
+              NULL AS epNext, NULL AS transfersInEvent, NULL AS transfersOutEvent,
+              NULL AS penaltiesOrder, NULL AS freekicksOrder, NULL AS cornersOrder
        FROM player p
        JOIN team t ON t.id = p.team_id
        JOIN position pos ON pos.id = p.position_id
@@ -355,7 +359,9 @@ export function buildProjections(
               ps.goals_scored AS goals, ps.assists, ps.saves, ps.bonus,
               ps.expected_goals AS expectedGoals, ps.expected_assists AS expectedAssists,
               ps.defensive_contribution AS defensiveContribution, ps.ep_next AS epNext,
-              ps.transfers_in_event AS transfersInEvent, ps.transfers_out_event AS transfersOutEvent
+              ps.transfers_in_event AS transfersInEvent, ps.transfers_out_event AS transfersOutEvent,
+              ps.penalties_order AS penaltiesOrder, ps.direct_freekicks_order AS freekicksOrder,
+              ps.corners_order AS cornersOrder
        FROM player_snapshot ps
        JOIN player p ON p.id = ps.player_id
        JOIN team t ON t.id = p.team_id
@@ -737,6 +743,15 @@ export function buildProjections(
             ]
           : projection.reasons;
 
+    const setPieces =
+      row.penaltiesOrder !== null || row.freekicksOrder !== null || row.cornersOrder !== null
+        ? {
+            penalties: row.penaltiesOrder,
+            freekicks: row.freekicksOrder,
+            corners: row.cornersOrder,
+          }
+        : undefined;
+
     projected.push({
       playerId: row.playerId,
       name: row.name,
@@ -745,6 +760,7 @@ export function buildProjections(
       position: row.position,
       price: row.price,
       availability,
+      setPieces,
       xPts: projection.xPts,
       xPtsRaw: projection.xPtsRaw,
       breakdown: projection.breakdown,

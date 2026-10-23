@@ -141,6 +141,20 @@ export const elementSchema = z.looseObject({
   expected_goal_involvements: numeric(),
   expected_goals_conceded: numeric(),
   defensive_contribution: numeric(),
+
+  /**
+   * Set-piece duty, as the club's own published order: 1 is first choice, null means not on
+   * the list. Free in this payload and, until now, read by nothing.
+   *
+   * It matters most for the case history cannot describe. A player's expected goals already
+   * contain the penalties he has taken, so for a settled taker this says little the numbers
+   * do not. For a player who has JUST been given the job - the previous taker sold, injured,
+   * dropped or out of form - his own record understates him and will go on understating him
+   * for weeks, which is exactly the window a transfer is decided in.
+   */
+  penalties_order: numeric(),
+  direct_freekicks_order: numeric(),
+  corners_and_indirect_freekicks_order: numeric(),
 });
 
 export const bootstrapSchema = z.looseObject({

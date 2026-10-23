@@ -1483,6 +1483,25 @@ Two details that are easy to get wrong:
   the gap between two metrics rather than on its form. Early in a season, when the per-gameweek
   breakdown lags the results, that mix is the normal state rather than the edge case.
 
+### Who takes the penalties
+
+Free in `bootstrap-static` since the first fetch this app ever made, and read by nothing:
+`penalties_order`, `direct_freekicks_order` and `corners_and_indirect_freekicks_order`. 1 is
+first choice, null means not on the list. They are now ingested, stored **per snapshot** (duty
+changes mid-season, and a replay of an earlier gameweek must see what was true then), and shown
+as **PEN / FK / COR** beside the player.
+
+**Shown, not scored, and that is deliberate.** A player's expected goals already contain the
+penalties he has taken, so adding an uplift on top would count the same thing twice for every
+settled taker — which is nearly all of them. What the history genuinely cannot describe is the
+taker appointed *last week*: his own record understates him, and will go on understating him for
+exactly as long as it takes to decide a transfer. Separating that case from the rest is worth
+doing and needs a measurement this app does not have yet, so until then the duty is evidence on
+the page rather than a number in the projection.
+
+Absent fields read as "not known", never as "not a taker" — older saved payloads and hand-made
+import files simply will not have them, and null is not zero.
+
 ### Recent form counts for more than the season average
 
 Within "this season's stats", the last several gameweeks are weighted more heavily than the

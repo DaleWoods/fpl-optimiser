@@ -218,6 +218,7 @@ export function ingestBootstrapPayload(
       minutes, starts, goals_scored, assists, clean_sheets, goals_conceded, saves, bonus, bps,
       yellow_cards, red_cards, expected_goals, expected_assists, expected_goal_involvements,
       expected_goals_conceded, defensive_contribution, transfers_in_event, transfers_out_event,
+      penalties_order, direct_freekicks_order, corners_order,
       raw_json
     ) VALUES (
       @snapshot_id, @player_id, @taken_at, @now_cost, @cost_change_start, @cost_change_event,
@@ -226,6 +227,7 @@ export function ingestBootstrapPayload(
       @minutes, @starts, @goals_scored, @assists, @clean_sheets, @goals_conceded, @saves, @bonus, @bps,
       @yellow_cards, @red_cards, @expected_goals, @expected_assists, @expected_goal_involvements,
       @expected_goals_conceded, @defensive_contribution, @transfers_in_event, @transfers_out_event,
+      @penalties_order, @direct_freekicks_order, @corners_order,
       @raw_json
     )
   `);
@@ -346,6 +348,9 @@ export function ingestBootstrapPayload(
         defensive_contribution: element.defensive_contribution,
         transfers_in_event: element.transfers_in_event,
         transfers_out_event: element.transfers_out_event,
+        penalties_order: element.penalties_order,
+        direct_freekicks_order: element.direct_freekicks_order,
+        corners_order: element.corners_and_indirect_freekicks_order,
         // Deliberately empty, and this is the single biggest thing the database stores.
         //
         // A snapshot of ~700 players costs 0.94 MB, almost all of it this column - a verbatim
