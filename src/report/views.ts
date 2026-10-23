@@ -584,22 +584,27 @@ export function renderRecommendation(
   // The fifteen a Wildcard gives you. Shown as a team rather than a figure, because a chip
   // advisor that says "rebuild" and leaves you to work out the rebuild has answered half the
   // question - and because this is the only place in the app that ever shows it.
+  const wildcardRun = new Map((rec.wildcard?.run ?? []).map((entry) => [entry.playerId, entry]));
+
   const wildcardSection = !rec.wildcard
     ? ''
     : `<h2>If you played your Wildcard</h2>
        <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">All fifteen at once, free, within
-       your ${formatMoney(rec.wildcard.budget)}. Not the single transfers above &mdash; those each
-       assume they are the only move of the week.</p>
+       your ${formatMoney(rec.wildcard.budget)}. Chosen on the next
+       ${rec.wildcard.runGameweeks} gameweeks, not just this one &mdash; a player you own is kept
+       until you transfer him, so the run counts for more than the week in front of it. Not the
+       single transfers above: those each assume they are the only move of the week.</p>
        <div class="card">
          <h3 style="margin:0 0 .4rem">${rec.wildcard.playersOut.length} changes
-           <span class="pill good">${rec.wildcard.gainThisWeek >= 0 ? '+' : ''}${rec.wildcard.gainThisWeek.toFixed(1)} this week</span>
            ${
-             // Hidden rather than shown as "+0.0": a pill that says nothing still has to be
-             // read before you know it says nothing.
+             // The run leads, because the run is what the squad was chosen on. Leading with
+             // this week's figure described the solve backwards, and it is why a squad picked
+             // over five gameweeks read as one picked over one.
              Math.abs(rec.wildcard.gainOverHorizon) >= 0.1
-               ? `<span class="pill">${rec.wildcard.gainOverHorizon >= 0 ? '+' : ''}${rec.wildcard.gainOverHorizon.toFixed(1)} over the run</span>`
+               ? `<span class="pill good">${rec.wildcard.gainOverHorizon >= 0 ? '+' : ''}${rec.wildcard.gainOverHorizon.toFixed(1)} over the run</span>`
                : ''
            }
+           <span class="pill">${rec.wildcard.gainThisWeek >= 0 ? '+' : ''}${rec.wildcard.gainThisWeek.toFixed(1)} this week</span>
            ${
              rec.wildcard.hitCostIfTransferred > 0
                ? `<span class="pill" style="background:var(--warn-fg);color:#000">-${rec.wildcard.hitCostIfTransferred} if done by transfer</span>`
@@ -627,21 +632,45 @@ export function renderRecommendation(
 
        ${renderPitch(rec.wildcard.eleven)}
 
-       <div class="scroll"><table>${head}<tbody>${rec.wildcard.eleven.starters
-         .map((player) =>
-           playerRow(
+       <div class="scroll"><table>
+         <thead><tr><th>Pos</th><th>Player</th><th>Club</th><th>This week</th>
+           <th>Next ${Math.max(0, rec.wildcard.runGameweeks - 1)}</th><th>xPts</th>
+           <th>Over the run</th></tr></thead>
+         <tbody>${[
+           ...rec.wildcard.eleven.starters.map((player) => ({ player, mark: '' })),
+           ...rec.wildcard.eleven.bench.map((player, index) => ({
              player,
-             player.playerId === rec.wildcard!.eleven.captain.playerId
-               ? '<span class="badge">C</span>'
-               : player.playerId === rec.wildcard!.eleven.viceCaptain.playerId
-                 ? '<span class="badge v">V</span>'
-                 : '',
-           ),
-         )
-         .join('')}
-         ${rec.wildcard.eleven.bench
-           .map((player, index) => playerRow(player, `<span class="muted">#${index + 1}</span>`))
-           .join('')}</tbody></table></div>`;
+             mark: `<span class="muted">#${index + 1}</span>`,
+           })),
+         ]
+           .map(({ player, mark }) => {
+             const entry = wildcardRun.get(player.playerId);
+             const armband =
+               player.playerId === rec.wildcard!.eleven.captain.playerId
+                 ? '<span class="badge">C</span>'
+                 : player.playerId === rec.wildcard!.eleven.viceCaptain.playerId
+                   ? '<span class="badge v">V</span>'
+                   : mark;
+             const thisWeek =
+               player.fixtures.length === 0
+                 ? '<span class="muted">BLANK</span>'
+                 : escapeHtml(
+                     player.fixtures.map((f) => `${f.isHome ? '' : '@'}${f.opponentShort}`).join(' + '),
+                   );
+             return `<tr>
+               <td>${escapeHtml(player.position)}</td>
+               <td>${escapeHtml(player.name)} ${armband}</td>
+               <td>${escapeHtml(player.clubShort)}</td>
+               <td>${thisWeek}</td>
+               <td class="muted">${escapeHtml((entry?.opponents ?? []).join(' ')) || '&mdash;'}</td>
+               <td>${player.xPts.toFixed(1)}</td>
+               <td><strong>${entry ? entry.runXPts.toFixed(1) : '&mdash;'}</strong></td>
+             </tr>`;
+           })
+           .join('')}</tbody></table></div>
+       <p class="muted" style="font-size:.88rem;margin:.4rem 0 0">The last column is what each
+       player is worth across the run, later gameweeks counting for less. That column is what
+       the squad was built on, not the one beside it.</p>`;
 
   const doneOutIds = new Set(rec.confirmedTransfers.map((t) => t.outPlayerId));
 

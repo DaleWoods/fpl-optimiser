@@ -286,6 +286,25 @@ export interface WildcardPlan {
   bankRemaining: number;
   /** What these same moves would cost in hits, made one at a time instead. */
   hitCostIfTransferred: number;
+  /**
+   * The run each player was actually chosen on.
+   *
+   * The squad is picked on the discounted horizon, not on this gameweek - a player's in-squad
+   * value is his whole run, because owning him is a commitment that lasts until the next
+   * transfer. Every number on the page was this week's, though, so a squad chosen on five
+   * gameweeks read as one chosen on one, and the obvious conclusion from looking at it was
+   * that the model had simply taken the highest scorers this week. This is the evidence that
+   * it did not.
+   */
+  run: {
+    playerId: number;
+    /** Discounted total across the whole horizon, including this gameweek. */
+    runXPts: number;
+    /** Who he faces after this week, in order. 'BLANK' where his club has no fixture. */
+    opponents: string[];
+  }[];
+  /** How many gameweeks the squad was chosen over. */
+  runGameweeks: number;
 }
 
 export interface Recommendation {
@@ -1566,6 +1585,47 @@ export async function recommend(
         0,
       );
 
+    // Who each chosen club faces across the rest of the horizon, so the page can show the run
+    // the squad was actually picked on rather than only the week in front of it.
+    const laterEvents = horizon.gameweeks
+      .filter((gw) => gw.eventId !== event.id)
+      .sort((a, b) => a.eventId - b.eventId)
+      .map((gw) => gw.eventId);
+
+    const opponentsByClub = new Map<number, string[]>();
+    if (laterEvents.length > 0) {
+      const placeholders = laterEvents.map(() => '?').join(',');
+      const rows = db
+        .prepare(
+          `SELECT f.event_id AS eventId, f.team_h AS home, f.team_a AS away,
+                  h.short_name AS homeShort, a.short_name AS awayShort
+           FROM fixture f
+           JOIN team h ON h.id = f.team_h
+           JOIN team a ON a.id = f.team_a
+           WHERE f.event_id IN (${placeholders})
+           ORDER BY f.event_id`,
+        )
+        .all(...laterEvents) as {
+        eventId: number;
+        home: number;
+        away: number;
+        homeShort: string;
+        awayShort: string;
+      }[];
+
+      const byClubEvent = new Map<string, string[]>();
+      for (const row of rows) {
+        push2(byClubEvent, `${row.home}:${row.eventId}`, row.awayShort.toUpperCase());
+        push2(byClubEvent, `${row.away}:${row.eventId}`, `@${row.homeShort.toLowerCase()}`);
+      }
+      for (const club of new Set(rebuild.squad.map((player) => player.clubId))) {
+        opponentsByClub.set(
+          club,
+          laterEvents.map((eventId) => (byClubEvent.get(`${club}:${eventId}`) ?? ['BLANK']).join('+')),
+        );
+      }
+    }
+
     wildcard = {
       squad: rebuild.squad,
       eleven: rebuild.eleven,
@@ -1580,6 +1640,12 @@ export async function recommend(
       // forecast: the same moves made one at a time cost four points each beyond the free one.
       hitCostIfTransferred:
         Math.max(0, rebuild.transfersOut.length - freeTransfers) * rules.transfers.hitCost,
+      run: rebuild.squad.map((player) => ({
+        playerId: player.playerId,
+        runXPts: horizonFor(horizon, player.playerId).horizonXPts,
+        opponents: opponentsByClub.get(player.clubId) ?? [],
+      })),
+      runGameweeks: horizon.gameweeks.length,
     };
   } catch (cause) {
     notes.push(
@@ -1740,4 +1806,11 @@ function describeCaptaincy(
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+/** Append to a keyed list, creating it on first use. A club can have two fixtures in a week. */
+function push2<K>(map: Map<K, string[]>, key: K, value: string): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
 }

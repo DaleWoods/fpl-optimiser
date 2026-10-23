@@ -509,6 +509,21 @@ It is the same solve the multi-transfer plan already ran, with the two constrain
 lifts — every transfer free, no cap on how many — so it reuses tested machinery rather than
 adding a second opinion beside it.
 
+**It was already picking on the run, and the page said otherwise.** "It looks like all you're
+doing is creating a team with the best points this week" was a fair read of the page and a wrong
+read of the solve — and the gap between those is the bug. A player's **in-squad** value has
+always been his whole discounted run (`horizon.length` 5, `decay` 0.75), because owning him is a
+commitment lasting until the next transfer, while **who starts** and **who captains** are re-solved
+every week and so stay single-week. Measured on a league built to swing — five clubs with a kind
+week and a brutal run after it, five the reverse — the Wildcard sold 12 of 15 players who all had
+the better fixture *that week*, giving up 2.3 points now to gain 58.8 over the run.
+
+But every number printed was this gameweek's, so a squad chosen over five gameweeks read as one
+chosen over one and there was no way to tell by looking. The card now leads with the run figure
+rather than this week's, and the table carries each player's **upcoming opponents** and **what he
+is worth across the run** — the column the squad was actually built on, next to the one it was
+not. Both halves are pinned: that it follows the run, and that it says so.
+
 **Budget was the part most likely to be silently wrong.** The only thing resembling this before
 was `?scratch=1`, which is linked from nowhere and builds within `rules.squad.budget` — somebody
 else's 100.0m. A Wildcard spends what *your* fifteen would sell for plus the bank, which is
