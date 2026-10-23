@@ -175,6 +175,29 @@
     "maxExpectedBonus": 1.6
   },
 
+  "setPieces": {
+    "$comment": [
+      "Who takes the penalties. The API has published it all along; nothing read it until now.",
+      "newPenaltyTakerGoalsPerMatch 0: OFF by default, and that is the whole point. A player's",
+      "expected goals ALREADY contain the penalties he has taken, so an uplift on top double",
+      "counts for every settled taker - nearly all of them. The case history cannot describe is",
+      "the taker appointed recently: his own record excludes the pens he is now going to take,",
+      "and will go on excluding them for weeks.",
+      "That case is detectable because set-piece duty is stored per snapshot, so a player who",
+      "is first choice now and was not in the oldest snapshot held is newly appointed. The",
+      "uplift applies to him and to nobody else.",
+      "A sensible value is about 0.10 goals a match: roughly five penalties per club per season",
+      "over 38 matches, times the share that are scored. At MID scoring that is half a point a",
+      "match, which is the right order - enough to separate two similar attackers, nowhere near",
+      "enough to overturn a real difference.",
+      "It stays at 0 until the ablation on the Accuracy page says it earns its place. Turning it",
+      "on changes xPts and so bumps modelVersion, which resets the self-correction - and that",
+      "correction is worth more than this is."
+    ],
+    "newPenaltyTakerGoalsPerMatch": 0,
+    "maxUplift": 0.25
+  },
+
   "differential": {
     "$comment": [
       "Open decision D4, resolved: mostly maximise points, with a mild tiebreak toward rank.",

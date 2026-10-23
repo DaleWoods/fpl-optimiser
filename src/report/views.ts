@@ -1956,8 +1956,8 @@ function renderAblation(ablation: AblationResult | null): string {
           ? '<span class="muted">changed nothing</span>'
           : row.significant
             ? row.delta < 0
-              ? '<strong style="color:var(--ok)">earning its place</strong>'
-              : '<strong style="color:var(--danger)">costing you points</strong>'
+              ? `<strong style="color:var(--ok)">${row.candidate ? 'worth switching on' : 'earning its place'}</strong>`
+              : `<strong style="color:var(--danger)">${row.candidate ? 'would cost you points' : 'costing you points'}</strong>`
             : '<span class="muted">not established</span>';
 
       return `<tr${row.significant && row.delta > 0 ? ' class="special"' : ''}>
@@ -1994,9 +1994,11 @@ function renderAblation(ablation: AblationResult | null): string {
   }
   <p class="muted" style="font-size:.88rem;margin:0 0 .5rem">Each part is switched off and the
   season replayed without it, against the full model's ${ablation.baselineMean.toFixed(1)} a week
-  over ${ablation.weeks} gameweeks. A <strong>negative</strong> number means removing it lost
-  points, so it is doing its job. A <strong>positive</strong> one means the model scored more
-  without it.</p>
+  over ${ablation.weeks} gameweeks. A <strong>negative</strong> number means the model is better
+  off with it; a <strong>positive</strong> one means it is costing you points. Rows marked
+  <em>candidate</em> are the other way round &mdash; not in the model yet, switched on to see
+  whether they should be &mdash; and the sign is flipped so the column reads the same either
+  way.</p>
 
   <div class="card" style="padding:.3rem .4rem"><div class="scroll"><table>
     <thead><tr><th>Part</th><th>Without it</th><th>95% interval</th><th>Verdict</th></tr></thead>

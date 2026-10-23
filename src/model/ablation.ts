@@ -53,6 +53,8 @@ export interface AblationRow {
   inert: boolean;
   /** Set when the component cannot be judged by this instrument at all. */
   notMeasurable: string | null;
+  /** True when this is not in the model yet and was switched ON to be measured. */
+  candidate: boolean;
 }
 
 export interface AblationResult {
@@ -65,13 +67,23 @@ export interface AblationResult {
   notes: string[];
 }
 
-/** A component, and the weights that switch it off. */
+/** A component, and the weights that switch it off - or, for a candidate, ON. */
 interface Knockout {
   key: string;
   label: string;
   what: string;
   /** Null when this instrument structurally cannot see it - see the header. */
   notMeasurable?: string;
+  /**
+   * A component that is currently OFF, switched on to see whether it should ship.
+   *
+   * Same machinery, opposite direction, and the sign is flipped on the way out so the table
+   * reads the same way throughout: negative is good, positive is bad. Without this a candidate
+   * has to be shipped to be measured, which means shipping it to find out it was wrong - and
+   * for a scoring change that also resets the self-correction, which is worth more than most
+   * candidates are.
+   */
+  candidate?: boolean;
   apply: (weights: ModelWeights) => ModelWeights;
 }
 
@@ -189,6 +201,18 @@ export const KNOCKOUTS: Knockout[] = [
     },
   },
   {
+    key: 'newPenaltyTaker',
+    label: 'New penalty takers (candidate)',
+    what: 'crediting a player only recently given the penalties with the goals they are worth',
+    candidate: true,
+    apply: (weights) => {
+      const next = clone(weights);
+      // About five penalties per club per season over 38 matches, times the share scored.
+      next.setPieces.newPenaltyTakerGoalsPerMatch = 0.1;
+      return next;
+    },
+  },
+  {
     key: 'horizon',
     label: 'The run of fixtures',
     what: 'looking beyond this gameweek when choosing players',
@@ -248,18 +272,24 @@ export function runAblation(db: Database, rules: Rules, weights: ModelWeights): 
       continue;
     }
 
-    const interval = bootstrapInterval(differences);
+    // A candidate is switched ON rather than off, so its raw difference carries the opposite
+    // meaning. Flipped here so one column reads one way down the whole table: negative is a
+    // component worth having, positive is one that costs points.
+    const sign = knockout.candidate === true ? -1 : 1;
+    const signed = differences.map((difference) => difference * sign);
+    const interval = bootstrapInterval(signed);
     rows.push({
       key: knockout.key,
       label: knockout.label,
       what: knockout.what,
-      delta: round(mean(differences)),
+      delta: round(mean(signed)),
       weekly: withoutModel.weekly,
       low: round(interval.low),
       high: round(interval.high),
       significant: interval.low > 0 || interval.high < 0,
       inert: differences.every((difference) => difference === 0),
       notMeasurable: knockout.notMeasurable ?? null,
+      candidate: knockout.candidate === true,
     });
   }
 

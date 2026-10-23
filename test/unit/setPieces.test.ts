@@ -76,6 +76,40 @@ describe('set-piece duty', () => {
     );
   });
 
+  it('credits a newly appointed taker, and only him, once switched on', async () => {
+    // The one case the history cannot describe. Both players are first-choice takers now; only
+    // one of them was not a taker when the oldest snapshot was written, so only his own record
+    // is missing the penalties he is about to take.
+    const db = await seed({ penalties_order: 1 });
+    db.prepare('UPDATE player_snapshot SET penalties_order = 1 WHERE player_id = 2').run();
+
+    // A second, later snapshot in which player 1 has taken the job over and player 2 has not.
+    const first = (db.prepare('SELECT id FROM snapshot ORDER BY id ASC LIMIT 1').get() as { id: number }).id;
+    db.prepare('UPDATE player_snapshot SET penalties_order = NULL WHERE snapshot_id = ? AND player_id = 1').run(first);
+    const later = Number(
+      db.prepare('INSERT INTO snapshot (taken_at) VALUES (4000000000)').run().lastInsertRowid,
+    );
+    db.prepare(
+      `INSERT INTO player_snapshot (snapshot_id, player_id, taken_at, now_cost, status, raw_json,
+                                    minutes, starts, goals_scored, assists, expected_goals,
+                                    expected_assists, bonus, selected_by_percent, penalties_order)
+       SELECT ?, player_id, 4000000000, now_cost, status, '', minutes, starts, goals_scored,
+              assists, expected_goals, expected_assists, bonus, selected_by_percent, 1
+       FROM player_snapshot WHERE snapshot_id = ?`,
+    ).run(later, first);
+
+    const on = { ...weights, setPieces: { ...weights.setPieces, newPenaltyTakerGoalsPerMatch: 0.1 } };
+    const off = buildProjections(db, 1, rules, weights);
+    const lifted = buildProjections(db, 1, rules, on);
+
+    const find = (list: typeof off, id: number) => list.find((p) => p.playerId === id)!;
+    // Player 1 took the job over: he gains.
+    expect(find(lifted, 1).xPts).toBeGreaterThan(find(off, 1).xPts);
+    // Player 2 has had it all along, so his expected goals already contain the penalties and
+    // crediting them again would count the same thing twice.
+    expect(find(lifted, 2).xPts).toBeCloseTo(find(off, 2).xPts, 10);
+  });
+
   it('survives a payload that does not mention set pieces at all', async () => {
     // Older saved payloads, and hand-made import files, simply will not have these fields.
     // An absent field has to read as "not known", never as "not a taker" and never as a crash.

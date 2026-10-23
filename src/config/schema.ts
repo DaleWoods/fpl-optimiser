@@ -241,6 +241,19 @@ export const modelWeightsSchema = z.strictObject({
     shrinkage: probability,
     maxExpectedBonus: z.number().min(0),
   }),
+  setPieces: z.strictObject({
+    /**
+     * Extra goals per match credited to a player who has only RECENTLY been given penalties.
+     *
+     * Zero by default. Expected goals already contain the penalties a player has taken, so an
+     * uplift on top double counts for every settled taker. The exception is the one history
+     * cannot describe - the taker appointed since his record was written - and set-piece duty
+     * being stored per snapshot is what makes that case detectable at all.
+     */
+    newPenaltyTakerGoalsPerMatch: z.number().min(0),
+    /** Hard ceiling on the resulting goals-per-match uplift, whatever the figure above says. */
+    maxUplift: z.number().min(0),
+  }),
   differential: z.strictObject({
     weight: z.number().min(0),
     ownershipPivot: z.number().min(0).max(100),

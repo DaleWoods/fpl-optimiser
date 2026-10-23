@@ -540,6 +540,43 @@ export function buildProjections(
 
   const priceTrends = classifyPriceTrends(players, weights);
 
+  // Who has only RECENTLY been given the penalties.
+  //
+  // Set-piece duty is stored per snapshot, which is what makes this answerable at all: a
+  // player who is first choice now and was not in the oldest snapshot still held has had the
+  // job handed to him since most of his record was written. His expected goals do not contain
+  // the penalties he is about to take, and will not for weeks - which is exactly the window a
+  // transfer is decided in.
+  //
+  // Compared against the OLDEST snapshot rather than the previous one. Duty can read as null
+  // for a week when a club has not published it, and a player would otherwise flicker in and
+  // out of "newly appointed" on nothing but a gap in the feed.
+  const newPenaltyTakers = new Set<number>();
+  if (weights.setPieces.newPenaltyTakerGoalsPerMatch > 0) {
+    const oldest = db
+      .prepare('SELECT id FROM snapshot ORDER BY taken_at ASC, id ASC LIMIT 1')
+      .get() as { id: number } | undefined;
+
+    if (oldest !== undefined && oldest.id !== snapshot?.id) {
+      const before = new Map(
+        (
+          db
+            .prepare(
+              'SELECT player_id AS playerId, penalties_order AS ord FROM player_snapshot WHERE snapshot_id = ?',
+            )
+            .all(oldest.id) as { playerId: number; ord: number | null }[]
+        ).map((row) => [row.playerId, row.ord]),
+      );
+      for (const row of players) {
+        // Unknown then is not the same as "was not the taker": a player the oldest snapshot
+        // never saw is a player we know nothing about, so he gets nothing.
+        if (row.penaltiesOrder === 1 && before.has(row.playerId) && before.get(row.playerId) !== 1) {
+          newPenaltyTakers.add(row.playerId);
+        }
+      }
+    }
+  }
+
   const projected: ProjectedPlayer[] = [];
 
   for (const row of players) {
@@ -718,6 +755,7 @@ export function buildProjections(
       previousSeasonMinutes: usingPrevious ? previous.minutes : null,
       shortRestFixture: shortRestClubs.has(row.teamId),
       fallbackExpectedPoints: row.epNext,
+      newPenaltyTaker: newPenaltyTakers.has(row.playerId),
     };
 
     const projection = projectPlayer(input, weights, rules);

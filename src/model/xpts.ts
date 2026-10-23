@@ -79,6 +79,12 @@ export interface PlayerModelInput {
    * the projection falls back to this and reports low confidence.
    */
   fallbackExpectedPoints?: number | null;
+  /**
+   * True only for a player who has been given the penalties SINCE most of his record was
+   * written - see build.ts. A settled taker is false, because his expected goals already
+   * contain his penalties and crediting them again would count the same thing twice.
+   */
+  newPenaltyTaker?: boolean;
 }
 
 export interface Projection {
@@ -370,7 +376,21 @@ export function projectPlayer(
   const defconThreshold = scoring.defensiveContribution.thresholds[input.position] ?? null;
 
   // Attacking rates: prefer expected stats, which stabilise faster than raw goals.
-  const goalRate = blendRate(input.xgPer90, input.goalsPer90, weights.attacking.xgWeight);
+  //
+  // The penalty uplift is added to the rate rather than to the points, so it flows through
+  // the fixture scaling, the minutes model and the score distribution like any other goal
+  // threat - a penalty taker who is not going to play is not a penalty taker this week.
+  // Bounded, and applied only to a taker appointed since his record was written: for everyone
+  // else the pens are already inside xgPer90 and adding them again would count them twice.
+  const penaltyUplift =
+    input.newPenaltyTaker === true
+      ? Math.min(weights.setPieces.maxUplift, weights.setPieces.newPenaltyTakerGoalsPerMatch)
+      : 0;
+  const goalRate =
+    blendRate(input.xgPer90, input.goalsPer90, weights.attacking.xgWeight) === null &&
+    penaltyUplift === 0
+      ? null
+      : (blendRate(input.xgPer90, input.goalsPer90, weights.attacking.xgWeight) ?? 0) + penaltyUplift;
   const assistRate = blendRate(input.xaPer90, input.assistsPer90, weights.attacking.xgWeight);
 
   let appearance = 0;
