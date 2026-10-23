@@ -187,6 +187,16 @@ export const modelWeightsSchema = z.strictObject({
     recentWeight: probability,
     xgWeight: probability,
     fixtureScalingWeight: z.number().min(0),
+    /**
+     * What a fixture's expected goals are compared against when scaling an attacking rate.
+     *
+     * 'league' divides by the league average, which counts club strength twice: a strong
+     * club's attacker earned his rate per 90 *while playing for that strong club*, and
+     * dividing his club's expected goals by the league average credits him for it again.
+     * 'club' divides by that club's own typical output, leaving the scalar measuring only the
+     * opponent and the venue - which is all it was ever meant to measure.
+     */
+    fixtureBaseline: z.enum(['league', 'club']),
     priorWeightMinutes: z.number().min(0),
     /**
      * A stronger version of priorWeightMinutes, applied only to goal involvement (goals,

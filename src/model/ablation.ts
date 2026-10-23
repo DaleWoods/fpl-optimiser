@@ -213,6 +213,19 @@ export const KNOCKOUTS: Knockout[] = [
     },
   },
   {
+    key: 'clubBaseline',
+    label: 'Fixture scale vs the club itself (candidate)',
+    what:
+      "measuring a fixture against the club's own typical output instead of the league " +
+      'average, which counts club strength twice',
+    candidate: true,
+    apply: (weights) => {
+      const next = clone(weights);
+      next.attacking.fixtureBaseline = 'club';
+      return next;
+    },
+  },
+  {
     key: 'horizon',
     label: 'The run of fixtures',
     what: 'looking beyond this gameweek when choosing players',

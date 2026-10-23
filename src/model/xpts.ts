@@ -23,6 +23,12 @@ export interface FixtureContext {
   opponentShort: string;
   /** The API's fixture difficulty rating, carried through for explanation only. */
   difficulty: number | null;
+  /**
+   * What this club typically expects to score in a match, against an average opponent, home
+   * and away averaged. Used by attacking.fixtureBaseline 'club' as the yardstick the fixture
+   * is measured against - see that setting for why the league average is the wrong one.
+   */
+  clubBaselineGoals?: number;
 }
 
 export interface PlayerModelInput {
@@ -417,11 +423,22 @@ export function projectPlayer(
       weights,
     );
 
-    // How favourable this fixture is, relative to an average one.
-    const attackScale =
-      1 +
-      weights.attacking.fixtureScalingWeight *
-        (teamGoals / weights.teamStrength.leagueAverageGoalsPerGame - 1);
+    // How favourable this fixture is - and favourable COMPARED TO WHAT is the whole question.
+    //
+    // Against the league average, club strength gets counted twice. A strong club's attacker
+    // earned his rate per 90 while playing for that strong club; dividing his club's expected
+    // goals by the league average credits him for it a second time. Measured on this model's
+    // own constants, facing a league-average opponent at home, a strong club's attacker is
+    // scaled 1.29 and a weak club's 0.96 - an 18% spread that has nothing to do with the
+    // fixture in front of them.
+    //
+    // Against the club's own typical output, the scalar measures only what it is for: this
+    // opponent, and this venue.
+    const baseline =
+      weights.attacking.fixtureBaseline === 'club' && fixture.clubBaselineGoals
+        ? fixture.clubBaselineGoals
+        : weights.teamStrength.leagueAverageGoalsPerGame;
+    const attackScale = 1 + weights.attacking.fixtureScalingWeight * (teamGoals / baseline - 1);
 
     const minutesShare = minutes.expectedMinutes / 90;
 

@@ -6,7 +6,7 @@ import { loadCalibration } from './calibration.js';
 import { scoreDistribution } from './distribution.js';
 import { recentFixturesByPlayer, sumRecent, type RecentFixtureRow } from './recentForm.js';
 import { computeTeamForm, type TeamForm } from './table.js';
-import { projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
+import { expectedTeamGoals, projectPlayer, type FixtureContext, type PlayerModelInput } from './xpts.js';
 
 interface PlayerRow {
   playerId: number;
@@ -470,6 +470,17 @@ export function buildProjections(
   const attackFor = (teamId: number): number => attackAdjust.get(teamId) ?? 1;
   const defenceFor = (teamId: number): number => defenceAdjust.get(teamId) ?? 1;
 
+  // The league's average defensive rating, which is the "average opponent" each club's own
+  // baseline output is measured against. Form-adjusted like everything else, so a league that
+  // has collectively tightened up does not read as every attack having gone off.
+  const defenceRatings = [...teams.values()].flatMap((team) =>
+    [team.defenceHome, team.defenceAway].filter((value): value is number => value !== null && value > 0),
+  );
+  const averageDefence =
+    defenceRatings.length > 0
+      ? defenceRatings.reduce((sum, value) => sum + value, 0) / defenceRatings.length
+      : weights.teamStrength.fallbackStrength;
+
   // Every club's fixtures this gameweek: none is a blank, two is a double.
   const fixturesByTeam = new Map<number, FixtureContext[]>();
   for (const fixture of fixtures) {
@@ -479,6 +490,13 @@ export function buildProjections(
 
     const fallback = weights.teamStrength.fallbackStrength;
 
+    // What each club typically expects to score: an average opponent, home and away averaged.
+    // The yardstick for attacking.fixtureBaseline 'club'.
+    const baselineFor = (attackHome: number, attackAway: number): number =>
+      (expectedTeamGoals(attackHome, averageDefence, true, weights) +
+        expectedTeamGoals(attackAway, averageDefence, false, weights)) /
+      2;
+
     push(fixturesByTeam, fixture.teamH, {
       teamAttack: (home.attackHome ?? fallback) * attackFor(fixture.teamH),
       teamDefence: (home.defenceHome ?? fallback) * defenceFor(fixture.teamH),
@@ -487,6 +505,10 @@ export function buildProjections(
       isHome: true,
       opponentShort: away.shortName,
       difficulty: fixture.difficultyH,
+      clubBaselineGoals: baselineFor(
+        (home.attackHome ?? fallback) * attackFor(fixture.teamH),
+        (home.attackAway ?? fallback) * attackFor(fixture.teamH),
+      ),
     });
 
     push(fixturesByTeam, fixture.teamA, {
@@ -497,6 +519,10 @@ export function buildProjections(
       isHome: false,
       opponentShort: home.shortName,
       difficulty: fixture.difficultyA,
+      clubBaselineGoals: baselineFor(
+        (away.attackHome ?? fallback) * attackFor(fixture.teamA),
+        (away.attackAway ?? fallback) * attackFor(fixture.teamA),
+      ),
     });
   }
 

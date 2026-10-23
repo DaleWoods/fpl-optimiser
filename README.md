@@ -1483,6 +1483,30 @@ Two details that are easy to get wrong:
   the gap between two metrics rather than on its form. Early in a season, when the per-gameweek
   breakdown lags the results, that mix is the normal state rather than the edge case.
 
+### Favourable compared to what
+
+A fixture's expected goals are scaled against something, and for the whole life of this app that
+something was the **league average**. That counts club strength twice.
+
+A player's expected goals per 90 were earned *while playing for his club*. Dividing his club's
+expected goals for this fixture by the league average then credits him for his club a second
+time. On this model's own constants, facing a league-average opponent at home, the scale comes
+out at **1.29 for a strong club's attacker and 0.96 for a weak one** — an 18% spread with nothing
+to do with the fixture in front of them. End to end on real projections, two identical players
+with identical records differing only in club strength came out **15% apart**; against the club's
+own baseline they come out level, which is correct, because their records already said which club
+they play for.
+
+It corroborates what the Accuracy page has been showing: the "rated too highly" list has been led
+by attackers from the strongest clubs.
+
+`attacking.fixtureBaseline` switches the yardstick: `league` (the default, current behaviour) or
+`club`, which divides by that club's own typical output — an average opponent, home and away
+averaged — leaving the scalar measuring only the opponent and the venue, which is all it was ever
+for. It ships **off**, because switching it changes xPts and so resets the self-correction; the
+ablation on the Accuracy page carries it as a **candidate** so it can be measured before that
+price is paid.
+
 ### Who takes the penalties
 
 Free in `bootstrap-static` since the first fetch this app ever made, and read by nothing:

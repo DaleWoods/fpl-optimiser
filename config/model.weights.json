@@ -105,6 +105,16 @@
 
   "attacking": {
     "$comment": [
+      "fixtureBaseline: what a fixture's expected goals are compared AGAINST when scaling a",
+      "player's attacking rate. 'league' divides by the league average, which double counts club",
+      "strength: a strong club's attacker already earned his rate per 90 while playing for that",
+      "strong club, and dividing his club's expected goals by the league average credits him for",
+      "it a second time. Measured on the model's own constants, against a league-average opponent",
+      "at home, a strong club's attacker is scaled 1.29 and a weak club's 0.96 - an 18% spread",
+      "that is nothing to do with the fixture. 'club' divides by that club's OWN typical output",
+      "instead, leaving the scalar measuring only what it is for: this opponent, and this venue.",
+      "'league' is the default until the ablation says otherwise, because switching it changes",
+      "xPts and so resets the self-correction.",
       "Per-90 attacking rates. xG/xA are preferred where the API supplies them because they",
       "stabilise far faster than raw goals; xgWeight blends the two. Rates are then scaled by",
       "how good the fixture looks relative to an average one.",
@@ -133,6 +143,7 @@
     "recentWeight": 0.6,
     "xgWeight": 0.7,
     "fixtureScalingWeight": 1.0,
+    "fixtureBaseline": "league",
     "priorWeightMinutes": 900,
     "lowThreatPriorWeightMinutes": 2700,
     "anchorPriorWeightMinutes": 900,
