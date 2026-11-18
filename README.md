@@ -1222,6 +1222,14 @@ The wiring is guarded separately from the behaviour, because they fail different
 *pass* the cutoff leaves every other backtest test green while the numbers quietly become
 fiction, so the call site is asserted directly.
 
+**The replay runs the app's own selection code.** It used to pick the eleven highest
+projections that fit a formation. The app does not do that: it discounts a player who may not
+start, weighs a captain's upside as well as his average, and orders the bench for auto-subs. A
+replay that skips all of it grades a model nobody is running — and it made the ablation's
+captaincy rows unable to show anything, because they switched off something the replay had never
+looked at. What still cannot be replayed is said so: the sample of top managers is never kept, so
+that row reads *cannot be judged here* rather than *changed nothing*.
+
 **Everyone chooses from the same fifteen.** The replay took your squad from the advice stored
 before the deadline and "the XI you played" from the picks FPL recorded. When they differed — a
 transfer made after generating — the model was choosing from one squad and you from another: a
@@ -1511,6 +1519,27 @@ Two details that are easy to get wrong:
   comparing a club measured in one against a league average made partly of the other rates it on
   the gap between two metrics rather than on its form. Early in a season, when the per-gameweek
   breakdown lags the results, that mix is the normal state rather than the edge case.
+
+### Only eleven of them play
+
+Two places treated all fifteen players as though they score every week.
+
+**Building a squad.** A squad place is worth the bench weighting of what the player is projected
+to do, and a starting place makes up the rest — but the run of fixtures *after* this gameweek was
+credited in full to every squad place, starter or not. So the same substitute was worth 12% of
+his points this week and 100% of them every week after, and the optimiser, seeing fifteen players
+all "scoring" from next week on, spent on the bench. On a league where price tracks quality it
+parked a **£6.8m forward on the bench**; valued consistently it moves **£2.3m into the eleven**.
+The bench weighting now says the same thing about next week as about this one. The test is an
+invariance: give every player a future exactly proportional to his present and the squad must not
+change, because every option has been scaled alike — under the old objective it did.
+
+**Ranking transfers.** The gain from a transfer over the run was "his fixtures minus the other
+man's", whether or not either would get on the pitch. Swapping one substitute for a better one
+was credited with the whole difference and could out-rank a real upgrade to the eleven for the
+one free transfer of the week. It is now the change in what the squad's run is worth given who
+starts and who sits (`runValue`), used by the single-transfer cards, the priority-fix plan and
+the Wildcard gain alike.
 
 ### Two more places the model was cautious twice
 

@@ -159,6 +159,9 @@ export const KNOCKOUTS: Knockout[] = [
     key: 'eliteOwnership',
     label: 'What good managers own',
     what: 'the nudge toward players the sampled top managers hold',
+    notMeasurable:
+      'The sample of top managers is taken fresh each week and never kept, so there is no ' +
+      'record of what they owned before a past deadline to replay it with.',
     apply: (weights) => {
       const next = clone(weights);
       next.eliteOwnership.weight = 0;
@@ -174,6 +177,28 @@ export const KNOCKOUTS: Knockout[] = [
       const next = clone(weights);
       next.captain.ceilingWeight = 0;
       next.captain.maxCeilingBonus = 0;
+      return next;
+    },
+  },
+  {
+    key: 'startRisk',
+    label: 'Start-risk discount',
+    what: 'marking a player down, when choosing the eleven, for the chance he does not start',
+    apply: (weights) => {
+      const next = clone(weights);
+      next.optimiser.startRiskWeight = 0;
+      return next;
+    },
+  },
+  {
+    key: 'confidenceDiscount',
+    label: 'Confidence discount',
+    what: 'marking a player down, when choosing the eleven, for a thin record behind his number',
+    apply: (weights) => {
+      const next = clone(weights);
+      next.confidence.high = 1;
+      next.confidence.medium = 1;
+      next.confidence.low = 1;
       return next;
     },
   },
@@ -240,8 +265,12 @@ export const KNOCKOUTS: Knockout[] = [
   },
 ];
 
-export function runAblation(db: Database, rules: Rules, weights: ModelWeights): AblationResult {
-  const baseline = runBacktest(db, rules, weights);
+export async function runAblation(
+  db: Database,
+  rules: Rules,
+  weights: ModelWeights,
+): Promise<AblationResult> {
+  const baseline = await runBacktest(db, rules, weights);
   const notes: string[] = [];
 
   if (baseline.weeks.length < 2) {
@@ -265,7 +294,7 @@ export function runAblation(db: Database, rules: Rules, weights: ModelWeights): 
 
   const rows: AblationRow[] = [];
   for (const knockout of KNOCKOUTS) {
-    const without = runBacktest(db, rules, knockout.apply(weights));
+    const without = await runBacktest(db, rules, knockout.apply(weights));
     const withoutModel = without.policies.find((policy) => policy.key === 'model')!;
 
     // Paired on gameweek rather than on position in the list. A knockout can change which

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { Database } from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { StubFplApi } from '../../src/api/replayClient.js';
@@ -92,7 +93,7 @@ describe('replaying the season in points', () => {
     ).run(eventId, points, nowSeconds());
   }
 
-  it('replays a gameweek that has no snapshot behind it', () => {
+  it('replays a gameweek that has no snapshot behind it', async () => {
     // What used to cap the sample. A snapshot only exists for a week somebody was running this
     // app, so the season before installation was unreplayable however complete the results
     // were - and with five weeks the smallest detectable edge is bigger than any edge worth
@@ -104,7 +105,7 @@ describe('replaying the season in points', () => {
     // No snapshot predates gameweek 1's deadline any more.
     db.prepare('UPDATE event SET deadline_time = 1 WHERE id = 1').run();
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
 
     expect(result.weeks.map((week) => week.eventId)).toEqual([1, 2, 3]);
     const first = result.weeks.find((week) => week.eventId === 1)!;
@@ -115,7 +116,7 @@ describe('replaying the season in points', () => {
     expect(result.notes.join(' ')).toMatch(/rebuilt from match history/i);
   });
 
-  it("scores FPL's own number only over the weeks it actually exists for", () => {
+  it("scores FPL's own number only over the weeks it actually exists for", async () => {
     // ep_next is the API's own forecast and cannot be reconstructed. Giving a rebuilt week a
     // zero, a substitute, or the model's own figure would all make the benchmark easier to
     // beat on weeks where it was never asked the question. It covers fewer weeks and says so.
@@ -124,7 +125,7 @@ describe('replaying the season in points', () => {
     for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
     db.prepare('UPDATE event SET deadline_time = 1 WHERE id = 1').run();
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
     const fpl = result.policies.find((p) => p.key === 'fpl')!;
     const model = result.policies.find((p) => p.key === 'model')!;
 
@@ -133,12 +134,12 @@ describe('replaying the season in points', () => {
     expect(fpl.weekly).toHaveLength(2);
   });
 
-  it('scores every policy over the gameweeks it can replay', () => {
+  it('scores every policy over the gameweeks it can replay', async () => {
     seedSquad([1, 2, 3]);
     seedResults([1, 2, 3]);
     for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
 
     expect(result.weeks).toHaveLength(3);
     const model = result.policies.find((p) => p.key === 'model')!;
@@ -148,14 +149,14 @@ describe('replaying the season in points', () => {
     expect(result.policies.map((p) => p.key).sort()).toEqual(['fpl', 'hold', 'model', 'you']);
   });
 
-  it('reports the model LOSING when it does worse than what you played', () => {
+  it('reports the model LOSING when it does worse than what you played', async () => {
     // The finding this exists to be capable of producing, and the one the live data has been
     // suggesting for weeks.
     seedSquad([1, 2, 3]);
     seedResults([1, 2, 3]);
     for (const gw of [1, 2, 3]) seedYourScore(gw, 500);
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
     const versus = result.versusYou.find((v) => v.key === 'model')!;
 
     expect(versus.meanDifference).toBeLessThan(0);
@@ -163,7 +164,7 @@ describe('replaying the season in points', () => {
     expect(versus.significant).toBe(true);
   });
 
-  it('refuses to call a difference real when the interval spans zero', () => {
+  it('refuses to call a difference real when the interval spans zero', async () => {
     // Four gameweeks of noise is not evidence, and saying so is the whole point of the
     // interval. A point estimate with no uncertainty beside it invites acting on nothing.
     seedSquad([1, 2, 3]);
@@ -172,37 +173,37 @@ describe('replaying the season in points', () => {
     seedYourScore(2, 90);
     seedYourScore(3, 50);
 
-    const versus = runBacktest(db, rules, weights).versusYou.find((v) => v.key === 'model')!;
+    const versus = (await runBacktest(db, rules, weights)).versusYou.find((v) => v.key === 'model')!;
     expect(versus.low).toBeLessThan(versus.high);
     if (versus.low < 0 && versus.high > 0) expect(versus.significant).toBe(false);
   });
 
-  it('states the smallest edge this many gameweeks could detect', () => {
+  it('states the smallest edge this many gameweeks could detect', async () => {
     seedSquad([1, 2, 3]);
     seedResults([1, 2, 3]);
     seedYourScore(1, 30);
     seedYourScore(2, 55);
     seedYourScore(3, 42);
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
     // Usually larger than the effect being argued about, which is the useful part.
     expect(result.detectableEdge).not.toBeNull();
     expect(result.detectableEdge!).toBeGreaterThan(0);
   });
 
-  it('says which gameweeks it could not replay instead of quietly dropping them', () => {
+  it('says which gameweeks it could not replay instead of quietly dropping them', async () => {
     // A squad is only on record from gameweek 2 here.
     seedSquad([2, 3]);
     seedResults([1, 2, 3]);
     for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
 
     expect(result.weeks.map((w) => w.eventId)).toEqual([2, 3]);
     expect(result.notes.join(' ')).toMatch(/Gameweek 1: no squad on record/);
   });
 
-  it('gives the same interval twice for the same data', () => {
+  it('gives the same interval twice for the same data', async () => {
     // An interval that moves between page loads is not evidence of anything.
     seedSquad([1, 2, 3]);
     seedResults([1, 2, 3]);
@@ -210,20 +211,20 @@ describe('replaying the season in points', () => {
     seedYourScore(2, 70);
     seedYourScore(3, 45);
 
-    const first = runBacktest(db, rules, weights).versusYou.find((v) => v.key === 'model')!;
-    const second = runBacktest(db, rules, weights).versusYou.find((v) => v.key === 'model')!;
+    const first = (await runBacktest(db, rules, weights)).versusYou.find((v) => v.key === 'model')!;
+    const second = (await runBacktest(db, rules, weights)).versusYou.find((v) => v.key === 'model')!;
     expect(second.low).toBe(first.low);
     expect(second.high).toBe(first.high);
   });
 
-  it('names the captain each policy would have chosen', () => {
+  it('names the captain each policy would have chosen', async () => {
     // The armband is where the measured cost is, so a replay that hid its own captain pick
     // would be useless for diagnosing it.
     const squad = seedSquad([1, 2, 3]);
     seedResults([1, 2, 3], { playerId: squad[12]!, points: 20 });
     for (const gw of [1, 2, 3]) seedYourScore(gw, 40);
 
-    const week = runBacktest(db, rules, weights).weeks[0]!;
+    const week = (await runBacktest(db, rules, weights)).weeks[0]!;
     expect(week.captainByPolicy.model).not.toBeNull();
     expect(week.captainByPolicy.fpl).not.toBeNull();
   });
@@ -243,6 +244,16 @@ describe('the replay must not be able to see the future', () => {
     expect(call).toMatch(/asOfSnapshotId/);
     // The snapshot alone is not enough: match history and results are not tied to one.
     expect(call.slice(0, 300)).toMatch(/asOfEventId:\s*eventId/);
+  });
+
+  it('names its eleven with the app\'s own selection code, not a stand-in', () => {
+    // The replay used to pick the eleven highest projections that fit a formation. The app
+    // does not: it discounts a player who may not start, weighs a captain's upside, and orders
+    // the bench for auto-subs. A replay that skips that grades a model nobody is running, and
+    // it made the ablation's captaincy rows unable to show anything at all.
+    const source = readFileSync(new URL('../../src/model/backtest.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/selectBestEleven\(resolved, rules, weights, solver\)/);
+    expect(source).toMatch(/const modelXi = await modelEleven\(squad, projections, rules, weights, solver\)/);
   });
 
   it('only ever reads a snapshot from before the deadline', async () => {
@@ -323,28 +334,28 @@ describe('not mistaking missing data for a bad model', () => {
     for (const id of playerIds) insert.run(id, eventId, nowSeconds());
   }
 
-  it('leaves out a gameweek whose results are mostly missing, and says so', () => {
+  it('leaves out a gameweek whose results are mostly missing, and says so', async () => {
     const squad = squadOf15();
     storeSquad([1, 2], squad);
     seedResults(1, squad.map((p) => p.id));           // complete
     seedResults(2, squad.slice(0, 5).map((p) => p.id)); // only a third have results
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
 
     expect(result.weeks.map((w) => w.eventId)).toEqual([1]);
     expect(result.notes.join(' ')).toMatch(/Gameweek 2: only 5 of 15 squad players/);
   });
 
-  it('reports how complete each replayed week was', () => {
+  it('reports how complete each replayed week was', async () => {
     const squad = squadOf15();
     storeSquad([1], squad);
     seedResults(1, squad.map((p) => p.id));
 
-    const week = runBacktest(db, rules, weights).weeks[0]!;
+    const week = (await runBacktest(db, rules, weights)).weeks[0]!;
     expect(week.coverage).toBe(1);
   });
 
-  it('scores your XI from the same results map, not from an external total', () => {
+  it('scores your XI from the same results map, not from an external total', async () => {
     // The bias being removed. Your real FPL total knows about players this database has no
     // result for; a replay does not. Pairing one against the other puts every gap on one side.
     const squad = squadOf15();
@@ -372,7 +383,7 @@ describe('not mistaking missing data for a bad model', () => {
        VALUES (1, 1, 9999, ?)`,
     ).run(nowSeconds());
 
-    const result = runBacktest(db, rules, weights);
+    const result = (await runBacktest(db, rules, weights));
     const you = result.policies.find((p) => p.key === 'you')!;
 
     expect(you.total).toBeLessThan(500);
@@ -394,7 +405,7 @@ describe('not mistaking missing data for a bad model', () => {
     );
   }
 
-  it('lets every policy choose from the fifteen you actually held', () => {
+  it('lets every policy choose from the fifteen you actually held', async () => {
     // The advice is stored before the deadline; the picks are what you really went in with.
     // When they differ - a transfer made after generating - the model used to choose from the
     // stored fifteen while "the XI you played" came from the real one. A player bought on the
@@ -427,7 +438,7 @@ describe('not mistaking missing data for a bad model', () => {
     seedResults(1, [...advised, bought].map((p) => p.id));
     db.prepare('UPDATE actual_points SET points = 30 WHERE event_id = 1 AND player_id = ?').run(bought.id);
 
-    const week = runBacktest(db, rules, weights).weeks[0]!;
+    const week = (await runBacktest(db, rules, weights)).weeks[0]!;
 
     // Captained and doubled. Confined to the stored fifteen the model could not have scored a
     // single one of his points.
@@ -437,7 +448,7 @@ describe('not mistaking missing data for a bad model', () => {
     expect(week.scores.model).toBeGreaterThanOrEqual(60);
   });
 
-  it('doubles the vice-captain you actually chose when your captain does not play', () => {
+  it('doubles the vice-captain you actually chose when your captain does not play', async () => {
     // The vice used to be "the first starter who is not the captain" - in practice the
     // goalkeeper - so a missing captain doubled a keeper's score and ignored your real vice.
     const squad = squadOf15();
@@ -455,7 +466,7 @@ describe('not mistaking missing data for a bad model', () => {
     db.prepare('UPDATE actual_points SET points = 0, minutes = 0 WHERE event_id = 1 AND player_id = ?').run(captain);
     db.prepare('UPDATE actual_points SET points = 10 WHERE event_id = 1 AND player_id = ?').run(realVice);
 
-    const you = runBacktest(db, rules, weights).weeks[0]!.scores.you;
+    const you = (await runBacktest(db, rules, weights)).weeks[0]!.scores.you;
 
     // Nine starters at 4, the vice at 10 doubled, and one substitute at 4 on for the captain.
     // Doubling "the first starter who is not the captain" instead would give 4 x 2 and leave

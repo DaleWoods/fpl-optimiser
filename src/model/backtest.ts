@@ -4,6 +4,9 @@ import type { ProjectedPlayer } from '../domain/types.js';
 import { buildProjections } from './build.js';
 import { replayCalibrationFactors } from './calibrationReplay.js';
 import { simulateAutoSubs } from './accuracy.js';
+import { GlpkSolver } from '../optimise/glpkSolver.js';
+import type { Solver } from '../optimise/solver.js';
+import { selectBestEleven } from '../optimise/squad.js';
 
 /**
  * Replaying the season to find out whether any of this is worth running.
@@ -265,11 +268,59 @@ function pickEleven(
   };
 }
 
-export function runBacktest(
+/**
+ * The eleven the app itself would have named: the real selection code, run on the replayed
+ * projections.
+ *
+ * This used to be a simplified picker - the eleven highest projections that fit a formation,
+ * highest as captain. That is not what the app does. The real selector discounts a player who
+ * may not start, weighs a captain's upside as well as his average, and orders the bench for
+ * auto-substitutions, and a replay that skips all of that is grading a model nobody is
+ * running. It also made part of the ablation meaningless: switching captain upside off could
+ * never change a replay that had never looked at it.
+ *
+ * The simple picker remains the fallback for the one case the real one cannot handle - a squad
+ * the replayed data cannot fully resolve.
+ */
+async function modelEleven(
+  squad: SquadMember[],
+  projections: ProjectedPlayer[],
+  rules: Rules,
+  weights: ModelWeights,
+  solver: Solver,
+): Promise<PickedEleven> {
+  const byId = new Map(projections.map((player) => [player.playerId, player]));
+  const resolved = squad
+    .map((member) => byId.get(member.playerId))
+    .filter((player): player is ProjectedPlayer => player !== undefined);
+
+  if (resolved.length === squad.length && squad.length === rules.squad.size) {
+    try {
+      const eleven = await selectBestEleven(resolved, rules, weights, solver);
+      const member = (player: ProjectedPlayer): SquadMember => ({
+        playerId: player.playerId,
+        position: player.position,
+      });
+      return {
+        starters: eleven.starters.map(member),
+        bench: eleven.bench.map(member),
+        captainId: eleven.captain.playerId,
+        viceCaptainId: eleven.viceCaptain.playerId,
+      };
+    } catch {
+      // No legal eleven from the available players - fall through to the simple picker, which
+      // will field whoever it can.
+    }
+  }
+  return pickEleven(squad, (id) => byId.get(id)?.xPts ?? 0, rules);
+}
+
+export async function runBacktest(
   db: Database,
   rules: Rules,
   weights: ModelWeights,
-): BacktestResult {
+  solver: Solver = new GlpkSolver(),
+): Promise<BacktestResult> {
   const notes: string[] = [];
 
   const graded = (
@@ -370,7 +421,7 @@ export function runBacktest(
         rules,
       ).total;
 
-    const modelXi = pickEleven(squad, (id) => projected.get(id) ?? 0, rules);
+    const modelXi = await modelEleven(squad, projections, rules, weights, solver);
     const fplXi = pickEleven(squad, (id) => epNext.get(id) ?? 0, rules);
     // Your real FPL total is kept for context, but it is NOT what the comparison uses: it comes
     // from your entry history, includes hits and chips, and crucially suffers none of the

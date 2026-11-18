@@ -304,6 +304,28 @@ describe('best squad from the whole pool', () => {
     expect(withBonus.squad.some((p) => p.playerId === rival.playerId)).toBe(true);
   });
 
+  it('values the future of a substitute the way it values his present', async () => {
+    // The run of fixtures used to be credited in full to every squad place, starter or not -
+    // so the same substitute was worth 12% of his points this week and 100% of them in every
+    // week after, and the optimiser spent on the bench as though fifteen players score.
+    //
+    // The property that pins it: give every player a future exactly proportional to his
+    // present and nothing about the choice should change, because every option has been scaled
+    // by the same amount. Under the old objective the bench alone was scaled differently, so
+    // the squad shifted money onto it.
+    const pool = playerPool({ clubs: 12, perPosition: 3 });
+    const budget = 880; // Tight enough that the bench has to be paid for out of the eleven.
+
+    const now = await selectBestSquad(pool, rules, weights, solver, { budget });
+    const withRun = await selectBestSquad(pool, rules, weights, solver, {
+      budget,
+      futureValueBonus: new Map(pool.map((p) => [p.playerId, selectionValue(p, weights) * 2])),
+    });
+
+    const ids = (result: typeof now) => result.squad.map((p) => p.playerId).sort((a, b) => a - b);
+    expect(ids(withRun)).toEqual(ids(now));
+  });
+
   it('never lets the future-value bonus change what is reported as expectedPoints', async () => {
     const pool = playerPool({ clubs: 12, perPosition: 3 });
     const target = pool.find((p) => p.position === 'FWD')!;

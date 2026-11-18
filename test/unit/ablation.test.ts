@@ -77,8 +77,8 @@ describe('turning each part of the model off', () => {
     }
   });
 
-  it('scores every component against the same replayed weeks', () => {
-    const result = runAblation(db, rules, weights);
+  it('scores every component against the same replayed weeks', async () => {
+    const result = (await runAblation(db, rules, weights));
 
     expect(result.weeks).toBeGreaterThan(1);
     expect(result.rows.length).toBeGreaterThan(0);
@@ -89,36 +89,36 @@ describe('turning each part of the model off', () => {
     );
   });
 
-  it('says plainly when a component cannot be judged by this instrument', () => {
+  it('says plainly when a component cannot be judged by this instrument', async () => {
     // The replay holds the squad fixed, so anything that only shapes WHICH fifteen you own is
     // invisible here. Reporting that as a zero would be the single most misleading thing this
     // page could do: "no effect on picking an XI" and "no effect" are different claims.
-    const horizon = runAblation(db, rules, weights).rows.find((row) => row.key === 'horizon')!;
+    const horizon = (await runAblation(db, rules, weights)).rows.find((row) => row.key === 'horizon')!;
     expect(horizon.notMeasurable).toBeTruthy();
     expect(horizon.notMeasurable).toMatch(/squad fixed/i);
   });
 
-  it('never mutates the weights it was given', () => {
+  it('never mutates the weights it was given', async () => {
     // A knockout leaking into the live weights would silently change every projection the app
     // made afterwards, and nothing else would report it.
     const before = JSON.stringify(weights);
-    runAblation(db, rules, weights);
+    (await runAblation(db, rules, weights));
     expect(JSON.stringify(weights)).toBe(before);
   });
 
-  it('pairs each component against the same gameweek, not the same list position', () => {
+  it('pairs each component against the same gameweek, not the same list position', async () => {
     // A knockout can change which weeks are replayable at all - a projection of zero
     // everywhere fails the coverage gate - and lining two different sets of weeks up by index
     // would compare GW4 against GW6 and report the difference as an effect.
-    const result = runAblation(db, rules, weights);
+    const result = (await runAblation(db, rules, weights));
     for (const row of result.rows) {
       if (row.notMeasurable) continue;
       expect(Math.abs(row.delta)).toBeLessThan(200);
     }
   });
 
-  it('reports a component that changes nothing as inert rather than as harmless', () => {
-    const result = runAblation(db, rules, weights);
+  it('reports a component that changes nothing as inert rather than as harmless', async () => {
+    const result = (await runAblation(db, rules, weights));
     const inert = result.rows.filter((row) => row.inert);
     for (const row of inert) {
       expect(row.delta).toBe(0);

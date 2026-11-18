@@ -29,7 +29,7 @@ import {
 } from '../model/confirmedTransfers.js';
 import { computeReplayCalibration } from '../model/calibrationReplay.js';
 import { loadPlayedChips, mergeChipsUsed } from '../model/playedChips.js';
-import { captainCeilingBonusFor } from '../optimise/squad.js';
+import { benchWeightFor, captainCeilingBonusFor } from '../optimise/squad.js';
 import { compareRivals, type RivalComparison } from '../model/rivals.js';
 import { GlpkSolver } from '../optimise/glpkSolver.js';
 import type { Solver } from '../optimise/solver.js';
@@ -934,7 +934,8 @@ async function findTransfers(
       // the run of fixtures after it - a one-time hit only pays for itself once, but a good
       // transfer keeps paying off for as long as the player is held.
       const gainBeforeHit = eleven.expectedPoints - baseline.expectedPoints;
-      const horizonGain = future(incoming.playerId) - future(out.playerId);
+      const horizonGain =
+        runValue(eleven, future, rules, weights) - runValue(baseline, future, rules, weights);
       const netGain = gainBeforeHit + horizonGain - hitCost;
 
       if (netGain <= 0) continue;
@@ -1110,7 +1111,8 @@ async function buildPriorityFixPlan(
     Math.round((eleven.expectedPoints - options.elevenBefore.expectedPoints) * 100) / 100;
   const horizonGain =
     Math.round(
-      moves.reduce((sum, move) => sum + future(move.in.playerId) - future(move.out.playerId), 0) *
+      (runValue(eleven, future, rules, weights) -
+        runValue(options.elevenBefore, future, rules, weights)) *
         100,
     ) / 100;
 
@@ -1610,15 +1612,11 @@ export async function recommend(
       benchBoostPull: benchBoostRelief,
     });
 
+    const wildcardFuture = (playerId: number): number =>
+      horizonFor(wildcardHorizon, playerId).futureXPts;
     const horizonGain =
-      rebuild.transfersIn.reduce(
-        (sum, player) => sum + horizonFor(wildcardHorizon, player.playerId).futureXPts,
-        0,
-      ) -
-      rebuild.transfersOut.reduce(
-        (sum, player) => sum + horizonFor(wildcardHorizon, player.playerId).futureXPts,
-        0,
-      );
+      runValue(rebuild.eleven, wildcardFuture, rules, weights) -
+      runValue(eleven, wildcardFuture, rules, weights);
 
     // Who each chosen club faces across the rest of the horizon, so the page can show the run
     // the squad was actually picked on rather than only the week in front of it.
@@ -1844,6 +1842,30 @@ function describeCaptaincy(
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * What a squad's run of fixtures is worth, given who starts and who sits.
+ *
+ * A starter's future counts in full; a substitute's counts at the bench weighting, exactly as
+ * the optimiser values them. The gain from a transfer used to be "his future minus the other
+ * man's" regardless of whether either would ever play - so swapping one substitute for a better
+ * substitute was credited with the whole difference, and could out-rank a real upgrade to the
+ * eleven for the one free transfer of the week.
+ */
+export function runValue(
+  eleven: StartingEleven,
+  futureOf: (playerId: number) => number,
+  rules: Rules,
+  weights: ModelWeights,
+): number {
+  return (
+    eleven.starters.reduce((sum, player) => sum + futureOf(player.playerId), 0) +
+    eleven.bench.reduce(
+      (sum, player) => sum + futureOf(player.playerId) * benchWeightFor(player, rules, weights),
+      0,
+    )
+  );
 }
 
 /** Append to a keyed list, creating it on first use. A club can have two fixtures in a week. */

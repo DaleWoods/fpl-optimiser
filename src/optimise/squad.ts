@@ -85,7 +85,7 @@ function futureValueBonusFor(player: ProjectedPlayer, options: SelectionOptions)
   return options.futureValueBonus?.get(player.playerId) ?? 0;
 }
 
-function benchWeightFor(
+export function benchWeightFor(
   player: ProjectedPlayer,
   rules: Rules,
   weights: ModelWeights,
@@ -421,18 +421,26 @@ export async function selectBestSquad(
     name: 'best_squad',
     direction: 'maximise',
     objective: [
-      // A squad place is worth the bench weighting, plus the future value of holding the
-      // player beyond this gameweek; a starting place makes up the rest of this week's value.
+      // A squad place is worth the bench weighting of everything the player is projected to do
+      // - this gameweek and the run after it - and a starting place makes up the rest.
+      //
+      // The run after it used to be credited in full to every squad place, starter or not. So
+      // the same substitute was worth 12% of his points this week and 100% of them in every
+      // week after, and the optimiser, seeing fifteen players all "scoring" from next week on,
+      // spread the budget across the bench instead of concentrating it in the eleven who play.
+      // Only eleven score in any week. The bench weighting says what the other four are worth,
+      // and it has to say the same thing about next week as it does about this one.
       ...selectable.map((player) => ({
         variable: IN_SQUAD(player.playerId),
         coefficient:
-          selectionValue(player, weights) * benchWeightFor(player, rules, weights, options) +
-          futureValueBonusFor(player, options),
+          (selectionValue(player, weights) + futureValueBonusFor(player, options)) *
+          benchWeightFor(player, rules, weights, options),
       })),
       ...selectable.map((player) => ({
         variable: IN_XI(player.playerId),
         coefficient:
-          selectionValue(player, weights) * (1 - benchWeightFor(player, rules, weights, options)),
+          (selectionValue(player, weights) + futureValueBonusFor(player, options)) *
+          (1 - benchWeightFor(player, rules, weights, options)),
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),
@@ -597,16 +605,19 @@ export async function selectBestTransferPlan(
     name: 'best_transfer_plan',
     direction: 'maximise',
     objective: [
+      // The run of fixtures is weighted by the bench discount exactly as this gameweek is -
+      // see selectBestSquad for why crediting it in full to all fifteen was wrong.
       ...selectable.map((player) => ({
         variable: IN_SQUAD(player.playerId),
         coefficient:
-          selectionValue(player, weights) * benchWeightFor(player, rules, weights, options) +
-          futureValueBonusFor(player, options),
+          (selectionValue(player, weights) + futureValueBonusFor(player, options)) *
+          benchWeightFor(player, rules, weights, options),
       })),
       ...selectable.map((player) => ({
         variable: IN_XI(player.playerId),
         coefficient:
-          selectionValue(player, weights) * (1 - benchWeightFor(player, rules, weights, options)),
+          (selectionValue(player, weights) + futureValueBonusFor(player, options)) *
+          (1 - benchWeightFor(player, rules, weights, options)),
       })),
       ...selectable.map((player) => ({
         variable: IS_CAPTAIN(player.playerId),

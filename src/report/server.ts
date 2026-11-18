@@ -369,11 +369,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             db,
             season.gameweeks.map((gw) => gw.eventId),
           ),
-          runBacktest(db, config.rules, config.weights),
+          await runBacktest(db, config.rules, config.weights),
           // One replay per component, so it is only built when the page asks. The full set is
           // a dozen replays and each one re-derives every projection in every gameweek.
           url.searchParams.get('ablate') === '1'
-            ? runAblation(db, config.rules, config.weights)
+            ? await runAblation(db, config.rules, config.weights)
             : null,
         ),
       );
