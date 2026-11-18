@@ -32,7 +32,7 @@ import { confirmTransfer, unconfirmTransfer } from '../model/confirmedTransfers.
 import { notePlayedChip, unnotePlayedChip } from '../model/playedChips.js';
 import { getStateOfPlay } from './state.js';
 import { evaluateGameweek, evaluateSeason } from '../model/accuracy.js';
-import { calibrationProgress, computeCalibration } from '../model/calibration.js';
+import { computeReplayCalibration, replayProgress } from '../model/calibrationReplay.js';
 import { computeLeagueTable } from '../model/table.js';
 import {
   renderAccuracy,
@@ -349,11 +349,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       // Recompute rather than read, so the page shows what the model would learn from
       // everything graded right now - not whatever was stored the last time a recommendation
       // happened to be generated.
-      const calibration = config.weights.calibration.enabled
-        ? computeCalibration(db, config.weights)
-        : [];
+      const calibration = computeReplayCalibration(db, config.rules, config.weights);
 
-      const progress = calibrationProgress(db, config.weights);
+      const progress = replayProgress(db, config.weights);
 
       if (url.pathname === '/accuracy.json') {
         response.writeHead(200, JSON_HEADERS);

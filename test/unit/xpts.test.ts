@@ -149,8 +149,32 @@ describe('minutes', () => {
 
     expect(uncapped.ownershipCapped).toBe(false);
     expect(capped.ownershipCapped).toBe(true);
-    expect(capped.startProbability).toBe(weights.minutes.lowOwnershipStartCap);
+    // Still well short of a coin flip: one start is one start.
+    expect(capped.startProbability).toBeLessThan(0.4);
     expect(capped.startProbability).toBeLessThan(uncapped.startProbability);
+  });
+
+  it('lets the cap give way once a near-unowned player keeps starting', () => {
+    // The cap used to hold "regardless of recent minutes". That was right for a stray start in
+    // gameweek 1 and wrong for every week after: most first-choice players at unfashionable
+    // clubs sit under 1% ownership, so a midfielder who had started all seven of his club's
+    // matches was still held at 15% to start and projected about one point. Measured, the
+    // identical record projected 1.15 at 0.5% ownership and 3.31 at 5%.
+    const one = projectMinutes(input({ starts: 1, matchesAvailable: 1, ownership: 0.5 }), weights);
+    const three = projectMinutes(input({ starts: 3, matchesAvailable: 3, ownership: 0.5 }), weights);
+    const seven = projectMinutes(input({ starts: 7, matchesAvailable: 7, ownership: 0.5 }), weights);
+
+    expect(three.startProbability).toBeGreaterThan(one.startProbability);
+    expect(seven.startProbability).toBeGreaterThan(three.startProbability);
+    // Seven from seven is a starter, whoever does or does not own him.
+    expect(seven.startProbability).toBeGreaterThan(0.7);
+  });
+
+  it('keeps the cap on a near-unowned player who is not actually starting', () => {
+    // The protection the cap exists for must survive: a fringe player with one start in seven
+    // is exactly who it was written to hold down.
+    const fringe = projectMinutes(input({ starts: 1, matchesAvailable: 7, ownership: 0.5 }), weights);
+    expect(fringe.startProbability).toBeLessThanOrEqual(weights.minutes.lowOwnershipStartCap + 1e-9);
   });
 
   it('raises the start chance for a heavily-owned player - the crowd knows who is nailed on', () => {
@@ -412,7 +436,7 @@ describe('player projection', () => {
     expect(thirdChoice.confidence).toBe('low');
     expect(thirdChoice.xPts).toBeLessThan(establishedStarter.xPts);
     expect(thirdChoice.reasons.join(' ')).toMatch(/0\.1% of managers own this player/);
-    expect(thirdChoice.reasons.join(' ')).toMatch(/Start chance capped at/);
+    expect(thirdChoice.reasons.join(' ')).toMatch(/Start chance held to/);
   });
 
   it('does not cap or explain anything for a widely-owned player with the same minutes profile', () => {
@@ -421,7 +445,18 @@ describe('player projection', () => {
       weights,
       rules,
     );
-    expect(popular.reasons.join(' ')).not.toMatch(/Start chance capped/);
+    expect(popular.reasons.join(' ')).not.toMatch(/Start chance held/);
+  });
+
+  it('does not damp a bonus rate that has already been damped', () => {
+    // bonusPer90 arrives already shrunk toward the player's own history and his position's
+    // baseline. A further flat 0.7 on top was a second damp on a damped estimate - the same
+    // fault club form had - and it cut a star's bonus from about 0.5 a match to 0.35. The
+    // expected bonus is now the rate times the minutes, bounded only by the stated maximum.
+    const player = input({ bonusPer90: 0.6 });
+    const projection = projectPlayer(player, weights, rules);
+    const minutesShare = projectMinutes(player, weights).expectedMinutes / 90;
+    expect(projection.breakdown.bonus).toBeCloseTo(0.6 * minutesShare, 2);
   });
 
   it('is deterministic', () => {

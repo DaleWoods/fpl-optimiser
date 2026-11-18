@@ -252,12 +252,33 @@ export function projectMinutes(
 
   let clampedStart = Math.min(1, Math.max(0, startProbability));
 
+  // The cap is a prior about a player almost nobody owns, and a prior has to give way to
+  // evidence. It used to apply "regardless of recent minutes", which was right for the case it
+  // was written for - one stray start in gameweek 1 - and wrong for every week after: a
+  // midfielder who had started all seven of his club's matches was still held at 15% to start,
+  // and projected 1.15 points where the identical record at 5% ownership projected 3.31.
+  //
+  // That is not a rare case. Most first-choice players at unfashionable clubs sit under 1%
+  // ownership, so every week a hundred or so genuine starters were being projected as
+  // substitutes - which is most of why the model ran low across every position, and why the
+  // "rated too low" list kept filling with nailed-on starters projected at almost exactly one
+  // point.
+  //
+  // So the cap now rises toward the player's own start rate as matches accumulate, at the same
+  // pace the start probability itself trusts them. One start in one match still reads as
+  // doubtful; seven in seven does not.
+  const capTrust = observedMatches / (observedMatches + minutes.priorWeightMatches || 1);
+  const observedRate = observedMatches > 0 ? Math.min(1, observedStarts / observedMatches) : 0;
+  const ownershipCap =
+    minutes.lowOwnershipStartCap +
+    Math.max(0, observedRate - minutes.lowOwnershipStartCap) * capTrust;
+
   const ownershipCapped =
     input.ownership !== null &&
     input.ownership < minutes.lowOwnershipThreshold &&
-    clampedStart > minutes.lowOwnershipStartCap;
+    clampedStart > ownershipCap;
   if (ownershipCapped) {
-    clampedStart = minutes.lowOwnershipStartCap;
+    clampedStart = ownershipCap;
   }
 
   // Applied after the ownership cap, as a further reduction on whatever start probability
@@ -526,8 +547,8 @@ export function projectPlayer(
     reasons.unshift(
       `Only ${input.ownership!.toFixed(1)}% of managers own this player - well below the ` +
         `${weights.minutes.lowOwnershipThreshold}% below which the rest of the FPL crowd's team ` +
-        `news is trusted over a stray appearance. Start chance capped at ` +
-        `${Math.round(weights.minutes.lowOwnershipStartCap * 100)}% regardless of recent minutes.`,
+        `news is trusted over a thin record. Start chance held to ` +
+        `${Math.round(minutes.startProbability * 100)}% until more starts back it up.`,
     );
   }
 

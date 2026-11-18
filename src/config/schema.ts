@@ -445,6 +445,11 @@ export const modelWeightsSchema = z.strictObject({
     /** Graded gameweeks below which no correction is applied at all. */
     minGameweeks: positiveInt,
     /**
+     * Only projections of at least this many points are used to measure the correction: the
+     * players a correction can actually change a decision about. See calibrationFromRows.
+     */
+    minProjected: z.number().min(0),
+    /**
      * Hard bounds on the factor. A model that needs a 40% correction has a bug to be found, not
      * a lean to be tuned out, and quietly applying one would hide it.
      */

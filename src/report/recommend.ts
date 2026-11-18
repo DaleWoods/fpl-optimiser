@@ -4,7 +4,6 @@ import type { ProjectedPlayer, StartingEleven } from '../domain/types.js';
 import { latestEliteOwnership } from '../ingest/elite.js';
 import { buildProjections, saveProjections } from '../model/build.js';
 import {
-  computeCalibration,
   loadCalibration,
   saveCalibration,
   type CalibrationFactor,
@@ -28,6 +27,7 @@ import {
   loadConfirmedTransfers,
   type ConfirmedTransfer,
 } from '../model/confirmedTransfers.js';
+import { computeReplayCalibration } from '../model/calibrationReplay.js';
 import { loadPlayedChips, mergeChipsUsed } from '../model/playedChips.js';
 import { captainCeilingBonusFor } from '../optimise/squad.js';
 import { compareRivals, type RivalComparison } from '../model/rivals.js';
@@ -1154,9 +1154,10 @@ export async function recommend(
   }
 
   // Refresh what the model has learned about its own error before projecting, so the numbers
-  // about to be produced carry every gameweek graded so far rather than whatever was current the
-  // last time someone happened to look at the Accuracy page. Cheap: one grouped query.
-  saveCalibration(db, weights.modelVersion, computeCalibration(db, weights));
+  // about to be produced carry every gameweek played so far. Learned by replaying those
+  // gameweeks under the current model, so a model changed today is corrected today - see
+  // calibrationReplay.ts. Each replayed week is remembered, so only a new one costs anything.
+  saveCalibration(db, weights.modelVersion, computeReplayCalibration(db, rules, weights));
 
   const rawProjections = buildProjections(db, event.id, rules, weights);
   if (rawProjections.length === 0) {

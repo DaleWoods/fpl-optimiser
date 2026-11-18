@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { Rules, ModelWeights } from '../config/schema.js';
 import type { ProjectedPlayer } from '../domain/types.js';
 import { buildProjections } from './build.js';
+import { replayCalibrationFactors } from './calibrationReplay.js';
 import { simulateAutoSubs } from './accuracy.js';
 
 /**
@@ -20,7 +21,8 @@ import { simulateAutoSubs } from './accuracy.js';
  *  - **this model** - what it would have told you to play;
  *  - **what you played** - the honest benchmark, and the one it has been losing to;
  *  - **FPL's own number** - `ep_next`, free from the API, what you get for doing nothing;
- *  - **hold** - last week's XI and captain again, the cost of simply not deciding.
+ *  - **hold** - the XI and captain this model chose the week before, played again: the cost of
+ *    not re-deciding. It is the model's own stale pick, not yours, and is labelled that way.
  *
  * Scored with FPL's real auto-substitution and vice-captain rules, so these are points that
  * would genuinely have counted rather than the sum of eleven names.
@@ -98,15 +100,31 @@ interface SquadMember {
   position: string;
 }
 
+/**
+ * An eleven, a bench in order, and both armbands.
+ *
+ * The vice-captain is carried explicitly because he is the one who gets doubled when the
+ * captain does not play. He used to be "the first starter who is not the captain" for every
+ * policy - in practice the goalkeeper - so whenever a captain missed a match the replay doubled
+ * a keeper's two points, and it ignored the vice you had actually chosen.
+ */
+interface PickedEleven {
+  starters: SquadMember[];
+  bench: SquadMember[];
+  captainId: number | null;
+  viceCaptainId: number | null;
+}
+
 /** The XI you actually fielded, from the picks stored for that gameweek. */
 function yourPicks(
   db: Database,
   eventId: number,
-): { starters: SquadMember[]; bench: SquadMember[]; captainId: number | null } | null {
+): PickedEleven | null {
   const rows = db
     .prepare(
       `SELECT sp.player_id AS playerId, pos.short_name AS position, sp.slot AS slot,
-              sp.multiplier AS multiplier, sp.is_captain AS isCaptain
+              sp.multiplier AS multiplier, sp.is_captain AS isCaptain,
+              sp.is_vice_captain AS isVice
        FROM squad_pick sp
        JOIN manager_state ms ON ms.id = sp.manager_state_id
        JOIN player p ON p.id = sp.player_id
@@ -122,6 +140,7 @@ function yourPicks(
     slot: number;
     multiplier: number;
     isCaptain: number;
+    isVice: number;
   }[];
 
   if (rows.length === 0) return null;
@@ -129,11 +148,42 @@ function yourPicks(
     starters: rows.filter((row) => row.slot <= 11).map(({ playerId, position }) => ({ playerId, position })),
     bench: rows.filter((row) => row.slot > 11).map(({ playerId, position }) => ({ playerId, position })),
     captainId: rows.find((row) => row.isCaptain === 1)?.playerId ?? null,
+    viceCaptainId: rows.find((row) => row.isVice === 1)?.playerId ?? null,
   };
 }
 
-/** The squad actually held going into a gameweek, from the advice stored before that deadline. */
+/**
+ * The fifteen actually held in a gameweek.
+ *
+ * The picks FPL recorded for that gameweek come first, and the squad stored with the advice is
+ * only a fallback. It used to be the other way round, which quietly broke the comparison: the
+ * advice is generated before the deadline, so any transfer made after it meant the model was
+ * choosing from one fifteen while "the XI you played" came from another. A player you bought on
+ * the Friday could score for you and was not even available to the model - and the difference
+ * was reported as the model picking a worse eleven.
+ *
+ * Every policy has to choose from the same fifteen, or the replay is measuring transfers and
+ * calling it selection.
+ */
 function squadForEvent(db: Database, eventId: number): SquadMember[] {
+  // squad_pick carries no gameweek of its own - it hangs off the manager_state capture that
+  // wrote it, so the gameweek comes from there. The newest capture for the gameweek wins.
+  const held = db
+    .prepare(
+      `SELECT sp.player_id AS playerId, pos.short_name AS position
+       FROM squad_pick sp
+       JOIN manager_state ms ON ms.id = sp.manager_state_id
+       JOIN player p ON p.id = sp.player_id
+       JOIN position pos ON pos.id = p.position_id
+       WHERE ms.id = (SELECT m.id FROM manager_state m
+                      WHERE m.event_id = ?
+                        AND EXISTS (SELECT 1 FROM squad_pick x WHERE x.manager_state_id = m.id)
+                      ORDER BY m.captured_at DESC, m.id DESC LIMIT 1)
+       ORDER BY sp.slot ASC`,
+    )
+    .all(eventId) as SquadMember[];
+  if (held.length > 0) return held;
+
   const stored = db
     .prepare(
       `SELECT detail_json AS detail FROM recommendation
@@ -147,23 +197,10 @@ function squadForEvent(db: Database, eventId: number): SquadMember[] {
       const detail = JSON.parse(stored.detail) as { squad?: SquadMember[] };
       if (detail.squad && detail.squad.length > 0) return detail.squad;
     } catch {
-      // Falls through to the picks below.
+      // Nothing usable stored; the gameweek is reported as having no squad on record.
     }
   }
-
-  // squad_pick carries no gameweek of its own - it hangs off the manager_state capture that
-  // wrote it, so the gameweek comes from there.
-  return db
-    .prepare(
-      `SELECT sp.player_id AS playerId, pos.short_name AS position
-       FROM squad_pick sp
-       JOIN manager_state ms ON ms.id = sp.manager_state_id
-       JOIN player p ON p.id = sp.player_id
-       JOIN position pos ON pos.id = p.position_id
-       WHERE ms.event_id = ?
-       ORDER BY ms.captured_at DESC, ms.id DESC, sp.slot ASC`,
-    )
-    .all(eventId) as SquadMember[];
+  return [];
 }
 
 /** The last snapshot taken before a gameweek's deadline - the only data a replay may use. */
@@ -184,7 +221,7 @@ function pickEleven(
   squad: SquadMember[],
   valueOf: (playerId: number) => number,
   rules: Rules,
-): { starters: SquadMember[]; bench: SquadMember[]; captainId: number | null } {
+): PickedEleven {
   const bounds = rules.startingXi.positionBounds;
   const byValue = [...squad].sort((a, b) => valueOf(b.playerId) - valueOf(a.playerId));
 
@@ -208,14 +245,24 @@ function pickEleven(
     counts.set(player.position, (counts.get(player.position) ?? 0) + 1);
   }
 
-  const bench = squad.filter((player) => !starters.includes(player));
-  const captain =
-    starters.length > 0
-      ? starters.reduce((best, player) =>
-          valueOf(player.playerId) > valueOf(best.playerId) ? player : best,
-        )
-      : null;
-  return { starters, bench, captainId: captain?.playerId ?? null };
+  // Bench in the order a manager following the same numbers would set it: outfield players by
+  // value, the spare goalkeeper last, because auto-subs come off the bench in order.
+  const isKeeper = (player: SquadMember): boolean => (bounds[player.position]?.max ?? 99) === 1;
+  const bench = squad
+    .filter((player) => !starters.includes(player))
+    .sort(
+      (a, b) =>
+        Number(isKeeper(a)) - Number(isKeeper(b)) || valueOf(b.playerId) - valueOf(a.playerId),
+    );
+
+  // Captain and vice are the two highest-valued starters, in that order.
+  const ranked = [...starters].sort((a, b) => valueOf(b.playerId) - valueOf(a.playerId));
+  return {
+    starters,
+    bench,
+    captainId: ranked[0]?.playerId ?? null,
+    viceCaptainId: ranked[1]?.playerId ?? null,
+  };
 }
 
 export function runBacktest(
@@ -237,8 +284,7 @@ export function runBacktest(
   ).map((row) => row.id);
 
   const weeks: BacktestWeek[] = [];
-  let previousXi: { starters: SquadMember[]; bench: SquadMember[]; captainId: number | null } | null =
-    null;
+  let previousXi: PickedEleven | null = null;
 
   for (const eventId of graded) {
     const squad = squadForEvent(db, eventId);
@@ -272,6 +318,10 @@ export function runBacktest(
         ? { reconstructFromHistory: true }
         : { asOfSnapshotId }),
       asOfEventId: eventId,
+      // The correction as it stood BEFORE this deadline. The stored one is learned from every
+      // gameweek played, this one included, and applying it here would score the model on a
+      // lesson it had not yet been taught.
+      calibrationFactors: replayCalibrationFactors(db, rules, weights, eventId),
     });
     if (projections.length === 0) {
       notes.push(
@@ -309,14 +359,14 @@ export function runBacktest(
     }
 
     const positionById = new Map(squad.map((player) => [player.playerId, player.position]));
-    const score = (picked: ReturnType<typeof pickEleven>): number =>
+    const score = (picked: PickedEleven): number =>
       simulateAutoSubs(
         picked.starters,
         picked.bench,
         positionById,
         actual,
         picked.captainId,
-        picked.starters.find((p) => p.playerId !== picked.captainId)?.playerId ?? null,
+        picked.viceCaptainId,
         rules,
       ).total;
 
@@ -391,7 +441,7 @@ export function runBacktest(
     model: 'This model',
     you: 'The XI you played',
     fpl: "FPL's own number",
-    hold: 'Last week again',
+    hold: "The app's XI from the week before",
   };
 
   // ep_next is the API's own forecast and is not derivable, so the FPL column exists only for

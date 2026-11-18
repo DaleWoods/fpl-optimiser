@@ -2,17 +2,15 @@
   "$comment": [
     "Tunable weights for the expected-points (xPts) heuristic. Every number that shapes a",
     "projection lives here, not in code, so the model can be re-tuned without a rebuild.",
-    "modelVersion is stamped onto every stored projection, and calibration only ever learns from",
-    "projections made under the CURRENT version - so bumping it throws away the grading history.",
-    "That makes the rule for bumping narrow and important: bump it when the numbers that produce",
-    "xPts change, and only then. Captaincy, chip timing, transfer logic and anything else that",
-    "reads a projection without altering it must NOT bump it. Those decisions are not stamped on",
-    "the projection and a correction learned under one is perfectly valid under the next.",
-    "0.18.0, 0.19.0 and 0.20.0 broke that rule: all three changed captaincy or chip timing and",
-    "left xPts identical, and each one reset the learning to zero for no reason. That is why the",
-    "Accuracy page kept saying it had nothing to learn from yet after three graded gameweeks."
+    "modelVersion is stamped onto every stored projection, so the Accuracy page can tell advice",
+    "given by the model as it is now from advice given by one that has since been changed.",
+    "Bump it when the numbers that produce xPts change, and only then. Captaincy, chip timing,",
+    "transfer logic and anything else that reads a projection without altering it must NOT bump",
+    "it - that would file today's advice apart from last week's for no reason.",
+    "Bumping it no longer costs the self-correction anything: that is learned by replaying past",
+    "gameweeks under the current model (calibrationReplay.ts), not from stored projections."
   ],
-  "modelVersion": "heuristic-0.22.0",
+  "modelVersion": "heuristic-0.23.0",
 
   "availability": {
     "$comment": [
@@ -113,8 +111,9 @@
       "at home, a strong club's attacker is scaled 1.29 and a weak club's 0.96 - an 18% spread",
       "that is nothing to do with the fixture. 'club' divides by that club's OWN typical output",
       "instead, leaving the scalar measuring only what it is for: this opponent, and this venue.",
-      "'league' is the default until the ablation says otherwise, because switching it changes",
-      "xPts and so resets the self-correction.",
+      "'league' stays the default until the ablation says otherwise. The case is not one-sided:",
+      "early in a season a player's rate is still mostly his position's baseline, not his own",
+      "record, and for him the league yardstick is partly putting his club back in.",
       "Per-90 attacking rates. xG/xA are preferred where the API supplies them because they",
       "stabilise far faster than raw goals; xgWeight blends the two. Rates are then scaled by",
       "how good the fixture looks relative to an average one.",
@@ -180,9 +179,16 @@
   },
 
   "bonus": {
-    "$comment": "Expected bonus points from the player's historical bonus rate per 90, damped toward zero.",
+    "$comment": [
+      "Expected bonus points from the player's bonus rate per 90.",
+      "shrinkage 1.0: no extra damping. It was 0.7 from before the rate itself was shrunk toward",
+      "the player's own history and his position's baseline - once that arrived, this became a",
+      "second damp on an estimate already damped, the same fault club form had. For a player",
+      "averaging a bonus point a game it took a rate already pulled down to about 0.6 and cut",
+      "it again to 0.4. maxExpectedBonus still bounds it."
+    ],
     "recentWeight": 0.6,
-    "shrinkage": 0.7,
+    "shrinkage": 1.0,
     "maxExpectedBonus": 1.6
   },
 
@@ -201,9 +207,7 @@
       "over 38 matches, times the share that are scored. At MID scoring that is half a point a",
       "match, which is the right order - enough to separate two similar attackers, nowhere near",
       "enough to overturn a real difference.",
-      "It stays at 0 until the ablation on the Accuracy page says it earns its place. Turning it",
-      "on changes xPts and so bumps modelVersion, which resets the self-correction - and that",
-      "correction is worth more than this is."
+      "It stays at 0 until the ablation on the Accuracy page says it earns its place."
     ],
     "newPenaltyTakerGoalsPerMatch": 0,
     "maxUplift": 0.25
@@ -392,8 +396,16 @@
     "$comment": [
       "Correcting the model with its own measured error, per position. The accuracy tables have",
       "always computed bias per position and nothing has ever read it; this is what does.",
-      "priorWeightPlayers 400: bias over a single gameweek is mostly that week's own variance, so",
-      "a position needs a few hundred graded projections before its lean is believable.",
+      "minProjected 2.0: the correction is measured only on players projected high enough to be",
+      "picked. One factor multiplies everyone in a position, but the long tail of fringe players",
+      "leans for its own reasons (whether they play at all) and used to set the factor for the",
+      "players who matter.",
+      "priorWeightPlayers 150: bias over a single gameweek is mostly that week's own variance,",
+      "so a position needs a few gameweeks of pickable players before its lean is believable.",
+      "It was 400 when every player counted; the pickable ones are about a third of that.",
+      "The correction is learned by REPLAYING past gameweeks under the current model, from only",
+      "what was knowable before each deadline - so changing the model no longer throws the",
+      "learning away and waits three gameweeks to get it back.",
       "minGameweeks 3: below that there is no lean to speak of, only noise.",
       "minFactor/maxFactor 0.8/1.25: a model needing more correction than that has a bug to be",
       "found, not a lean to be tuned out, and silently applying a bigger one would hide it.",
@@ -403,8 +415,9 @@
       "Set enabled to false to project exactly as if none of this existed."
     ],
     "enabled": true,
-    "priorWeightPlayers": 400,
+    "priorWeightPlayers": 150,
     "minGameweeks": 3,
+    "minProjected": 2.0,
     "minFactor": 0.8,
     "maxFactor": 1.25
   }

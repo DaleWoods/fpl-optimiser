@@ -31,10 +31,9 @@ Two things shape every decision in it:
    disagree with it on the evidence.
 2. **It is graded against reality.** Projections are stored before the deadline and compared with
    what actually happened afterwards, and the model corrects itself from that comparison. A model
-   that is never scored is a model nobody should trust. (The correction needs three graded
-   gameweeks under the current `modelVersion` before it does anything, and bumping that version
-   deliberately resets it — so after any scoring change it is dormant for a few weeks. The
-   Accuracy page says which state it is in.)
+   that is never scored is a model nobody should trust. (The correction is learned by replaying
+   past gameweeks under the model as it is today, so it needs three gameweeks to have been
+   played and nothing else — changing the model no longer resets it.)
 
 ## What's built
 
@@ -411,9 +410,30 @@ that has a bug to be found, not a lean to be tuned out, and silently applying on
 Three things it deliberately does not do. It does not correct per player — there is nowhere near
 enough sample per player and it would be fitting noise. It does not retune the weights in
 `config/model.weights.json`, which are the model's structure and should change deliberately, with
-a version bump and a stated reason. And it does not carry across a `modelVersion` change: a
-factor describes the mistakes of the model that made them, so a scoring change resets the
-learning rather than correcting something that no longer exists.
+a version bump and a stated reason. And it never applies one model's mistakes to another: the
+correction is always measured on the model as it is now.
+
+**It is learned by replaying the season, not by waiting for it.** The correction used to come
+only from projections stored at the time, under the exact model version that made them. That had
+a cost nobody chose: every change to the scoring threw the learning away and the model ran
+uncorrected for three gameweeks. It turned every fix into a trade against the correction — and
+the correction is worth several points a week — so real faults were left in place, or shipped
+switched off, to avoid paying it.
+
+None of that was necessary. The model can be asked what it *would* have projected for any past
+gameweek from only what was knowable before that deadline — the last snapshot taken before it,
+match history up to it — which is the same replay the backtest relies on, with the same
+no-lookahead guarantees (`src/model/calibrationReplay.ts`). A model changed this morning is
+corrected this afternoon, from the whole season rather than the last three weeks. Two rules keep
+it honest, and each has a test that fails without it: it replays with **no correction applied**,
+and the backtest is handed the correction **as it stood before each deadline**, never the
+current one — otherwise a replay of gameweek 5 is being corrected by a lesson gameweek 5 taught.
+
+**It is measured on players who could be picked.** One factor multiplies everyone in a position,
+but it only changes a decision for players projected high enough to be chosen
+(`calibration.minProjected`, 2.0). The long tail of fringe players — three quarters of any
+position — leans for reasons of its own, mostly whether they play at all, and used to set the
+factor for the players who matter.
 
 The subtle part is what the correction is measured *against*. It is always the projection
 **before** any previous correction was applied (`projection.xpts_uncalibrated`), never the
@@ -1202,6 +1222,15 @@ The wiring is guarded separately from the behaviour, because they fail different
 *pass* the cutoff leaves every other backtest test green while the numbers quietly become
 fiction, so the call site is asserted directly.
 
+**Everyone chooses from the same fifteen.** The replay took your squad from the advice stored
+before the deadline and "the XI you played" from the picks FPL recorded. When they differed — a
+transfer made after generating — the model was choosing from one squad and you from another: a
+player bought on the Friday scored for you and was not even available to the model, and the gap
+was reported as the model picking a worse eleven. The recorded picks now come first for every
+policy. The vice-captain is carried properly too: he used to be "the first starter who is not
+the captain", in practice the goalkeeper, so a captain missing a match doubled a keeper's score
+and ignored the vice you had actually chosen.
+
 **A second leak, found by stating the property properly.** The guards above each checked one
 query. The invariant is stronger than that and worth writing down as one thing: *hiding
 gameweeks 3 onward must produce exactly what a database that has never seen gameweek 3 onward
@@ -1483,6 +1512,28 @@ Two details that are easy to get wrong:
   the gap between two metrics rather than on its form. Early in a season, when the per-gameweek
   breakdown lags the results, that mix is the normal state rather than the edge case.
 
+### Two more places the model was cautious twice
+
+Both found by asking why the Accuracy page showed the model running low in every position.
+
+**A start-probability cap that ignored the evidence.** A player owned by under 1% of managers had
+his chance of starting capped at 15% "regardless of recent minutes". That was right for the case
+it was written for — one stray start in gameweek 1 — and wrong for every week after, because
+most first-choice players at unfashionable clubs sit under 1% ownership. Measured on the model
+itself: a midfielder who had started **seven of seven** projected **1.15** points at 0.5%
+ownership and **3.31** with the identical record at 5%. Every week a hundred or so genuine
+starters were projected as substitutes, which is the cluster of nailed-on players at almost
+exactly one point that kept filling the "rated too low" list. The cap now rises toward the
+player's own start rate as matches accumulate, at the same pace the start probability itself
+trusts them: one start in one match still reads as doubtful, seven in seven does not, and a
+fringe player with one start in seven is held exactly where he was.
+
+**Bonus points damped twice.** `bonus.shrinkage` (0.7) dates from before a player's rates were
+shrunk toward his own history and his position's baseline. Once that arrived it became a second
+damp on an estimate already damped — the same fault club form had. Now 1.0.
+
+Both change xPts, so the model is `heuristic-0.23.0`.
+
 ### Favourable compared to what
 
 A fixture's expected goals are scaled against something, and for the whole life of this app that
@@ -1503,9 +1554,10 @@ by attackers from the strongest clubs.
 `attacking.fixtureBaseline` switches the yardstick: `league` (the default, current behaviour) or
 `club`, which divides by that club's own typical output — an average opponent, home and away
 averaged — leaving the scalar measuring only the opponent and the venue, which is all it was ever
-for. It ships **off**, because switching it changes xPts and so resets the self-correction; the
-ablation on the Accuracy page carries it as a **candidate** so it can be measured before that
-price is paid.
+for. It ships **off** and the ablation on the Accuracy page carries it as a **candidate**,
+because the case for it is not one-sided: early in a season a player's rate is still mostly his
+position's baseline rather than his own record, and for him the league yardstick is partly
+putting his club back in. That needs measuring, not arguing.
 
 ### Who takes the penalties
 

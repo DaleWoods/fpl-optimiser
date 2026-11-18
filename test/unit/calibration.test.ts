@@ -6,6 +6,7 @@ import { nowSeconds, openTestDatabase } from '../../src/db/index.js';
 import { ingestBootstrap, ingestFixtures } from '../../src/ingest/index.js';
 import { buildProjections } from '../../src/model/build.js';
 import {
+  calibrationFromRows,
   computeCalibration,
   loadCalibration,
   saveCalibration,
@@ -199,6 +200,28 @@ describe('calibration from the model\'s own error', () => {
       // The breakdown describes the model that produced it and is deliberately not rescaled.
       expect(player.breakdown).toEqual(before.breakdown);
     }
+  });
+
+  it('measures the correction on players who could be picked, not on the fringe', () => {
+    // One factor multiplies everyone in a position, but it only changes a decision for players
+    // projected high enough to be picked. The long tail of fringe players leans for reasons of
+    // its own - whether they play at all - and used to set the factor for the players who
+    // matter. Here the fringe is badly under-projected and the pickable players are spot on,
+    // so the right correction is none.
+    const rows = [];
+    for (const eventId of [1, 2, 3]) {
+      for (let i = 0; i < 40; i += 1) rows.push({ position: 'MID', predicted: 5, actual: 5, eventId });
+      for (let i = 0; i < 200; i += 1) rows.push({ position: 'MID', predicted: 1, actual: 2, eventId });
+    }
+
+    const filtered = calibrationFromRows(rows, weights);
+    const everyone = calibrationFromRows(rows, {
+      ...weights,
+      calibration: { ...weights.calibration, minProjected: 0 },
+    });
+
+    expect(filtered[0]!.factor).toBe(1);
+    expect(everyone[0]!.factor).toBeGreaterThan(1.1);
   });
 
   it('round-trips through storage unchanged', () => {

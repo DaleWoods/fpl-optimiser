@@ -99,6 +99,8 @@ export interface SeasonAccuracy {
      */
     recommendedXiPredicted: number | null;
     recommendedXiActual: number | null;
+    /** The model version that gave this gameweek's advice. Null when none was stored. */
+    modelVersion: string | null;
     bestPossibleFromSquad: number | null;
     captaincy: GameweekAccuracy['captaincy'];
     yourActual: number | null;
@@ -889,6 +891,7 @@ export function evaluateSeason(db: Database, rules: Rules, entryId: number | nul
       bias: accuracy.bias,
       recommendedXiPredicted: accuracy.recommendedXiPredicted,
       recommendedXiActual: accuracy.recommendedXiActual,
+      modelVersion: accuracy.modelVersion,
       bestPossibleFromSquad: accuracy.bestPossibleFromSquad,
       captaincy: accuracy.captaincy,
       yourActual: yourResults.get(eventId) ?? null,

@@ -378,4 +378,88 @@ describe('not mistaking missing data for a bad model', () => {
     expect(you.total).toBeLessThan(500);
     expect(you.label).toMatch(/XI you played/);
   });
+  /** Record the picks FPL holds for a gameweek: slot order, captain first, vice second. */
+  function seedPicks(eventId: number, playerIds: number[], viceIndex = 1): void {
+    const state = Number(
+      db
+        .prepare('INSERT INTO manager_state (entry_id, captured_at, event_id) VALUES (1, ?, ?)')
+        .run(nowSeconds(), eventId).lastInsertRowid,
+    );
+    const insert = db.prepare(
+      `INSERT INTO squad_pick (manager_state_id, player_id, slot, multiplier, is_captain, is_vice_captain)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    playerIds.forEach((id, index) =>
+      insert.run(state, id, index + 1, index < 11 ? 1 : 0, index === 0 ? 1 : 0, index === viceIndex ? 1 : 0),
+    );
+  }
+
+  it('lets every policy choose from the fifteen you actually held', () => {
+    // The advice is stored before the deadline; the picks are what you really went in with.
+    // When they differ - a transfer made after generating - the model used to choose from the
+    // stored fifteen while "the XI you played" came from the real one. A player bought on the
+    // Friday could score for you and was not even available to the model, and the gap was
+    // reported as the model picking a worse eleven.
+    const advised = squadOf15();
+    storeSquad([1], advised);
+
+    const all = db
+      .prepare(
+        `SELECT p.id AS id, pos.short_name AS position FROM player p
+         JOIN position pos ON pos.id = p.position_id ORDER BY p.id`,
+      )
+      .all() as { id: number; position: string }[];
+    const sold = advised[advised.length - 1]!;
+    const bought = all.find(
+      (p) => p.position === sold.position && !advised.some((a) => a.id === p.id),
+    )!;
+    const held = advised.map((p) => (p.id === sold.id ? bought : p));
+    seedPicks(1, held.map((p) => p.id));
+
+    // He is the best player in the squad by a distance on the numbers, so any policy that has
+    // him available starts him and gives him the armband.
+    db.prepare(
+      `UPDATE player_snapshot SET minutes = 900, starts = 10, goals_scored = 20,
+         expected_goals = 20, assists = 10, expected_assists = 10, selected_by_percent = 60
+       WHERE player_id = ?`,
+    ).run(bought.id);
+
+    seedResults(1, [...advised, bought].map((p) => p.id));
+    db.prepare('UPDATE actual_points SET points = 30 WHERE event_id = 1 AND player_id = ?').run(bought.id);
+
+    const week = runBacktest(db, rules, weights).weeks[0]!;
+
+    // Captained and doubled. Confined to the stored fifteen the model could not have scored a
+    // single one of his points.
+    expect(week.captainByPolicy.model).toBe(
+      (db.prepare('SELECT web_name AS n FROM player WHERE id = ?').get(bought.id) as { n: string }).n,
+    );
+    expect(week.scores.model).toBeGreaterThanOrEqual(60);
+  });
+
+  it('doubles the vice-captain you actually chose when your captain does not play', () => {
+    // The vice used to be "the first starter who is not the captain" - in practice the
+    // goalkeeper - so a missing captain doubled a keeper's score and ignored your real vice.
+    const squad = squadOf15();
+    storeSquad([1], squad);
+    seedResults(1, squad.map((p) => p.id));
+    const ids = squad.map((p) => p.id);
+    // Slot order: an outfield captain first, the keeper somewhere behind him, and the real
+    // vice last of the eleven.
+    const order = [ids[2]!, ids[0]!, ...ids.slice(3, 11), ids[11]!, ids[1]!, ...ids.slice(12)];
+    seedPicks(1, order, 10);
+    const captain = order[0]!;
+    const realVice = order[10]!;
+
+    // Captain did not play; the real vice scored 10; everyone else scored 4.
+    db.prepare('UPDATE actual_points SET points = 0, minutes = 0 WHERE event_id = 1 AND player_id = ?').run(captain);
+    db.prepare('UPDATE actual_points SET points = 10 WHERE event_id = 1 AND player_id = ?').run(realVice);
+
+    const you = runBacktest(db, rules, weights).weeks[0]!.scores.you;
+
+    // Nine starters at 4, the vice at 10 doubled, and one substitute at 4 on for the captain.
+    // Doubling "the first starter who is not the captain" instead would give 4 x 2 and leave
+    // this 6 short.
+    expect(you).toBe(9 * 4 + 10 * 2 + 4);
+  });
 });

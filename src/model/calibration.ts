@@ -27,7 +27,7 @@ export interface CalibrationFactor {
   gameweeks: number;
 }
 
-interface GradedRow {
+export interface GradedRow {
   position: string;
   predicted: number;
   actual: number;
@@ -70,6 +70,31 @@ export function computeCalibration(db: Database, weights: ModelWeights): Calibra
          )`,
     )
     .all(weights.modelVersion) as GradedRow[];
+
+  return calibrationFromRows(rows, weights);
+}
+
+/**
+ * The correction itself, from any set of graded projections.
+ *
+ * Separate from where the rows come from, because there are two honest sources: projections
+ * stored at the time, and projections replayed afterwards under the current model from only
+ * what was knowable then (see calibrationReplay.ts). The arithmetic must not differ between
+ * them.
+ *
+ * Measured only on projections of at least `minProjected` points. One factor multiplies every
+ * player in a position, but it only ever changes a decision for players projected high enough
+ * to be picked - and the long tail of fringe players, three quarters of any position, leans for
+ * reasons of its own (whether they play at all). Letting that tail set the factor rescales the
+ * players who matter by an error they do not share. Selecting on the projection rather than on
+ * the outcome keeps the ratio honest.
+ */
+export function calibrationFromRows(
+  allRows: readonly GradedRow[],
+  weights: ModelWeights,
+): CalibrationFactor[] {
+  const { calibration } = weights;
+  const rows = allRows.filter((row) => row.predicted >= calibration.minProjected);
 
   if (rows.length === 0) return [];
 
@@ -117,36 +142,6 @@ export function computeCalibration(db: Database, weights: ModelWeights): Calibra
   return factors;
 }
 
-/**
- * How close the model is to being able to correct itself, and what is holding it up.
- *
- * Without this the Accuracy page could only say "nothing yet", which gives no way to tell
- * "two more gameweeks" apart from "this will never happen because the version keeps moving".
- * The second was the real situation for a while, and it was invisible.
- */
-export function calibrationProgress(
-  db: Database,
-  weights: ModelWeights,
-): { gradedUnderCurrentModel: number; needed: number; gradedUnderOtherModels: number } {
-  const countFor = (sameVersion: boolean): number =>
-    (
-      db
-        .prepare(
-          `SELECT COUNT(DISTINCT pr.event_id) AS n
-           FROM projection pr
-           JOIN actual_points a ON a.player_id = pr.player_id AND a.event_id = pr.event_id
-           WHERE pr.model_version ${sameVersion ? '=' : '!='} ?`,
-        )
-        .get(weights.modelVersion) as { n: number }
-    ).n;
-
-  return {
-    gradedUnderCurrentModel: countFor(true),
-    needed: weights.calibration.minGameweeks,
-    gradedUnderOtherModels: countFor(false),
-  };
-}
-
 /** Persist the factors for one model version, replacing whatever was there for it. */
 export function saveCalibration(
   db: Database,
@@ -187,9 +182,9 @@ export function saveCalibration(
  *
  * There is deliberately no fallback to the most recent version available. A factor measured
  * against an older model describes mistakes that model made, and this one may not make them;
- * carrying it over would be correcting something that no longer exists. Bumping modelVersion
- * therefore resets the learning, which is the intended behaviour - a scoring change invalidates
- * what was learned about the previous scoring.
+ * carrying it over would be correcting something that no longer exists. That costs nothing:
+ * the correction for a new version is learned straight away by replaying past gameweeks under
+ * it - see calibrationReplay.ts.
  */
 export function loadCalibration(db: Database, modelVersion: string): Map<string, CalibrationFactor> {
   const rows = db

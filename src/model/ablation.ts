@@ -79,9 +79,7 @@ interface Knockout {
    *
    * Same machinery, opposite direction, and the sign is flipped on the way out so the table
    * reads the same way throughout: negative is good, positive is bad. Without this a candidate
-   * has to be shipped to be measured, which means shipping it to find out it was wrong - and
-   * for a scoring change that also resets the self-correction, which is worth more than most
-   * candidates are.
+   * has to be shipped to be measured, which means shipping it to find out it was wrong.
    */
   candidate?: boolean;
   apply: (weights: ModelWeights) => ModelWeights;

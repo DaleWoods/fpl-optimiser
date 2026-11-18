@@ -2,7 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ModelWeights, Rules } from '../config/schema.js';
 import { classifyAvailability } from '../domain/availability.js';
 import type { ProjectedPlayer } from '../domain/types.js';
-import { loadCalibration } from './calibration.js';
+import { loadCalibration, type CalibrationFactor } from './calibration.js';
 import { scoreDistribution } from './distribution.js';
 import { recentFixturesByPlayer, sumRecent, type RecentFixtureRow } from './recentForm.js';
 import { computeTeamForm, type TeamForm } from './table.js';
@@ -276,6 +276,17 @@ export interface BuildOptions {
    *    its neutral value and the differential bonus does not apply.
    */
   reconstructFromHistory?: boolean;
+
+  /**
+   * The per-position correction to apply, instead of the stored one. `null` applies none.
+   *
+   * The stored correction is learned from every gameweek graded so far, which is right for a
+   * projection made today and is lookahead for a replay: applying to gameweek 3 a correction
+   * that was measured partly ON gameweek 3 scores the model on knowledge it could not have had.
+   * A replay passes the correction as it stood before that deadline, or null to measure the
+   * model with no correction at all.
+   */
+  calibrationFactors?: ReadonlyMap<string, CalibrationFactor> | null;
 }
 
 /**
@@ -841,7 +852,7 @@ export function buildProjections(
     });
   }
 
-  return applyCalibration(db, projected, weights);
+  return applyCalibration(db, projected, weights, options.calibrationFactors);
 }
 
 /**
@@ -860,10 +871,11 @@ function applyCalibration(
   db: Database,
   projected: ProjectedPlayer[],
   weights: ModelWeights,
+  override?: ReadonlyMap<string, CalibrationFactor> | null,
 ): ProjectedPlayer[] {
-  if (!weights.calibration.enabled) return projected;
+  if (!weights.calibration.enabled || override === null) return projected;
 
-  const factors = loadCalibration(db, weights.modelVersion);
+  const factors = override ?? loadCalibration(db, weights.modelVersion);
   if (factors.size === 0) return projected;
 
   for (const player of projected) {

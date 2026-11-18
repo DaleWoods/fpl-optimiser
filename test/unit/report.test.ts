@@ -722,8 +722,11 @@ describe('report server', () => {
 });
 
 describe('accuracy page', () => {
-  const gameweek = (overrides: Partial<SeasonAccuracy['gameweeks'][number]> = {}) => ({
+  const gameweek = (
+    overrides: Partial<SeasonAccuracy['gameweeks'][number]> = {},
+  ): SeasonAccuracy['gameweeks'][number] => ({
     eventId: 1,
+    modelVersion: 'heuristic-test',
     playersScored: 40,
     meanAbsoluteError: 1.6,
     bias: 0.2,
@@ -841,18 +844,39 @@ describe('accuracy page', () => {
     expect(page).toMatch(/auto-subs/);
   });
 
-  it('says how far off the self-correction is, and what is not counting toward it', () => {
-    // "Nothing yet" alone cannot distinguish "two more gameweeks" from "this will never happen
-    // because the scoring version keeps being bumped". The second was the real situation for a
-    // while - three graded gameweeks, none of them counting - and nothing on the page said so.
-    const page = renderAccuracy(season(), null, [], {
-      gradedUnderCurrentModel: 1,
-      needed: 3,
-      gradedUnderOtherModels: 2,
-    });
+  it('judges the headline on the model as it is now, not on every version it has been', () => {
+    // One week from a long-replaced model - 19.7 projected for a team that scored 75 - used to
+    // make up most of a headline that read as a verdict on today's. Old weeks stay on the page
+    // as a record of what was advised; they are not evidence about a model that no longer
+    // exists.
+    const page = renderAccuracy(
+      season({
+        gameweeks: [
+          gameweek({ eventId: 2, modelVersion: 'old', recommendedXiPredicted: 19.7, recommendedXiActual: 75 }),
+          gameweek({ eventId: 6, modelVersion: 'new', recommendedXiPredicted: 52.8, recommendedXiActual: 58 }),
+          gameweek({ eventId: 7, modelVersion: 'new', recommendedXiPredicted: 55.6, recommendedXiActual: 57 }),
+        ],
+      }),
+      null,
+    );
 
-    expect(page).toMatch(/<strong>1 of the\s*3<\/strong>\s*it needs/);
-    expect(page).toMatch(/The 2 graded before that change do not count/);
+    expect(page).toMatch(/Over 2 graded gameweeks/);
+    expect(page).toMatch(/108\.4/);
+    expect(page).toMatch(/1 earlier gameweek was\s+advised by an older version/);
+    // The old week is still listed, just not counted.
+    expect(page).toMatch(/Gameweek 2/);
+  });
+
+  it('says how many more gameweeks the self-correction needs', () => {
+    // The correction is learned by replaying past gameweeks under the current model, so the
+    // only thing that can hold it up is too few gameweeks played. A blank with no countdown
+    // reads as "it is not measuring anything".
+    const page = renderAccuracy(season(), null, [], { replayable: 1, needed: 3 });
+
+    expect(page).toMatch(/<strong>1 of the 3<\/strong> gameweeks it\s+needs/);
+    expect(page).toMatch(/starts after <strong>2 more<\/strong>/);
+    // A model change no longer resets anything, so the page must not say that it does.
+    expect(page).not.toMatch(/do not count/);
   });
 
   it('names a projected gameweek that cannot be graded yet, instead of dropping it', () => {

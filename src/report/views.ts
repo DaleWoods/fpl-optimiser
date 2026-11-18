@@ -1,11 +1,10 @@
 import type { GameweekAccuracy, SeasonAccuracy } from '../model/accuracy.js';
 import type { CalibrationFactor } from '../model/calibration.js';
 
-/** What calibrationProgress() returns: how close the model is to correcting itself. */
+/** What replayProgress() returns: how close the model is to correcting itself. */
 interface CalibrationProgress {
-  gradedUnderCurrentModel: number;
+  replayable: number;
   needed: number;
-  gradedUnderOtherModels: number;
 }
 import type { ChipAdvice } from '../optimise/chips.js';
 import type { PayloadKind } from '../ingest/import.js';
@@ -1742,31 +1741,18 @@ function renderCalibration(
   progress: CalibrationProgress | null = null,
 ): string {
   if (factors.length === 0) {
-    // "Nothing yet" on its own gives no way to tell "two more gameweeks" apart from "this will
-    // never happen because the scoring version keeps moving". The second was the real situation
-    // for a while, and it was completely invisible from here.
-    // "Nothing yet" reads as "it is not measuring anything", which is wrong and is the
-    // complaint this answers: it measures every week (see the reliability figures below) and
-    // withholds the *correction* until it has enough of them under one scoring version. Saying
-    // which gameweek it becomes usable turns an unexplained blank into a countdown.
+    // The correction is learned by replaying past gameweeks under the current model, so the
+    // only thing that can hold it up is too few gameweeks played - never a model change. Say
+    // how many are left rather than leaving an unexplained blank.
+    const short = progress ? Math.max(0, progress.needed - progress.replayable) : 0;
     const detail = progress
-      ? (() => {
-          const short = Math.max(0, progress.needed - progress.gradedUnderCurrentModel);
-          const stale =
-            progress.gradedUnderOtherModels > 0
-              ? ` The ${progress.gradedUnderOtherModels} graded before that change do not count:
-                 a correction learned from scoring that has since been fixed would be correcting
-                 a mistake that no longer exists.`
-              : '';
-          return ` It has <strong>${progress.gradedUnderCurrentModel} of the
-            ${progress.needed}</strong> it needs, so it starts correcting after
-            <strong>${short} more gameweek${short === 1 ? '' : 's'}</strong>.${stale}`;
-        })()
+      ? short > 0
+        ? ` It has <strong>${progress.replayable} of the ${progress.needed}</strong> gameweeks it
+           needs, so it starts after <strong>${short} more</strong>.`
+        : ' Nothing it has measured so far is large enough to act on.'
       : '';
     return `<h2>What the model has learned</h2>
-      <div class="banner info">It is measuring itself every week &mdash; see how far out it
-      typically is, below. What it will not do yet is <em>correct</em> itself: one or two weeks
-      of a lean is just variance, and acting on it would make the projections worse.${detail}</div>`;
+      <div class="banner info">No correction applied yet.${detail}</div>`;
   }
 
   const rows = factors
@@ -1791,7 +1777,10 @@ function renderCalibration(
   <details class="explain">
     <summary>How a correction gets made, and what stops it running away</summary>
     <div class="inner">
-      <p>Every graded gameweek is compared, per position, against what was projected. The
+      <p>Every past gameweek is replayed under the model as it is today, using only what was
+      known before that deadline, and compared per position against what happened &mdash; so a
+      change to the model is corrected straight away rather than three gameweeks later. Only
+      players projected high enough to be picked are counted. The
       correction is a <em>ratio</em> &mdash; what happened over what was said &mdash; not a flat
       number of points, because half a point means something very different for a goalkeeper
       projected at 3 than for a captain projected at 9.</p>
@@ -2134,9 +2123,17 @@ export function renderAccuracy(
 
   // One plain-English sentence at the top, so the page opens with a verdict rather than with
   // a table the reader has to interpret for themselves.
-  const graded = season.gameweeks.filter(
+  const everGraded = season.gameweeks.filter(
     (gw) => gw.recommendedXiPredicted !== null && gw.recommendedXiActual !== null,
   );
+  // Only the gameweeks advised by the model as it is now. The figure used to run across every
+  // version the model has ever been, so a single week from a long-replaced one - 19.7 projected
+  // for a team that scored 75 - made up most of a headline that read as a verdict on today's.
+  // Those weeks stay on the page below as a record of what was advised; they are just not
+  // evidence about a model that no longer exists.
+  const currentVersion = everGraded[everGraded.length - 1]?.modelVersion ?? null;
+  const graded = everGraded.filter((gw) => gw.modelVersion === currentVersion);
+  const olderWeeks = everGraded.length - graded.length;
   const headline =
     graded.length === 0
       ? null
@@ -2150,7 +2147,12 @@ export function renderAccuracy(
               : `${Math.abs(perWeek).toFixed(1)} points a week too ${perWeek > 0 ? 'low' : 'high'}`;
           return `Over ${graded.length} graded gameweek${graded.length === 1 ? '' : 's'} we said
             the team we picked would score <strong>${totalPredicted.toFixed(1)}</strong>. It
-            scored <strong>${totalActual}</strong> &mdash; ${direction}.`;
+            scored <strong>${totalActual}</strong> &mdash; ${direction}.${
+              olderWeeks > 0
+                ? ` <span class="muted">${olderWeeks} earlier gameweek${olderWeeks === 1 ? ' was' : 's were'}
+                   advised by an older version of the model and ${olderWeeks === 1 ? 'is' : 'are'} left out.</span>`
+                : ''
+            }`;
         })();
 
   const seasonRows = season.gameweeks
