@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import {
   createServer,
   type IncomingMessage,
@@ -63,6 +64,44 @@ export interface ServerOptions {
    * finished running. Binding first removes the deadline.
    */
   server?: HttpServer;
+  /**
+   * "user:password" for HTTP Basic auth on everything except the health check. Unset leaves
+   * the app open, as it has always been. Read from FPL_AUTH by the CLI.
+   */
+  auth?: string;
+}
+
+/**
+ * Whether a state-changing request came from this app's own pages.
+ *
+ * Every write here - reset, import, ingest, the "I made this transfer" boxes - is a bare POST
+ * with no token, and the app sits on a public URL. Without this, any web page you happen to
+ * visit can submit a form to /reset and delete the database; the browser sends it without
+ * asking, because from its point of view that is just a form. Browsers attach an Origin header
+ * to cross-site POSTs, so a POST whose Origin is a different host is refused.
+ *
+ * A request with no Origin at all is allowed: that is curl or a script, which is someone
+ * typing a command rather than a page acting behind your back, and is what `auth` is for.
+ */
+export function isCrossSiteWrite(request: IncomingMessage): boolean {
+  if (request.method === 'GET' || request.method === 'HEAD') return false;
+  const origin = request.headers.origin;
+  if (!origin || origin === 'null') return origin === 'null';
+  try {
+    return new URL(origin).host !== request.headers.host;
+  } catch {
+    return true;
+  }
+}
+
+/** Constant-time check of an Authorization header against "user:password". */
+export function isAuthorised(header: string | undefined, expected: string): boolean {
+  const given = Buffer.from(header?.startsWith('Basic ') ? header.slice(6) : '', 'base64');
+  const wanted = Buffer.from(expected);
+  // Compared at a fixed length so the time taken says nothing about how much of it matched.
+  const padded = Buffer.alloc(wanted.length);
+  given.copy(padded);
+  return given.length === wanted.length && timingSafeEqual(padded, wanted);
 }
 
 /**
@@ -241,6 +280,21 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+
+    // The health check stays open: the host polls it with no credentials, and it says nothing.
+    if (options.auth && url.pathname !== '/healthz') {
+      if (!isAuthorised(request.headers.authorization, options.auth)) {
+        response.writeHead(401, { 'WWW-Authenticate': 'Basic realm="FPL optimiser"' });
+        response.end('Sign in to continue.');
+        return;
+      }
+    }
+
+    if (isCrossSiteWrite(request)) {
+      response.writeHead(403, JSON_HEADERS);
+      response.end(JSON.stringify({ error: 'This request did not come from the app itself.' }));
+      return;
+    }
 
     if (url.pathname === '/reset' && request.method !== 'POST') {
       const plans = (Object.keys(RESET_PLANS) as ResetScope[]).map((scope) => {

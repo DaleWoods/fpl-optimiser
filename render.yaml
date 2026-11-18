@@ -49,6 +49,12 @@ services:
       - key: FPL_TEAM_ID
         value: "2651633"
 
+      # Optional password for the whole app, as "user:password". Left unset the app is open
+      # to anyone with the URL, as it always has been. Set the value in the Render dashboard,
+      # never here - this file is public.
+      - key: FPL_AUTH
+        sync: false
+
       # Identify the tool to the FPL API, as a good citizen should.
       - key: FPL_USER_AGENT
         value: "fpl-optimiser/0.1 (single-user personal tool; +https://github.com/DaleWoods/fpl-optimiser)"

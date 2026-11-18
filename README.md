@@ -594,6 +594,20 @@ still be a mistake if a genuinely bigger window, already visible on the fixture 
 couple of months away. The `/chips` page also links to a full-season look (`?horizon=30`) as a
 one-click check that nothing bigger is already on the list.
 
+## Who can change things
+
+The app sits on a public URL and every write it accepts — reset, import, refresh, the "I made
+this transfer" boxes — is a bare POST. Two protections, one always on and one optional:
+
+- **Writes must come from the app's own pages.** Without this, any website you happen to visit
+  can submit a form to `/reset` and delete the database; the browser sends it without asking,
+  because to the browser that is just a form. A POST whose `Origin` is another host is refused.
+  Nothing to configure, and reading pages is unaffected.
+- **A password, if you want one.** Set `FPL_AUTH` to `user:password` (in the Render dashboard,
+  under Environment — never in `render.yaml`, which is public) and the browser asks once and
+  remembers. Unset, the app is open to anyone who has the URL, as it always has been. The health
+  check stays open either way, because the host polls it with no credentials.
+
 ## Moving to the next gameweek
 
 There is deliberately no "current gameweek" flag stored anywhere: which gameweek is being

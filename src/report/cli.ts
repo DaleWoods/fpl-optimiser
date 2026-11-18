@@ -626,7 +626,14 @@ async function commandServe(flags: Map<string, string | true>): Promise<number> 
   await new Promise<void>((done) => server.listen(port, done));
   console.log(`fpl-optimiser holding port ${port} while it starts`);
 
-  await startServer({ config, port, ingestIntervalMinutes: intervalMinutes, server });
+  await startServer({
+    config,
+    port,
+    ingestIntervalMinutes: intervalMinutes,
+    server,
+    // "user:password". Unset leaves the app open, exactly as before.
+    auth: process.env.FPL_AUTH || undefined,
+  });
   return 0;
 }
 
